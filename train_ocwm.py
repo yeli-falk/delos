@@ -114,6 +114,7 @@ def get_world_model(cfg):
 
     # Load frozen DINO encoder
     model = models.build(cfg.model, cfg.dummy_optimizer, None, None)
+    backbone = AutoModel.from_pretrained("facebook/dinov2-small") # yes cls, .last
     encoder = model.encoder # Mapovertime > FrameEncoder > {backbone, output_transform}         # B T C H W > # B T N D
     slot_attention = model.processor # ScanOverTime > LatentProcessor > {Corrector, Predictor}      
     initializer = model.initializer
@@ -151,6 +152,7 @@ def get_world_model(cfg):
     # Assemble world model
     world_model = swm.wm.OCWM(
         encoder=encoder,
+        backbone = backbone,
         slot_attention=slot_attention,
         initializer = initializer,
         predictor=predictor,
