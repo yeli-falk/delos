@@ -14,6 +14,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from transformers import AutoModel
 import wandb
+from custom_models.dinowm import DINOWM
 
 
 from data import VideoStepsDataset
@@ -126,7 +127,7 @@ def get_world_model(cfg):
 
         # Log all losses
         prefix = "train/" if self.training else "val/"
-        losses_dict = {f"{prefix}{k}": v.detach() for k, v in batch.items() if "_loss" in k}
+        losses_dict = {f"{prefix}{k}": v.detach() for k, v in batch.items() if "loss" in k}
         self.log_dict(losses_dict, on_step=True, sync_dist=True)  # , on_epoch=True, sync_dist=True)
 
         return batch
@@ -164,7 +165,7 @@ def get_world_model(cfg):
         logging.info(f"Action dim: {effective_act_dim}, Proprio dim: {cfg.dinowm.proprio_dim}")
 
     # Assemble world model
-    world_model = swm.wm.DINOWM(
+    world_model = DINOWM(
         encoder=spt.backbone.EvalOnly(encoder),
         predictor=predictor,
         action_encoder=action_encoder,
