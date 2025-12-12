@@ -15,8 +15,6 @@ from torch.utils.data import DataLoader
 from transformers import AutoModel
 import wandb
 from custom_models.dinowm_oc import OCWM
-
-from data import VideoStepsDataset
 import os
 import gdown
 
@@ -143,10 +141,10 @@ def get_world_model(cfg):
         cfg.model.load_weights = os.path.join(download_dir, "oc_ckpt.ckpt")
 
     model = models.build(cfg.model, cfg.dummy_optimizer, None, None)
-    encoder = model.encoder # Mapovertime > FrameEncoder > {backbone, output_transform}         # B T C H W > # B T N D
-    slot_attention = model.processor # ScanOverTime > LatentProcessor > {Corrector, Predictor}      
+    encoder = model.encoder 
+    slot_attention = model.processor 
     initializer = model.initializer
-    embedding_dim = cfg.videosaur.SLOT_DIM #encoder.config.hidden_size
+    embedding_dim = cfg.videosaur.SLOT_DIM 
 
     # num_patches = (cfg.image_size // cfg.patch_size) ** 2
     num_patches = cfg.videosaur.NUM_SLOTS
