@@ -93,7 +93,7 @@ videosaur:
 
 # Extended model configuration
 model:
-  load_weights: /users/hnam16/scratch/step=81000.ckpt
+  load_weights: /cs/data/people/hnam16/.stable_worldmodel/artifacts/oc-checkpoints/oc_ckpt.ckpt
   modules_to_load: None
   input_type: video
   visualize: true
