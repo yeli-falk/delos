@@ -6,7 +6,7 @@ import importlib
 import numpy as np
 from tqdm import tqdm
 
-import phyre
+# import phyre
 import torch
 from torch.utils.data import Dataset, DataLoader
 

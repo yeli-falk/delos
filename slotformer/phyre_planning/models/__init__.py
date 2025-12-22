@@ -1,4 +1,4 @@
-from .readout import PHYREReadout
+# from .readout import PHYREReadout
 
 
 def build_model(params):

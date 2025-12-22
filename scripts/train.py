@@ -15,16 +15,16 @@ from nerv.training import BaseDataModule
 
 def main(params):
     # build datamodule
-    datasets = build_dataset(params)
-    train_set, val_set = datasets[0], datasets[1]
-    collate_fn = datasets[2] if len(datasets) == 3 else None
-    datamodule = BaseDataModule(
-        params,
-        train_set=train_set,
-        val_set=val_set,
-        use_ddp=params.ddp,
-        collate_fn=collate_fn,
-    )
+    # datasets = build_dataset(params)
+    # train_set, val_set = datasets[0], datasets[1]
+    # collate_fn = datasets[2] if len(datasets) == 3 else None
+    # datamodule = BaseDataModule(
+    #     params,
+    #     train_set=train_set,
+    #     val_set=val_set,
+    #     use_ddp=params.ddp,
+    #     collate_fn=collate_fn,
+    # )
 
     # build model
     model = build_model(params)
@@ -78,7 +78,7 @@ def main(params):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='SlotFormer training script')
-    parser.add_argument('--task', type=str, default='base_slots')
+    parser.add_argument('--task', type=str, default='clevrer_vqa')
     parser.add_argument('--params', type=str, required=True)
     parser.add_argument('--weight', type=str, default='', help='load weight')
     parser.add_argument('--fp16', action='store_true', help='half-precision')

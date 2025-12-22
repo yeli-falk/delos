@@ -2,8 +2,7 @@ from setuptools import setup, find_packages
 
 requirements = [
     'numpy', 'pyyaml', 'six', 'tqdm', 'opencv-python', 'matplotlib', 'open3d',
-    'wandb', 'moviepy', 'imageio', 'torch', 'torchvision', 'torchmetrics',
-    'pytorch-lightning', 'pycocotools', 'pandas', 'einops', 'phyre', 'nerv'
+    'wandb', 'moviepy', 'imageio', 'pandas', 'einops', 'phyre'
 ]
 
 
