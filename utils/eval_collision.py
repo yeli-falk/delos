@@ -43,7 +43,8 @@ def slot_interaction(cfg):
 
     # process and write results as csv 
     section_name = ANNOT_PATH.split('/')[-1].split('_')[-1]
-    csv_name = f"video_{section_name}_collision_results_{TEST}.csv"
+    ckpt_name = Path(cfg.checkpoint_path).stem.split('.ckpt')[0]
+    csv_name = f"video_{section_name}_collision_results_{TEST}_{ckpt_name}.csv"
     with open(csv_name, 'w') as f:
         f.write("video_num, num_collision_gt, gt_collision_frames, detected_collision_framees, precision, recall, f1_score, accuracy\n")
 
