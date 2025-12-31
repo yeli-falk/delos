@@ -33,5 +33,6 @@ torchrun --nproc_per_node=6 --master-port=29502 \
     dinowm.num_preds=10 \
     frameskip=2 \
     videosaur.NUM_SLOTS=7 \
-    videosaur.SLOT_DIM=128 
+    videosaur.SLOT_DIM=128 \
+    predictor.heads=16
 
