@@ -31,6 +31,8 @@ python train/train_causalwm_from_clevrer_slot.py \
     videosaur.SLOT_DIM=128 \
     predictor.heads=16 \
     embedding_dir=$SLOTPATH \
+    predictor_lr=5e-4 \
+    num_masked_slots=4
 
 
 
