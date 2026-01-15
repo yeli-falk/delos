@@ -1,25 +1,36 @@
+"""
+Train Causal World Model from Pre-extracted PushT Slot Representations.
+
+This script mirrors train_causalwm.py but skips the DINO+slot encoding step
+by using pre-extracted slot representations. This is more efficient since
+the encoder and slot attention modules are frozen anyway.
+
+Key differences from train_causalwm.py:
+1. Uses pre-extracted slots instead of encoding from pixels
+2. Maintains identical checkpoint format for downstream compatibility
+3. Still trains action_encoder and proprio_encoder from scratch
+
+The checkpoint format is identical to train_causalwm.py to ensure
+compatibility with downstream tasks.
+"""
 from pathlib import Path
 
 import hydra
-# import lightning as pl
+import lightning as pl
 import stable_pretraining as spt
 import stable_worldmodel as swm
 import torch
-import torch.distributed as dist
-# from lightning.pytorch.callbacks import Callback, ModelCheckpoint
-# from lightning.pytorch.loggers import WandbLogger
-# from lightning.pytorch.strategies import DDPStrategy
-from torch.utils.data import DataLoader, DistributedSampler
-from datasets import load_from_disk
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.strategies import DDPStrategy
+from torch.utils.data import Dataset, DataLoader
 from loguru import logger as logging
 from omegaconf import OmegaConf
 from torch.nn import functional as F
-from tqdm import tqdm
-import wandb
-from custom_models.cjepa_predictor import MaskedSlotPredictor
 from einops import rearrange, repeat
-from custom_models.dinowm_causal import CausalWM
-from videosaur.videosaur import  models
+from custom_models.cjepa_predictor import MaskedSlotPredictor
+from custom_models.dinowm_causal import CausalWM, Embedder
+from videosaur.videosaur import models
 
 import pickle as pkl
 import numpy as np
@@ -27,407 +38,523 @@ import numpy as np
 import os
 
 
-DINO_PATCH_SIZE = 14  # DINO encoder uses 14x14 patches
-OBS_FRAMES = 128
-TARGET_LEN = 160
-
-
-def setup_distributed():
-    """Setup distributed training if available."""
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        local_rank = int(os.environ["LOCAL_RANK"])
-        dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
-        torch.cuda.set_device(local_rank)
-        return True, rank, world_size, local_rank
-    else:
-        return False, 0, 1, 0
-
-
-def cleanup_distributed():
-    """Cleanup distributed training."""
-    if dist.is_initialized():
-        dist.destroy_process_group()
-
-
-def is_main_process(rank):
-    """Check if current process is the main process."""
-    return rank == 0
-
-
-class PushTSlotDataset(torch.utils.data.Dataset):
+# ============================================================================
+# Dataset for Pre-extracted Slot Representations
+# ============================================================================
+class PushTSlotDataset(Dataset):
     """
-    Dataset for pre-extracted slot embeddings from CLEVRER videos.
-
+    Dataset for pre-extracted slot representations from PushT.
+    
+    This class mirrors the behavior of swm.data.VideoDataset to ensure
+    identical data processing. Key behaviors:
+    - Window stride of 1 (not frameskip) for sample indices
+    - Action is reshaped to (T, action_dim * frameskip) by VideoDataset
+    - Normalization uses mean/std without clamping (same as WrapTorchTransform)
+    - nan_to_num is only applied in forward pass, not in dataset
+    
+    Each sample contains:
+    - pixels_embed: Pre-extracted slot embeddings (T, num_slots, slot_dim)
+    - action: Action sequence (T, action_dim * frameskip)
+    - proprio: Proprioception sequence (T, proprio_dim)
+    - state: State sequence (T, state_dim) [optional, for evaluation]
+    
     Args:
-        data: Dict mapping video names to slot tensors, e.g., {'0_pixels.mp4': slots, ...}
-              where each slots tensor has shape [num_frames, num_slots, slot_dim] (e.g., [128, 7, 128])
+        slot_data: Dict mapping video_id to slot embeddings
         split: 'train' or 'val'
+        history_size: Number of history frames
+        num_preds: Number of future frames to predict
+        action_dir: Path to action pickle file
+        proprio_dir: Path to proprioception pickle file
+        state_dir: Path to state pickle file (optional)
+        frameskip: Frame skip factor (affects action reshaping)
+        seed: Random seed for sampling
     """
-    def __init__(self, data, split, history_size, num_preds, action_dir, proprio_dir, state_dir, frameskip=1):
+    
+    def __init__(
+        self,
+        slot_data: dict,
+        split: str,
+        history_size: int,
+        num_preds: int,
+        action_dir: str,
+        proprio_dir: str,
+        state_dir: str = None,
+        frameskip: int = 1,
+        seed: int = 42,
+    ):
         super().__init__()
-        self.data = data  # {'0_pixels.mp4': [128, 7, 128], ...}
+        self.slot_data = slot_data
         self.split = split
         self.history_size = history_size
         self.num_preds = num_preds
         self.frameskip = frameskip
-
-
-        # Total number of frames needed per clip (before frameskip)
-        self.num_steps = history_size + num_preds
-        self.clip_len = self.frameskip * self.num_steps
-
-        with open(action_dir, "rb") as f:
-            self.action_meta = pkl.load(f)
-        with open(proprio_dir, "rb") as f:
-            self.proprio_meta = pkl.load(f)
-        with open(state_dir, "rb") as f:
-            self.state_meta = pkl.load(f)
-
-        # Compute normalization statistics for action and proprio
-        # This matches train_causalwm.py's norm_col_transform behavior
-        self._compute_normalization_stats()
-
-        # Build index mapping: list of (video_key, start_frame) tuples
-        self.video_keys = list(self.data.keys())
-        self.samples = []  # List of (video_key, start_frame) for each valid sample
-
-        for video_key in self.video_keys:
-            slots = self.data[video_key]
-            num_frames = slots.shape[0]
-            # Number of valid starting positions for this video
-            # Can start from 0 to (num_frames - clip_len) inclusive
-            num_valid_starts = max(0, num_frames - self.clip_len + 1)
-
-            for start in range(num_valid_starts):
-                self.samples.append((video_key, start))
-
-    def _compute_normalization_stats(self):
-        """Compute mean and std for action and proprio normalization (matching train_causalwm.py).
+        self.n_steps = history_size + num_preds
+        self.seed = seed
         
-        Key: Compute statistics on RESHAPED action (not raw), matching how VideoDataset.action 
-        is used in train_causalwm.py's norm_col_transform.
+        # Load action and proprio data
+        with open(action_dir, "rb") as f:
+            action_data = pkl.load(f)
+        self.action_data = action_data[split]
+        
+        with open(proprio_dir, "rb") as f:
+            proprio_data = pkl.load(f)
+        self.proprio_data = proprio_data[split]
+        
+        # State is optional (used for evaluation)
+        self.state_data = None
+        if state_dir is not None:
+            with open(state_dir, "rb") as f:
+                state_data = pkl.load(f)
+            self.state_data = state_data[split]
+        
+        # Build index: list of (video_id, start_frame) tuples
+        self.samples = self._build_sample_index()
+        
+        # Compute normalization statistics (matching WrapTorchTransform behavior)
+        self._compute_normalization_stats()
+        
+        logging.info(f"[{split}] Created dataset with {len(self.samples)} samples from {len(self.slot_data)} videos")
+    
+    def _build_sample_index(self):
         """
-        # Collect all reshaped actions and proprios from the split
-        all_actions_reshaped = []
+        Build list of valid (video_id, start_frame) samples.
+        
+        Matches VideoDataset behavior: stride of 1, not frameskip.
+        VideoDataset uses: episode_max_end = max(0, len(ep) - clip_len + 1)
+        and iterates over all start positions with stride 1.
+        """
+        samples = []
+        clip_len = self.n_steps * self.frameskip
+        
+        for video_id, slots in self.slot_data.items():
+            num_frames = slots.shape[0]
+            # max_start is inclusive, so we can start at positions 0 to max_start
+            max_start = num_frames - clip_len
+            
+            if max_start < 0:
+                continue
+            
+            # Stride 1 matching VideoDataset behavior
+            for start_idx in range(0, max_start + 1):
+                samples.append((video_id, start_idx))
+        
+        return samples
+    
+    def _compute_normalization_stats(self):
+        """
+        Compute mean and std for action and proprio normalization.
+        
+        Matches WrapTorchTransform(norm_col_transform(dataset, col)) behavior:
+        - Computes stats over the RESHAPED action column (T, action_dim * frameskip)
+        - No clamping of std (WrapTorchTransform doesn't clamp)
+        - Uses tensor mean/std with unsqueeze(0)
+        
+        Note: VideoDataset reshapes action to (T, -1) before transform is applied.
+        """
+        # Collect all actions and proprios in their RESHAPED form
+        # This matches how VideoDataset provides data to the transform
+        all_actions = []
         all_proprios = []
         
-        for video_key in self.action_meta[self.split].keys():
-            actions = self.action_meta[self.split][video_key]
-            proprios = self.proprio_meta[self.split][video_key]
+        for video_id in self.action_data.keys():
+            action_raw = self.action_data[video_id]  # (num_frames, action_dim)
+            # Reshape to match VideoDataset's reshape: (T, action_dim * frameskip)
+            # VideoDataset does: steps["action"].reshape(act_shape, -1)
+            # where act_shape = num_steps and the raw actions are clip_len = n_steps * frameskip
+            # So each T gets frameskip consecutive actions flattened
+            num_frames = action_raw.shape[0]
+            clip_len = self.n_steps * self.frameskip
             
-            if isinstance(actions, np.ndarray):
-                actions = actions
-            else:
-                actions = np.array(actions)
-                
-            if isinstance(proprios, np.ndarray):
-                proprios = proprios
-            else:
-                proprios = np.array(proprios)
+            # Iterate over all possible clips (stride 1, matching _build_sample_index)
+            for start_idx in range(0, num_frames - clip_len + 1):
+                # Get clip_len consecutive raw actions
+                action_clip = action_raw[start_idx:start_idx + clip_len]  # (clip_len, action_dim)
+                # Reshape to (n_steps, action_dim * frameskip) - matching VideoDataset
+                action_reshaped = action_clip.reshape(self.n_steps, -1)
+                all_actions.append(action_reshaped)
+        
+        for video_id in self.proprio_data.keys():
+            proprio_raw = self.proprio_data[video_id]  # (num_frames, proprio_dim)
+            num_frames = proprio_raw.shape[0]
+            clip_len = self.n_steps * self.frameskip
             
-            # Reshape action to match VideoDataset behavior: (clip_len, action_dim) -> (num_clips, num_steps, frameskip*action_dim)
-            # For each video, create all valid clips and reshape their actions
-            num_frames = actions.shape[0]
-            for start in range(max(0, num_frames - self.clip_len + 1)):
-                end_frame = start + self.clip_len
-                raw_action = actions[start:end_frame]  # (clip_len, action_dim)
-                reshaped_action = raw_action.reshape(self.num_steps, -1)  # (num_steps, frameskip*action_dim)
-                all_actions_reshaped.append(reshaped_action)
-                
-            # For proprio: subsample with frameskip (same as final output)
-            for start in range(max(0, num_frames - self.clip_len + 1)):
-                end_frame = start + self.clip_len
-                clip_proprio = proprios[start:end_frame:self.frameskip]  # (num_steps, proprio_dim)
-                all_proprios.append(clip_proprio)
+            for start_idx in range(0, num_frames - clip_len + 1):
+                # Get frames with frameskip (matching VideoDataset: data[::frameskip])
+                frame_indices = [start_idx + i * self.frameskip for i in range(self.n_steps)]
+                if frame_indices[-1] < num_frames:
+                    proprio_clip = proprio_raw[frame_indices]  # (n_steps, proprio_dim)
+                    all_proprios.append(proprio_clip)
         
-        # Stack and compute statistics on RESHAPED forms (matching train_causalwm.py)
-        all_actions_reshaped = np.concatenate(all_actions_reshaped, axis=0)  # (total_clips*num_steps, frameskip*action_dim)
-        all_proprios = np.concatenate(all_proprios, axis=0)  # (total_clips*num_steps, proprio_dim)
+        # Stack and compute stats matching norm_col_transform:
+        # data.mean(0).unsqueeze(0), data.std(0).unsqueeze(0)
+        all_actions = torch.from_numpy(np.concatenate(all_actions, axis=0)).float()  # (N*T, action_dim*frameskip)
+        all_proprios = torch.from_numpy(np.concatenate(all_proprios, axis=0)).float()  # (N*T, proprio_dim)
         
-        self.action_mean = all_actions_reshaped.mean(axis=0, keepdims=True)  # (1, frameskip*action_dim)
-        self.action_std = all_actions_reshaped.std(axis=0, keepdims=True) + 1e-8  # (1, frameskip*action_dim)
+        # Match norm_col_transform: mean(0).unsqueeze(0), std(0).unsqueeze(0)
+        self.action_mean = all_actions.mean(0).unsqueeze(0)  # (1, action_dim * frameskip)
+        self.action_std = all_actions.std(0).unsqueeze(0)    # (1, action_dim * frameskip)
         
-        self.proprio_mean = all_proprios.mean(axis=0, keepdims=True)  # (1, proprio_dim)
-        self.proprio_std = all_proprios.std(axis=0, keepdims=True) + 1e-8  # (1, proprio_dim)
-        
-        logging.info(f"[{self.split}] Action stats - mean: {self.action_mean.flatten()}, std: {self.action_std.flatten()}")
-        logging.info(f"[{self.split}] Proprio stats - mean: {self.proprio_mean.flatten()}, std: {self.proprio_std.flatten()}")
-
+        self.proprio_mean = all_proprios.mean(0).unsqueeze(0)  # (1, proprio_dim)
+        self.proprio_std = all_proprios.std(0).unsqueeze(0)    # (1, proprio_dim)
+    
     def __len__(self):
         return len(self.samples)
-
+    
     def __getitem__(self, idx):
-        video_key, start_frame = self.samples[idx]
-        slots = self.data[video_key]  # [num_frames, num_slots, slot_dim]
-        actions = self.action_meta[self.split][video_key]  # [num_frames, action_dim]
-        proprios = self.proprio_meta[self.split][video_key]  # [num_frames, proprio_dim]
-        states = self.state_meta[self.split][video_key]  # [num_frames, state_dim]
-
-        # Extract clip with frameskip: frames at start, start+frameskip, start+2*frameskip, ...
-        end_frame = start_frame + self.clip_len
-        clip_slots = slots[start_frame:end_frame:self.frameskip]  # [num_steps, num_slots, slot_dim]
-
-        # For action: concatenate frameskip consecutive actions into one
-        # This matches swm.data.VideoDataset behavior: action.reshape(num_steps, -1)
-        # Raw action: (clip_len, action_dim) -> (num_steps, frameskip * action_dim)
-        raw_action = actions[start_frame:end_frame]  # [clip_len, action_dim]
-        clip_action = raw_action.reshape(self.num_steps, -1)  # [num_steps, frameskip * action_dim]
-
-        # For proprio/state: subsample with frameskip (same as slots)
-        clip_proprio = proprios[start_frame:end_frame:self.frameskip]  # [num_steps, proprio_dim]
-        clip_state = states[start_frame:end_frame:self.frameskip]  # [num_steps, state_dim]
-
-        # Normalize action and proprio (matching train_causalwm.py behavior)
-        # Now action_mean/std are already in reshaped form (1, frameskip*action_dim)
-        clip_action = (clip_action - self.action_mean) / self.action_std
-        clip_proprio = (clip_proprio - self.proprio_mean) / self.proprio_std
-
-        # Ensure tensor type for slots
-        if not isinstance(clip_slots, torch.Tensor):
-            clip_slots = torch.tensor(clip_slots, dtype=torch.float32)
+        video_id, start_idx = self.samples[idx]
         
-        clip_action = torch.tensor(clip_action, dtype=torch.float32)
-        clip_proprio = torch.tensor(clip_proprio, dtype=torch.float32)
-        clip_state = torch.tensor(clip_state, dtype=torch.float32)
-
-        return {"embed": clip_slots,
-                "action": clip_action,
-                "proprio": clip_proprio,
-                "state": clip_state
-                }  # [history_size + num_preds, num_slots, slot_dim]
+        # clip_len = n_steps * frameskip raw frames
+        clip_len = self.n_steps * self.frameskip
+        
+        # Get frame indices with frameskip for slots (matching VideoDataset: data[::frameskip])
+        frame_indices = [start_idx + i * self.frameskip for i in range(self.n_steps)]
+        
+        # Extract slot embeddings: (n_steps, num_slots, slot_dim)
+        slots = self.slot_data[video_id]
+        pixels_embed = torch.from_numpy(slots[frame_indices]).float()
+        
+        # Extract and reshape actions (matching VideoDataset behavior)
+        # VideoDataset gets clip_len consecutive raw actions, then reshapes to (n_steps, -1)
+        action_raw = self.action_data[video_id]
+        action_clip = action_raw[start_idx:start_idx + clip_len]  # (clip_len, action_dim)
+        # Reshape to (n_steps, action_dim * frameskip) - matching VideoDataset's reshape
+        action = torch.from_numpy(action_clip.reshape(self.n_steps, -1)).float()
+        
+        # Extract proprio with frameskip (matching VideoDataset: data[::frameskip])
+        proprio_raw = self.proprio_data[video_id]
+        proprio = torch.from_numpy(proprio_raw[frame_indices]).float()
+        
+        # Normalize action and proprio (matching WrapTorchTransform behavior)
+        # Note: No nan_to_num here - that's done in forward pass like train_causalwm.py
+        action = (action - self.action_mean) / self.action_std
+        proprio = (proprio - self.proprio_mean) / self.proprio_std
+        
+        sample = {
+            "pixels_embed": pixels_embed,  # (T, S, D)
+            "action": action,              # (T, action_dim * frameskip)
+            "proprio": proprio,            # (T, proprio_dim)
+        }
+        
+        # Optionally include state
+        if self.state_data is not None:
+            state_raw = self.state_data[video_id]
+            state = torch.from_numpy(state_raw[frame_indices]).float()
+            sample["state"] = state
+        
+        return sample
 
 
 # ============================================================================
 # Data Setup
 # ============================================================================
-def get_data(cfg, is_ddp, world_size, rank):
-
-    # open pickle file to get train and val splits
+def get_data(cfg):
+    """Setup dataset with pre-extracted slot representations."""
+    
+    # Load pre-extracted slot embeddings
     with open(cfg.embedding_dir, "rb") as f:
-        data = pkl.load(f)  # data is slot embedding, shape of frame x num_slots x slot_dim per video
-
+        slot_data = pkl.load(f)
+    
+    logging.info(f"Loaded slot embeddings from {cfg.embedding_dir}")
+    
     train_dataset = PushTSlotDataset(
-        data=data["train"],
+        slot_data=slot_data["train"],
         split="train",
         history_size=cfg.dinowm.history_size,
         num_preds=cfg.dinowm.num_preds,
         action_dir=cfg.action_dir,
         proprio_dir=cfg.proprio_dir,
-        state_dir=cfg.state_dir,
-        frameskip=cfg.frameskip
+        state_dir=cfg.get("state_dir", None),
+        frameskip=cfg.frameskip,
+        seed=cfg.seed,
     )
-
+    
     val_dataset = PushTSlotDataset(
-        data=data["val"],
+        slot_data=slot_data["val"],
         split="val",
         history_size=cfg.dinowm.history_size,
         num_preds=cfg.dinowm.num_preds,
         action_dir=cfg.action_dir,
         proprio_dir=cfg.proprio_dir,
-        state_dir=cfg.state_dir,
-        frameskip=cfg.frameskip
+        state_dir=cfg.get("state_dir", None),
+        frameskip=cfg.frameskip,
+        seed=cfg.seed,
     )
-
-    # Setup samplers for DDP
-    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True) if is_ddp else None
-    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if is_ddp else None
-
+    
+    rnd_gen = torch.Generator().manual_seed(cfg.seed)
+    
+    logging.info(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
+    
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
-        shuffle=(train_sampler is None),
-        sampler=train_sampler,
         num_workers=cfg.num_workers,
-        pin_memory=True,
         drop_last=True,
+        persistent_workers=True,
+        prefetch_factor=2,
+        pin_memory=True,
+        shuffle=True,
+        generator=rnd_gen,
     )
+    
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
-        shuffle=False,
-        sampler=val_sampler,
         num_workers=cfg.num_workers,
         pin_memory=True,
-        drop_last=False,
     )
-
-    return train_loader, val_loader, data, train_sampler
+    
+    return spt.data.DataModule(train=train_loader, val=val_loader)
 
 
 # ============================================================================
 # Model Architecture
 # ============================================================================
 def get_world_model(cfg):
-    """Build world model: masked slot predictor."""
+    """
+    Build world model: masked slot predictor with action/proprio encoders.
+    
+    Unlike train_causalwm.py, we don't need the DINO encoder and slot attention
+    since we're using pre-extracted slots. However, we create placeholder modules
+    to maintain checkpoint compatibility.
+    """
+    
+    def forward(self, batch, stage):
+        """
+        Forward pass using pre-extracted slot embeddings.
+        
+        This mirrors the forward in train_causalwm.py but skips encoding.
+        """
+        proprio_key = "proprio" if "proprio" in batch else None
+        
+        # Replace NaN values with 0 (occurs at sequence boundaries)
+        # This matches train_causalwm.py behavior
+        if proprio_key is not None:
+            batch[proprio_key] = torch.nan_to_num(batch[proprio_key], 0.0)
+        if "action" in batch:
+            batch["action"] = torch.nan_to_num(batch["action"], 0.0)
+        
+        # Pre-extracted slots are already in the batch as 'pixels_embed'
+        # Shape: (B, T, S, D) where D is slot_dim
+        pixels_embed = batch["pixels_embed"]  # Pre-extracted slots
+        B, T, S, slot_dim = pixels_embed.shape
+        
+        batch["pixels_embed"] = pixels_embed
+        
+        # Encode action and proprio (still need to train these)
+        embedding = pixels_embed
+        n_patches = S
+        
+        if proprio_key is not None:
+            proprio = batch[proprio_key].float()  # (B, T, proprio_dim)
+            proprio_embed = self.model.proprio_encoder(proprio)  # (B, T, proprio_embed_dim)
+            batch["proprio_embed"] = proprio_embed
+            
+            # Tile proprio across slots
+            proprio_tiled = repeat(proprio_embed.unsqueeze(2), "b t 1 d -> b t p d", p=n_patches)
+            embedding = torch.cat([embedding, proprio_tiled], dim=-1)
+        if "action" in batch:
+            action = batch["action"].float()  # (B, T, action_dim * frameskip)
+            action_embed = self.model.action_encoder(action)  # (B, T, action_embed_dim)
+            batch["action_embed"] = action_embed
+            
+            # Tile action across slots
+            action_tiled = repeat(action_embed.unsqueeze(2), "b t 1 d -> b t p d", p=n_patches)
+            embedding = torch.cat([embedding, action_tiled], dim=-1)
+        
+        
+        batch["embed"] = embedding  # (B, T, S, D_total)
+        
+        # Use history to predict next states
+        history_embed = embedding[:, :cfg.dinowm.history_size, :, :]  # (B, history_size, S, D_total)
+        
+        # Predict with masking
+        pred_output = self.model.predict(history_embed)
+        pixels_dim = pixels_embed.shape[-1]  # slot_dim
+        
 
-    effective_act_dim = cfg.frameskip * cfg.dinowm.action_dim
-    action_encoder = swm.wm.dinowm.Embedder(in_chans=effective_act_dim, emb_dim=cfg.dinowm.action_embed_dim)
-    proprio_encoder = swm.wm.dinowm.Embedder(in_chans=cfg.dinowm.proprio_dim, emb_dim=cfg.dinowm.proprio_embed_dim)
+        if len(pred_output[1]) > 0:  # mask_indices available
+            pred_embedding, mask_indices = pred_output
+            target_embedding = embedding[:, cfg.dinowm.history_size:cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]
+            
+            pred_history = pred_embedding[:, :cfg.dinowm.history_size, :, :]
+            pred_future = pred_embedding[:, cfg.dinowm.history_size:cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]
+            
+            # Loss on masked slots in history
+            gt_history = history_embed
+            loss_masked_history = F.mse_loss(
+                pred_history[:, :, mask_indices, :pixels_dim],
+                gt_history[:, :, mask_indices, :pixels_dim].detach()
+            )
+            
+            # Loss on future prediction
+            loss_future = F.mse_loss(
+                pred_future[..., :pixels_dim],
+                target_embedding[..., :pixels_dim].detach()
+            )
+            
+            batch["loss_masked_history"] = loss_masked_history
+            batch["loss_future"] = loss_future
+            batch["loss"] = loss_masked_history + loss_future
+            
+            # Add proprio loss if available
+            if proprio_key is not None:
+                proprio_dim = batch["proprio_embed"].shape[-1]
+                proprio_loss = F.mse_loss(
+                    pred_future[..., pixels_dim:pixels_dim + proprio_dim],
+                    target_embedding[..., pixels_dim:pixels_dim + proprio_dim].detach(),
+                )
+                batch["proprio_loss"] = proprio_loss
+                batch["loss"] = batch["loss"] + proprio_loss
+        else:
+            pred_embedding = pred_output[0]
+            pred_future = pred_embedding[:, cfg.dinowm.history_size:cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]
+            target_embedding = embedding[:, cfg.dinowm.history_size:cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]
+            
+            loss_future = F.mse_loss(
+                pred_future[..., :pixels_dim],
+                target_embedding[..., :pixels_dim].detach()
+            )
+            batch["loss_future"] = loss_future
+            batch["loss"] = loss_future
+            
+            if proprio_key is not None:
+                proprio_dim = batch["proprio_embed"].shape[-1]
+                proprio_loss = F.mse_loss(
+                    pred_future[..., pixels_dim:pixels_dim + proprio_dim],
+                    target_embedding[..., pixels_dim:pixels_dim + proprio_dim].detach(),
+                )
+                batch["proprio_loss"] = proprio_loss
+                batch["loss"] = batch["loss"] + proprio_loss
+        
+        # Flatten predictions for RankMe monitoring
+        if isinstance(pred_output, tuple) and len(pred_output) > 0:
+            B, T, S, D = pred_output[0].shape
+            pred_flat = pred_output[0].reshape(B * T, S * D)
+        else:
+            B, num_pred, S, D = pred_embedding.shape
+            pred_flat = pred_embedding.reshape(B * num_pred, S * D)
+        batch["predictor_embed"] = pred_flat
 
-    embedding_dim = cfg.videosaur.SLOT_DIM + cfg.dinowm.action_embed_dim + cfg.dinowm.proprio_embed_dim
-    logging.info(f"Total embedding dimension (slot + action + proprio): {embedding_dim}")
+        
+        # Log losses
+        prefix = "train/" if self.training else "val/"
+        losses_dict = {f"{prefix}{k}": v.detach() for k, v in batch.items() if "loss" in k}
+        self.log_dict(losses_dict, on_step=True, sync_dist=True)
+        
+        return batch
+    
+    # Build the videosaur model to get encoder, slot_attention, initializer
+    # These will be frozen and serve as placeholders for checkpoint compatibility
+    model = models.build(cfg.model, cfg.dummy_optimizer, None, None)
+    encoder = model.encoder
+    slot_attention = model.processor
+    initializer = model.initializer
+    
+    # Slot dimension from config
+    slot_dim = cfg.videosaur.SLOT_DIM
+    num_slots = cfg.videosaur.NUM_SLOTS
+    
+    # Total embedding dimension (slot + action + proprio)
+    embedding_dim = slot_dim + cfg.dinowm.proprio_embed_dim + cfg.dinowm.action_embed_dim
+    
+    logging.info(f"Num slots: {num_slots}, Slot dim: {slot_dim}, Total embedding dim: {embedding_dim}")
+    
+    # Build masked slot predictor (same as train_causalwm.py)
     predictor = MaskedSlotPredictor(
-        num_slots=cfg.videosaur.NUM_SLOTS,  # S: number of slots
-        slot_dim=embedding_dim,  # 64 or higher if action/proprio included
-        history_frames=cfg.dinowm.history_size,  # T: history length
-        pred_frames=cfg.dinowm.num_preds,  # number of future frames to predict
-        num_masked_slots=cfg.get("num_masked_slots", 2),  # M: number of slots to mask
-        seed=cfg.seed,  # for reproducible masking
+        num_slots=num_slots,
+        slot_dim=embedding_dim,
+        history_frames=cfg.dinowm.history_size,
+        pred_frames=cfg.dinowm.num_preds,
+        num_masked_slots=cfg.get("num_masked_slots", 2),
+        seed=cfg.seed,
         depth=cfg.predictor.get("depth", 6),
         heads=cfg.predictor.get("heads", 16),
         dim_head=cfg.predictor.get("dim_head", 64),
         mlp_dim=cfg.predictor.get("mlp_dim", 2048),
         dropout=cfg.predictor.get("dropout", 0.1),
     )
+    
+    # Build action and proprioception encoders (will be trained)
+    effective_act_dim = cfg.frameskip * cfg.dinowm.action_dim
+    action_encoder = swm.wm.dinowm.Embedder(in_chans=effective_act_dim, emb_dim=cfg.dinowm.action_embed_dim)
+    proprio_encoder = swm.wm.dinowm.Embedder(in_chans=cfg.dinowm.proprio_dim, emb_dim=cfg.dinowm.proprio_embed_dim)
 
-    return action_encoder, proprio_encoder, predictor
+    logging.info(f"Action dim: {effective_act_dim}, Proprio dim: {cfg.dinowm.proprio_dim}")
+
+    # Assemble world model with frozen encoder/slot_attention for checkpoint compatibility
+    world_model = CausalWM(
+        encoder=spt.backbone.EvalOnly(encoder),
+        slot_attention=spt.backbone.EvalOnly(slot_attention),
+        initializer=spt.backbone.EvalOnly(initializer),
+        predictor=predictor,
+        action_encoder=action_encoder,
+        proprio_encoder=proprio_encoder,
+        history_size=cfg.dinowm.history_size,
+        num_pred=cfg.dinowm.num_preds,
+    )
+    
+    # Wrap in spt.Module with separate optimizers for each trainable component
+    def add_opt(module_name, lr):
+        return {"modules": str(module_name), "optimizer": {"type": "AdamW", "lr": lr}}
+    
+    world_model = spt.Module(
+        model=world_model,
+        forward=forward,
+        optim={
+            "predictor_opt": add_opt("model.predictor", cfg.predictor_lr),
+            "proprio_opt": add_opt("model.proprio_encoder", cfg.proprio_encoder_lr),
+            "action_opt": add_opt("model.action_encoder", cfg.action_encoder_lr),
+        },
+    )
+    
+    return world_model
 
 
 # ============================================================================
 # Training Setup
 # ============================================================================
-def setup_wandb(cfg, rank):
-    """Setup wandb logger (only on main process)."""
-    if not cfg.wandb.enable or not is_main_process(rank):
+def setup_pl_logger(cfg):
+    """Setup WandB logger for PyTorch Lightning."""
+    if not cfg.wandb.enable:
         return None
-
+    
     wandb_run_id = cfg.wandb.get("run_id", None)
-    wandb.init(
-        name=cfg.wandb.get("name", "causalwm_from_slot"),
+    wandb_logger = WandbLogger(
+        name="dino_wm_slot",
         project=cfg.wandb.project,
         entity=cfg.wandb.entity,
         resume="allow" if wandb_run_id else None,
         id=wandb_run_id,
-        config=OmegaConf.to_container(cfg, resolve=True),
+        log_model=False,
     )
-    return wandb
+    
+    wandb_logger.log_hyperparams(OmegaConf.to_container(cfg))
+    return wandb_logger
 
 
-def compute_loss(predictor, action_enc, proprio_enc, batch, cfg, device, inference=False):
-    """Compute loss for a batch."""
-    embed = batch["embed"].to(device)  # (B, T, S, D)
-    pixels_dim = embed.shape[-1]
-
-    actions = batch["action"].to(device)  # (B, T, action_dim)
-    proprios = batch["proprio"].to(device)  # (B, T, proprio_dim)
-    action_embeddings = action_enc(actions)  # (B, T, action_embed_dim)
-    proprio_embeddings = proprio_enc(proprios)  # (B, T, proprio_embed_dim)
-    proprio_dim = proprio_embeddings.shape[-1]
-
-    n_patches = embed.shape[2]  # number of slots
-
-    proprio_tiled = repeat(proprio_embeddings.unsqueeze(2), "b t 1 d -> b t p d", p=n_patches)
-    embed = torch.cat([embed, proprio_tiled], dim=3)
-
-    action_tiled = repeat(action_embeddings.unsqueeze(2), "b t 1 d -> b t p d", p=n_patches)
-    embed = torch.cat([embed, action_tiled], dim=3)
-
-    # Split into history and target
-    history = embed[:, :cfg.dinowm.history_size, :, :]  # (B, history_size, S, D)
-    target = embed[:, cfg.dinowm.history_size:cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]  # (B, num_preds, S, D)
-
-    # Forward pass
-    if inference:
-        pred_output = predictor.inference(history) # only future prediction
-        # Loss on future prediction
-        loss_future = F.mse_loss(pred_output[..., :pixels_dim], target[..., :pixels_dim].detach())
-
-        losses = {}
-        losses["loss_future"] = loss_future
-
-        loss_masked_history = torch.tensor(0.0, device=device)
-        losses["loss_masked_history"] = loss_masked_history
-
-        proprio_loss = F.mse_loss(
-            pred_output[..., pixels_dim : pixels_dim + proprio_dim],
-            target[..., pixels_dim : pixels_dim + proprio_dim].detach(),
-        )
-        losses["loss_proprio"] = proprio_loss
-
-        # Total loss
-        total_loss = loss_masked_history + loss_future + proprio_loss
-        losses["loss"] = total_loss
+class ModelObjectCallBack(Callback):
+    """Callback to save model object after each epoch (same as train_causalwm.py)."""
+    
+    def __init__(self, dirpath, filename="model_object", epoch_interval: int = 1):
+        super().__init__()
+        self.dirpath = Path(dirpath)
+        self.filename = filename
+        self.epoch_interval = epoch_interval
+    
+    def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
+        super().on_train_epoch_end(trainer, pl_module)
         
-    else:
-        pred_output = predictor(history)
-        pred_embedding, mask_indices = pred_output
-
-        # pred_embedding: (B, history_size + num_preds, S, D)
-        pred_history = pred_embedding[:, :cfg.dinowm.history_size, :, :]
-        pred_future = pred_embedding[:, cfg.dinowm.history_size:cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]
-
-        losses = {}
-
-        if len(mask_indices) > 0:
-            # Loss on masked slots in history
-            loss_masked_history = F.mse_loss(
-                pred_history[:, :, mask_indices, :pixels_dim],
-                history[:, :, mask_indices, :pixels_dim].detach()
-            )
-            losses["loss_masked_history"] = loss_masked_history
-        else:
-            loss_masked_history = torch.tensor(0.0, device=device)
-            losses["loss_masked_history"] = loss_masked_history
-
-        # Loss on future prediction
-        loss_future = F.mse_loss(pred_future[..., :pixels_dim], target[..., :pixels_dim].detach())
-        losses["loss_future"] = loss_future
-
-        proprio_loss = F.mse_loss(
-            pred_future[..., pixels_dim : pixels_dim + proprio_dim],
-            target[..., pixels_dim : pixels_dim + proprio_dim].detach(),
-        )
-        losses["loss_proprio"] = proprio_loss
-
-        # Total loss
-        total_loss = loss_masked_history + loss_future + proprio_loss
-        losses["loss"] = total_loss
-
-    return losses
-
-
-@torch.no_grad()
-def validate(predictor, action_enc, proprio_enc, val_loader, cfg, device, world_size):
-    """Run validation and return average loss."""
-    predictor.eval()
-    total_loss = 0.0
-    total_loss_future = 0.0
-    total_loss_masked = 0.0
-    total_loss_proprio = 0.0
-    num_batches = 0
-
-    for batch in val_loader:
-        losses = compute_loss(predictor, action_enc, proprio_enc, batch, cfg, device, inference=True)
-        total_loss += losses["loss"].item()
-        total_loss_future += losses["loss_future"].item()
-        total_loss_masked += losses["loss_masked_history"].item()
-        total_loss_proprio += losses["loss_proprio"].item()
-
-        num_batches += 1
-
-    # Average across batches
-    avg_loss = total_loss / max(num_batches, 1)
-    avg_loss_future = total_loss_future / max(num_batches, 1)
-    avg_loss_masked = total_loss_masked / max(num_batches, 1)
-    avg_loss_proprio = total_loss_proprio / max(num_batches, 1)
-
-    # Reduce across processes if DDP
-    if world_size > 1:
-        loss_tensor = torch.tensor([avg_loss, avg_loss_future, avg_loss_masked, avg_loss_proprio, num_batches], device=device)
-        dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-        avg_loss = loss_tensor[0].item() / world_size
-        avg_loss_future = loss_tensor[1].item() / world_size
-        avg_loss_masked = loss_tensor[2].item() / world_size
-        avg_loss_proprio = loss_tensor[3].item() / world_size
-
-    return {
-        "val/loss": avg_loss,
-        "val/loss_future": avg_loss_future,
-        "val/loss_masked_history": avg_loss_masked,
-        "val/loss_proprio": avg_loss_proprio,
-    }
+        if trainer.is_global_zero:
+            if (trainer.current_epoch + 1) % self.epoch_interval == 0:
+                output_path = self.dirpath / f"{self.filename}_epoch_{trainer.current_epoch + 1}_object.ckpt"
+                torch.save(pl_module, output_path)
+                logging.info(f"Saved world model object to {output_path}")
+            
+            # Additionally, save at final epoch
+            if (trainer.current_epoch + 1) == trainer.max_epochs:
+                final_path = self.dirpath / f"{self.filename}_object.ckpt"
+                torch.save(pl_module, final_path)
+                logging.info(f"Saved final world model object to {final_path}")
 
 
 # ============================================================================
@@ -435,319 +562,50 @@ def validate(predictor, action_enc, proprio_enc, val_loader, cfg, device, world_
 # ============================================================================
 @hydra.main(version_base=None, config_path="../configs", config_name="config_train_causal_pusht_slot")
 def run(cfg):
-    """Run training of predictor"""
-
-    ############### to save trained model in swm format later ##############
-    model = models.build(cfg.model, cfg.dummy_optimizer, None, None)
-    encoder = model.encoder 
-    slot_attention = model.processor 
-    initializer = model.initializer
-    #########################################################################
-
-    # Setup distributed training
-    is_ddp, rank, world_size, local_rank = setup_distributed()
-    device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-
-    if is_main_process(rank):
-        logging.info(f"DDP: {is_ddp}, Rank: {rank}, World Size: {world_size}, Device: {device}")
-
+    """Run training of predictor using pre-extracted slot representations."""
+    
     # Setup cache directory
-    cache_dir = swm.data.utils.get_cache_dir() if cfg.cache_dir is None else cfg.cache_dir
+    cache_dir = Path(swm.data.utils.get_cache_dir() if cfg.cache_dir is None else cfg.cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Setup logging
+    wandb_logger = setup_pl_logger(cfg)
+    
+    # Load data
+    data = get_data(cfg)
+    
+    # Build world model
+    world_model = get_world_model(cfg)
+    
+    # Setup callbacks
+    dump_object_callback = ModelObjectCallBack(
+        dirpath=cache_dir,
+        filename=cfg.output_model_name,
+        epoch_interval=1,
+    )
+    
+    callbacks = [dump_object_callback]
+    
 
-    # Setup wandb (only on main process)
-    wandb_logger = setup_wandb(cfg, rank)
-
-    # Get data
-    train_loader, val_loader, data, train_sampler = get_data(cfg, is_ddp, world_size, rank)
-
-    if is_main_process(rank):
-        logging.info(f"Train samples: {len(train_loader.dataset)}, Val samples: {len(val_loader.dataset)}")
-
-    # Build model
-    action_encoder, proprio_encoder, predictor = get_world_model(cfg)
-    action_encoder = action_encoder.to(device)
-    proprio_encoder = proprio_encoder.to(device)
-    predictor = predictor.to(device)
-
-    # Wrap with DDP if needed
-    if is_ddp:
-        action_encoder = torch.nn.parallel.DistributedDataParallel(
-            action_encoder, device_ids=[local_rank], output_device=local_rank
-        )
-        proprio_encoder = torch.nn.parallel.DistributedDataParallel(
-            proprio_encoder, device_ids=[local_rank], output_device=local_rank
-        )
-        predictor = torch.nn.parallel.DistributedDataParallel(
-            predictor, device_ids=[local_rank], output_device=local_rank
-        )
-
-    # Setup optimizer
-    model_params = predictor.module.parameters() if is_ddp else predictor.parameters()
-    optimizer = torch.optim.AdamW(model_params, lr=cfg.predictor_lr)
-
-    action_encoder_params = action_encoder.module.parameters() if is_ddp else action_encoder.parameters()
-    proprio_encoder_params = proprio_encoder.module.parameters() if is_ddp else proprio_encoder.parameters()
-    action_optimizer = torch.optim.AdamW(action_encoder_params, lr=cfg.action_encoder_lr)
-    proprio_optimizer = torch.optim.AdamW(proprio_encoder_params, lr=cfg.proprio_encoder_lr)
-
-   
-    # Training loop
-    log_every_n_epochs = cfg.get("log_every_n_epochs", 1)
-    global_step = 0
-
-    for epoch in range(cfg.trainer.max_epochs):
-        # Set epoch for distributed sampler
-        if train_sampler is not None:
-            train_sampler.set_epoch(epoch)
-
-        predictor.train()
-        action_encoder.train()
-        proprio_encoder.train()
-        epoch_loss = 0.0
-        epoch_loss_future = 0.0
-        epoch_loss_masked = 0.0
-        epoch_loss_proprio = 0.0
-        num_batches = 0
-
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}", disable=not is_main_process(rank))
-        for batch in pbar:
-            optimizer.zero_grad()
-
-            # Compute loss
-            losses = compute_loss(
-                predictor.module if is_ddp else predictor,
-                action_encoder.module if is_ddp else action_encoder,
-                proprio_encoder.module if is_ddp else proprio_encoder,
-                batch, cfg, device
-            )
-
-            # Backward pass
-            losses["loss"].backward()
-            optimizer.step()
-            action_optimizer.step()
-            proprio_optimizer.step()
-
-            # Accumulate metrics
-            epoch_loss += losses["loss"].item()
-            epoch_loss_future += losses["loss_future"].item()
-            epoch_loss_masked += losses["loss_masked_history"].item()
-            epoch_loss_proprio += losses["loss_proprio"].item()
-            num_batches += 1
-            global_step += 1
-
-            # Update progress bar
-            pbar.set_postfix({
-                "loss": f"{losses['loss'].item():.4f}",
-                "future": f"{losses['loss_future'].item():.4f}",
-            })
-
-            # Log to wandb (every N steps)
-            if wandb_logger is not None and global_step % cfg.get("log_every_n_steps", 10) == 0:
-                wandb_logger.log({
-                    "train/loss": losses["loss"].item(),
-                    "train/loss_future": losses["loss_future"].item(),
-                    "train/loss_masked_history": losses["loss_masked_history"].item(),
-                    "train/loss_proprio": losses["loss_proprio"].item(),
-                    "train/step": global_step,
-                    "train/epoch": epoch,
-                })
-
-        # Epoch-level metrics
-        avg_train_loss = epoch_loss / max(num_batches, 1)
-        avg_train_loss_future = epoch_loss_future / max(num_batches, 1)
-        avg_train_loss_masked = epoch_loss_masked / max(num_batches, 1)
-        avg_train_loss_proprio = epoch_loss_proprio / max(num_batches, 1)
-
-        if is_main_process(rank):
-            logging.info(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f}, Future: {avg_train_loss_future:.4f}, Masked: {avg_train_loss_masked:.4f}, Proprio: {avg_train_loss_proprio:.4f}")
-
-        # Validation
-        if (epoch + 1) % log_every_n_epochs == 0:
-            val_metrics = validate(
-                predictor.module if is_ddp else predictor,
-                action_encoder.module if is_ddp else action_encoder,
-                proprio_encoder.module if is_ddp else proprio_encoder,
-                val_loader, cfg, device, world_size
-            )
-
-            if is_main_process(rank):
-                logging.info(f"Epoch {epoch+1}: Val Loss: {val_metrics['val/loss']:.4f}")
-
-                if wandb_logger is not None:
-                    wandb_logger.log({
-                        **val_metrics,
-                        "train/epoch_loss": avg_train_loss,
-                        "train/epoch_loss_future": avg_train_loss_future,
-                        "train/epoch_loss_masked_history": avg_train_loss_masked,
-                        "train/epoch_loss_proprio": avg_train_loss_proprio,
-                        "epoch": epoch + 1,
-                    })
-
-        # Save checkpoint (only on main process)
-        if is_main_process(rank):
-            # Build CausalWM in the same format as train_causalwm.py
-            predictor_state = predictor.module.state_dict() if is_ddp else predictor.state_dict()
-            action_encoder_state = action_encoder.module.state_dict() if is_ddp else action_encoder.state_dict()
-            proprio_encoder_state = proprio_encoder.module.state_dict() if is_ddp else proprio_encoder.state_dict()
-
-            # Create a fresh CausalWM and load trained weights
-            world_model_to_save = CausalWM(
-                encoder=spt.backbone.EvalOnly(encoder),
-                slot_attention=spt.backbone.EvalOnly(slot_attention),
-                initializer=spt.backbone.EvalOnly(initializer),
-                predictor=MaskedSlotPredictor(
-                    num_slots=cfg.videosaur.NUM_SLOTS,
-                    slot_dim=cfg.videosaur.SLOT_DIM + cfg.dinowm.action_embed_dim + cfg.dinowm.proprio_embed_dim,
-                    history_frames=cfg.dinowm.history_size,
-                    pred_frames=cfg.dinowm.num_preds,
-                    num_masked_slots=cfg.get("num_masked_slots", 2),
-                    seed=cfg.seed,
-                    depth=cfg.predictor.get("depth", 6),
-                    heads=cfg.predictor.get("heads", 16),
-                    dim_head=cfg.predictor.get("dim_head", 64),
-                    mlp_dim=cfg.predictor.get("mlp_dim", 2048),
-                    dropout=cfg.predictor.get("dropout", 0.1),
-                ),
-                action_encoder=swm.wm.dinowm.Embedder(
-                    in_chans=cfg.frameskip * cfg.dinowm.action_dim,
-                    emb_dim=cfg.dinowm.action_embed_dim
-                ),
-                proprio_encoder=swm.wm.dinowm.Embedder(
-                    in_chans=cfg.dinowm.proprio_dim,
-                    emb_dim=cfg.dinowm.proprio_embed_dim
-                ),
-                history_size=cfg.dinowm.history_size,
-                num_pred=cfg.dinowm.num_preds,
-            )
-
-            # Load trained weights into CausalWM
-            world_model_to_save.predictor.load_state_dict(predictor_state)
-            world_model_to_save.action_encoder.load_state_dict(action_encoder_state)
-            world_model_to_save.proprio_encoder.load_state_dict(proprio_encoder_state)
-            # Wrap in spt.Module (same format as train_causalwm.py)
-            def add_opt(module_name, lr):
-                return {"modules": str(module_name), "optimizer": {"type": "AdamW", "lr": lr}}
-
-            def forward(self, batch, stage):
-                """Forward: encode observations, predict next states, compute losses."""
-
-                proprio_key = "proprio" if "proprio" in batch else None
-
-                # Replace NaN values with 0 (occurs at sequence boundaries)
-                if proprio_key is not None:
-                    batch[proprio_key] = torch.nan_to_num(batch[proprio_key], 0.0)
-                if "action" in batch:
-                    batch["action"] = torch.nan_to_num(batch["action"], 0.0)
-
-                # Encode all timesteps into latent embeddings
-                if "clevrer" in cfg.dataset_name:
-                    batch = self.model.encode(
-                        batch,
-                        target="embed",
-                        pixels_key="pixels"
-                    )
-                elif "pusht" in cfg.dataset_name:
-                    batch = self.model.encode(
-                        batch,
-                        target="embed",
-                        pixels_key="pixels",
-                        proprio_key=proprio_key,
-                        action_key="action",
-                    )
-                # Use history to predict next states
-                embedding = batch["embed"][:, : cfg.dinowm.history_size, :, :]  # (B, history_size, S, 64)
-                
-
-                # Request mask information for selective loss
-                pred_output = self.model.predict(embedding)
-                pixels_dim = batch["pixels_embed"].shape[-1]
-                
-                if len(pred_output[1]) > 0:  # mask_indices available
-                    pred_embedding, mask_indices = pred_output
-                    target_embedding = batch["embed"][:, cfg.dinowm.history_size : cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]  # (B, num_pred, S, 64)
-                    
-                    pred_history = pred_embedding[:, :cfg.dinowm.history_size, :, :]      # (B, T, S, 64)
-                    pred_future = pred_embedding[:, cfg.dinowm.history_size : cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]       # (B, num_pred, S, 64)
-                    
-                    # Loss 1: Masked slots in history (what was masked should be recovered)
-                    # Only compute loss on masked slots
-                    gt_history = embedding[:, :, :, :]  # Ground truth history (unmasked)
-                    loss_masked_history = F.mse_loss(
-                        pred_history[:, :, mask_indices, :pixels_dim],
-                        gt_history[:, :, mask_indices, :pixels_dim].detach()
-                    )
-                    loss_future = F.mse_loss(pred_future[..., :pixels_dim], target_embedding[..., :pixels_dim].detach())
-
-                            # Add proprioception loss if available
-                    if proprio_key is not None:
-                        proprio_dim = batch["proprio_embed"].shape[-1]
-                        proprio_loss = F.mse_loss(
-                            pred_future[..., pixels_dim : pixels_dim + proprio_dim],
-                            target_embedding[..., pixels_dim : pixels_dim + proprio_dim].detach(),
-                        )
-                        batch["proprio_loss"] = proprio_loss
-                        batch["loss"] = loss_masked_history + loss_future + proprio_loss
-                    else:
-                        batch["loss"] = loss_masked_history + loss_future
-                    batch["loss_masked_history"] = loss_masked_history
-                    batch["loss_future"] = loss_future
-                else :
-                    pred_embedding = pred_output[0]
-                    pred_future = pred_embedding[:, cfg.dinowm.history_size : cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]       # (B, num_pred, S, 64)
-                    target_embedding = batch["embed"][:, cfg.dinowm.history_size : cfg.dinowm.history_size + cfg.dinowm.num_preds, :, :]  # (B, num_pred, S, 64)
-                    loss_future = F.mse_loss(pred_future[..., :pixels_dim], target_embedding[..., :pixels_dim].detach())
-                    if proprio_key is not None:
-                        proprio_dim = batch["proprio_embed"].shape[-1]
-                        proprio_loss = F.mse_loss(
-                            pred_future[..., pixels_dim : pixels_dim + proprio_dim],
-                            target_embedding[..., pixels_dim : pixels_dim + proprio_dim].detach(),
-                        )
-                        batch["proprio_loss"] = proprio_loss
-                        batch["loss"] = loss_future + proprio_loss
-                    else:
-                        batch["loss"] = loss_future 
-                    
-
-
-                
-                # Flatten predictions for RankMe: (B, T, S, D) or (B, num_pred, S, D) -> (B*T, S*D) or (B*num_pred, S*D)
-                if isinstance(pred_output, tuple) and len(pred_output) > 0:
-                    # (B, T, S, D) -> (B*T, S*D)
-                    B, T, S, D = pred_output[0].shape
-                    pred_flat = pred_output[0].reshape(B*T, S*D)
-                else:
-                    # (B, num_pred, S, D) -> (B*num_pred, S*D)
-                    B, num_pred, S, D = pred_embedding.shape
-                    pred_flat = pred_embedding.reshape(B*num_pred, S*D)
-                batch["predictor_embed"] = pred_flat
-
-                # Log all losses
-                prefix = "train/" if self.training else "val/"
-                losses_dict = {f"{prefix}{k}": v.detach() for k, v in batch.items() if "loss" in k}
-                self.log_dict(losses_dict, on_step=True, sync_dist=True)
-
-                return batch
-            world_model_wrapped = spt.Module(
-                model=world_model_to_save,
-                forward=forward,
-                optim={
-                    "predictor_opt": add_opt("model.predictor", cfg.predictor_lr),
-                    "proprio_opt": add_opt("model.proprio_encoder", cfg.proprio_encoder_lr),
-                    "action_opt": add_opt("model.action_encoder", cfg.action_encoder_lr),
-                },
-            )
-
-            checkpoint_path = os.path.join(cache_dir, f"{cfg.output_model_name}_epoch_{epoch+1}_object.ckpt")
-            torch.save(world_model_wrapped, checkpoint_path)
-            logging.info(f"Saved checkpoint to {checkpoint_path}")
-
-   
-   
-    # Cleanup
-    if wandb_logger is not None:
-        wandb.finish()
-
-    cleanup_distributed()
+    
+    # Setup trainer
+    trainer = pl.Trainer(
+        **cfg.trainer,
+        callbacks=callbacks,
+        num_sanity_val_steps=1,
+        logger=wandb_logger,
+        enable_checkpointing=True,
+    )
+    
+    # Run training
+    manager = spt.Manager(
+        trainer=trainer,
+        module=world_model,
+        data=data,
+        ckpt_path=str(cache_dir / f"{cfg.output_model_name}_weights.ckpt"),
+        seed=cfg.seed,
+    )
+    manager()
 
 
 if __name__ == "__main__":
