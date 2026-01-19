@@ -41,7 +41,7 @@ image_size: 64
 patch_size: 16
 
 n_steps: ${eval:'${dinowm.num_preds} + ${dinowm.history_size}'}
-frameskip: 3
+frameskip: 5
 
 savi:
   weight: /cs/data/people/hnam16/savi_pretrained/ex101_20260108_023722_LR0.0001/savi/epoch/model_24.pth
@@ -51,19 +51,19 @@ savi:
 
 
 dinowm:
-  history_size: 5
-  num_preds: 3
+  history_size: 3
+  num_preds: 1
   proprio_dim: 4
-  proprio_embed_dim: 10
+  proprio_embed_dim: 12
   action_dim: 2
   action_embed_dim: 10
 
 # Masked Slot Predictor Configuration
-num_masked_slots: 2  # M: number of slots to mask during training
+num_masked_slots: 0  # M: number of slots to mask during training
 
 predictor:
   depth: 6
-  heads: 16
+  heads: 15
   mlp_dim: 2048
   dim_head: 64
   dropout: 0.1
