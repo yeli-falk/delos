@@ -4,36 +4,20 @@ defaults:
   - _self_
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
-  # - override hydra/launcher: submitit_slurm
 
 hydra:
   output_subdir: null
-  # mode: MULTIRUN
-  # launcher:
-  #   max_num_timeout: 999
-  #   gpus_per_node: 2
-  #   tasks_per_node: ${hydra.launcher.gpus_per_node}
-  #   cpus_per_task: 4
-  #   mem_gb: 48
-  #   timeout_min: 4600
-  #   partition: main
-  #   signal_delay_s: 120
-  #   constraint: lovelace
-  #   # setup:
-  #   # [
-  #   #   "tar -czf \"$SLURM_TMPDIR/stablewm.tgz\" -C \"$STABLEWM_HOME\" .",
-  #   #   "tar -xzf \"$SLURM_TMPDIR/stablewm.tgz\" -C \"$SLURM_TMPDIR\"",
-  #   #   "rm -f \"$SLURM_TMPDIR/stablewm.tgz\""
-  #   # ]
-  # run:
-  #   dir: .
 
 wandb:
   enable: true
   project: cjepa
   entity: heejeong_nam-brown-university
 
-dataset_name: clevrer # pusht_expert
+
+monitor_rankme: false                 
+rankme_queue_length: 2048 
+
+dataset_name: pusht_expert
 cache_dir: "/cs/data/people/hnam16/.stable_worldmodel"
 
 output_model_name: world_model
