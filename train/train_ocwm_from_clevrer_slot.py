@@ -215,7 +215,7 @@ def compute_loss(predictor, batch, cfg, device, inference=False):
     target_embedding = batch["embed"][:, cfg.dinowm.num_preds :, :, :]  # (B, T-1, patches, dim)
 
     # Compute pixel latent prediction loss
-    pixels_dim = batch["pixels_embed"].shape[-1]
+    # pixels_dim = batch["pixels_embed"].shape[-1]
     loss= F.mse_loss(preds, target_embedding.detach())
 
     return  {"loss": loss}
@@ -304,10 +304,10 @@ def rollout_video_slots(predictor, pre_slots, cfg, device, batch_size=None):
 
         for off_idx in range(frameskip):
             # Start position for history (subsampled)
-            start = OBS_FRAMES - history_len * frameskip + off_idx
+            start = OBS_FRAMES - pred_len * frameskip + off_idx
 
             # Extract history with frameskip: [B, history_len, N, C]
-            history_indices = list(range(start, OBS_FRAMES, frameskip))
+            history_indices = list(range(start, OBS_FRAMES, frameskip))[:history_len]
             history = extended_slots[:, history_indices, :, :]  # [B, history_len, N, C]
 
             # Calculate how many autoregressive steps needed
@@ -531,39 +531,39 @@ def run(cfg):
         torch.save(state_dict, final_path)
         logging.info(f"Saved final model to {final_path}")
 
-    # Rollout slots (only on main process)
-    if cfg.rollout.get("save_rollout", False) and is_main_process(rank):
-        logging.info("Starting slot rollout (128 -> 160 frames)...")
+    # # Rollout slots (only on main process)
+    # if cfg.rollout.get("save_rollout", False) and is_main_process(rank):
+    #     logging.info("Starting slot rollout (128 -> 160 frames)...")
 
-        # Use the model without DDP wrapper for inference
-        predictor_for_rollout = predictor.module if is_ddp else predictor
-        predictor_for_rollout.eval()
+    #     # Use the model without DDP wrapper for inference
+    #     predictor_for_rollout = predictor.module if is_ddp else predictor
+    #     predictor_for_rollout.eval()
 
-        rollout_data = {}
+    #     rollout_data = {}
 
-        for split in ["train", "val", "test"]:
-            if split not in data:
-                logging.warning(f"Split '{split}' not found in data, skipping...")
-                continue
+    #     for split in ["train", "val", "test"]:
+    #         if split not in data:
+    #             logging.warning(f"Split '{split}' not found in data, skipping...")
+    #             continue
 
-            logging.info(f"Processing {split} split...")
-            rollout_data[split] = rollout_video_slots(
-                predictor_for_rollout, data[split], cfg, device, batch_size=cfg.rollout.get("rollout_batch_size", None)
-            )
-            logging.info(f"Finished {split}: {len(rollout_data[split])} videos")
+    #         logging.info(f"Processing {split} split...")
+    #         rollout_data[split] = rollout_video_slots(
+    #             predictor_for_rollout, data[split], cfg, device, batch_size=cfg.rollout.get("rollout_batch_size", None)
+    #         )
+    #         logging.info(f"Finished {split}: {len(rollout_data[split])} videos")
 
-        # Save rollout data
-        embedding_path = Path(cfg.embedding_dir)
-        rollout_filename = f"rollout_{str(embedding_path.name)[:-4]}_lr{cfg.predictor_lr}_mask{cfg.num_masked_slots}.pkl"
-        rollout_path = embedding_path.parent / rollout_filename
+    #     # Save rollout data
+    #     embedding_path = Path(cfg.embedding_dir)
+    #     rollout_filename = f"rollout_{str(embedding_path.name)[:-4]}_lr{cfg.predictor_lr}_mask{cfg.num_masked_slots}.pkl"
+    #     rollout_path = embedding_path.parent / rollout_filename
 
-        with open(rollout_path, "wb") as f:
-            pkl.dump(rollout_data, f)
+    #     with open(rollout_path, "wb") as f:
+    #         pkl.dump(rollout_data, f)
 
-        logging.info(f"Saved rollout slots to {rollout_path}")
+    #     logging.info(f"Saved rollout slots to {rollout_path}")
 
-        if wandb_logger is not None:
-            wandb_logger.log({"rollout/path": str(rollout_path)})
+    #     if wandb_logger is not None:
+    #         wandb_logger.log({"rollout/path": str(rollout_path)})
 
     # Cleanup
     if wandb_logger is not None:
