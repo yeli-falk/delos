@@ -32,8 +32,16 @@ PUBLICATION_TAGS = ("article", "inproceedings", "incollection", "book",
 
 
 def stream_publications(xml_path: str, include_tags: tuple, min_year: int,
-                        max_year: int, progress_every: int = 200_000):
-    """Yield (authors: list[str], year: int) per publication."""
+                        max_year: int, max_authors: int = 30,
+                        progress_every: int = 200_000):
+    """Yield (authors: list[str], year: int) per publication.
+
+    `max_authors` skips publications with more than this many authors. DBLP
+    contains large physics-collaboration papers with 1000-3000+ authors; left
+    unfiltered, a single one produces C(3000,2) ~= 4.5M coauthorship edges and
+    the edge-emit phase explodes into billions of rows. Real collaboration
+    signal lives in small-author papers anyway.
+    """
     from lxml import etree as ET
 
     is_gz = str(xml_path).endswith(".gz")
@@ -41,6 +49,7 @@ def stream_publications(xml_path: str, include_tags: tuple, min_year: int,
     t0 = time.time()
     count_total = 0
     count_yielded = 0
+    count_skipped_big = 0
     with opener(xml_path, "rb") as f:
         # recover=True swallows DBLP's DTD-defined HTML entities (e.g. &auml;)
         # without aborting. We don't resolve them, so author names containing
@@ -60,19 +69,25 @@ def stream_publications(xml_path: str, include_tags: tuple, min_year: int,
                 if txt.isdigit():
                     year = int(txt)
             if year is not None and min_year <= year <= max_year and len(authors) >= 2:
-                yield authors, year
-                count_yielded += 1
-            # Free memory: clear element + all preceding siblings still attached
-            # to the parent.
+                if len(authors) > max_authors:
+                    count_skipped_big += 1
+                else:
+                    yield authors, year
+                    count_yielded += 1
+            # Free memory: clear this element AND every preceding sibling still
+            # attached to the root. DBLP interleaves millions of <www>/<book>/
+            # <proceedings> entries we don't yield callbacks for; those pile up
+            # on the root and must be dropped here or memory + parse time blow
+            # up. getprevious()/del parent[0] are O(1) in lxml (linked list);
+            # the old parent.index(elem) scan was O(n) -> O(n^2) total.
             elem.clear()
-            parent = elem.getparent()
-            if parent is not None:
-                while parent.index(elem) > 0:
-                    del parent[0]
+            while elem.getprevious() is not None:
+                del elem.getparent()[0]
             if count_total % progress_every == 0:
                 rate = count_total / max(time.time() - t0, 1e-6)
                 print(f"  ... read {count_total:,} pubs "
-                      f"({count_yielded:,} kept) -- {rate:,.0f} pubs/s")
+                      f"({count_yielded:,} kept, {count_skipped_big:,} skipped >"
+                      f"{max_authors} authors) -- {rate:,.0f} pubs/s", flush=True)
 
 
 def main():
@@ -84,6 +99,9 @@ def main():
     p.add_argument("--max_year", type=int, default=2023)
     p.add_argument("--min_author_papers", type=int, default=5,
                    help="Drop authors with fewer than this many qualifying papers.")
+    p.add_argument("--max_authors", type=int, default=30,
+                   help="Skip publications with more than this many authors "
+                        "(large physics collaborations explode the edge count).")
     p.add_argument("--include_tags", default="article,inproceedings,incollection",
                    help="Comma-separated DBLP entry tags to include.")
     p.add_argument("--limit", type=int, default=None,
@@ -106,6 +124,7 @@ def main():
 
     for authors, year in stream_publications(
         args.xml_path, include_tags, args.min_year, args.max_year,
+        max_authors=args.max_authors,
     ):
         ids = []
         for name in authors:
