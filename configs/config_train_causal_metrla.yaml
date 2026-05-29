@@ -1,0 +1,33 @@
+# Config for METR-LA C-JEPA training.
+# The training script (src/train/train_cjepa_metr_la.py) reads CLI flags rather
+# than this YAML directly; this file is here as the canonical hyperparameter
+# reference and so users have a place to copy from when porting to Hydra.
+
+dataset:
+  name: metr-la
+  data_dir: dataset/metr_la           # expects metr-la.h5 + adj_mx.pkl
+  history_size: 12                    # 12 steps = 1 hour at 5 min/step
+  num_preds: 12
+
+model:
+  encoder_kind: gcn                   # linear | gcn
+  encoder_hidden: 64
+  node_dim: 64                        # slot/embedding dim
+  depth: 4
+  heads: 4
+  mlp_dim: 256
+  dropout: 0.1
+  num_masked_nodes: 30                # ~15% of 207 sensors
+  allow_temporal_neighbors: false
+
+train:
+  batch_size: 32
+  num_workers: 4
+  epochs: 20
+  lr: 5.0e-4
+  weight_decay: 1.0e-4
+  seed: 42
+
+eval:
+  probe_epochs: 3
+  horizons_steps: [2, 5, 11]          # ~ 15, 30, 60 min after history

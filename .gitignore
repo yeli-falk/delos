@@ -170,3 +170,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Claude
+.claude/
+
+#test notebook
+tests.ipynb
