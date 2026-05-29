@@ -1,172 +1,179 @@
-# C-JEPA
-## Causal-JEPA: Learning World Models through Object-Level Latent Interventions
-by [Heejeong Nam](https://hazel-heejeong-nam.github.io/), [Quentin Le Lidec\*](https://quentinll.github.io/),[Lucas Maes\*](https://lucasmaes.bearblog.dev/), [Yann LeCun](http://yann.lecun.com/), [Randall Balestriero](https://randallbalestriero.github.io/).
+# Graph C-JEPA
 
-* Paper: [https://arxiv.org/abs/2602.11389](https://arxiv.org/abs/2602.11389)
-* Project Page: [https://hazel-heejeong-nam.github.io/cjepa/](https://hazel-heejeong-nam.github.io/cjepa/)
+Extension of C-JEPA from object-centric video slots to **graph nodes**, for
+self-supervised representation learning on spatiotemporal and dynamic graphs.
 
-![architecture](static/architecture.png)
+The same machinery runs in two settings:
 
-## Summary
-World models require robust relational understanding to support prediction, reasoning, and control. While object-centric representations provide a useful abstraction, they are not sufficient to capture interaction-dependent dynamics. We therefore propose C-JEPA, a simple and flexible object-centric world model that extends masked joint embedding prediction from image patches to object-centric representations. 
-By applying object-level masking that requires an object's state to be inferred from other objects, C-JEPA induces latent interventions with counterfactual-like effects and prevents shortcut solutions, making interaction reasoning essential.
-Empirically, C-JEPA leads to consistent gains in visual question answering, with **an absolute improvement of about 20\% in counterfactual reasoning** compared to the same architecture without object-level masking. On agent control tasks, C-JEPA enables substantially more efficient planning by **using only 1\% of the total latent input features required by patch-based world models**, while achieving comparable performance. Finally, we provide a formal analysis demonstrating that object-level masking induces a causal inductive bias via latent interventions.
+| setting | dataset | topology | task | metric |
+|---|---|---|---|---|
+| spatiotemporal forecasting | METR-LA | fixed (207 sensors) | future speed | MAE / RMSE / MAPE |
+| dynamic graph (DTDG) | DBLP coauthorship-by-year | evolving | future links | MRR / Hits@k |
 
+## Idea
 
-## Setup
-* Please refer to [ENV.md](docs/ENV.md) for environment setup.
-* C-JEPA is mainly built on top of [Stable-WorldModel](https://galilai-group.github.io/stable-worldmodel/) and [Stable-Pretraining](https://galilai-group.github.io/stable-pretraining/).
-* We adopt [original repo here](https://github.com/martius-lab/videosaur) for training VideoSAUR.
-* We adopt [original repo here](https://github.com/pairlab/SlotFormer) for SAVi and VQA model for CLEVRER (a.k.a. ALOE).
+C-JEPA's three video ingredients map onto graphs:
 
-## Dataset Preparation
-Please refer to [DATASET.md](docs/DATASET.md) for dataset preparation.
+- **object slots → graph nodes** (stable identity across time)
+- **history frames → graph snapshots** at `t-3 … t`
+- **masked-history + forward-prediction → same loss in latent space**, but over
+  node tokens instead of slot tokens.
 
-## Object-Centric Model / Representations for C-JEPA
-C-JEPA relies on object-centric encoders to extract object-centric representations. You can train the encoder by yourself, or download the model checkpoints from HuggingFace, or download the pre-extracted slot representations.
+Prediction happens in a **frozen encoder's latent space**, never in input
+(adjacency / feature) space. The frozen encoder makes representation collapse
+impossible (targets are constants, not co-trained), so no EMA / VICReg tricks
+are needed.
 
-![visualization](static/encoder_vis.png)
-
-### 1. Train Object-Centric Encoder
-* Train VideoSAUR on CLEVRER
-  ```
-  PYTHONPATH=. python src/third_party/videosaur/videosaur/train.py \
-      src/third_party/videosaur/configs/videosaur/clevrer_dinov2_hf.yml \
-      dataset.train_shards="/to/data/path/clevrer-train-{000000..0000XX}.tar" \
-      dataset.val_shards="/to/data/path/clevrer-val-{000000..0000XX}.tar" \
-      globals.BATCH_SIZE_PER_GPU=32 \
-  ```
-
-* Train SAVi on CLEVRER
-
-  * Refer to slotformer repo to setup data for train savi. Then you have to modify `data_root` and `gpus` in `src/third_party/slotformer/base_slots/configs/stosavi_clevrer_params.py` to point to the data directory. After that, you can run the code below to train SAVi on CLEVRER.
-
-  * Before running the code, replace whole `src/third_party/nerv/nerv/utils/misc.py` with `src/custom_codes/misc.py`. This is because the original code is based on `pytorch-lightning==0.8.*` while we are using `pytorch-lightning==2.6.*`.
-
-  ```
-  PYTHONPATH=. torchrun --nproc_per_node=3 src/aloe_train.py \
-    --task base_slots \
-    --params src/third_party/slotformer/base_slots/configs/stosavi_clevrer_params.py \
-    --exp_name clevrer_savi_reproduce \
-    --out_dir $OUTDIR \
-    --fp16 --ddp --cudnn
-  ```
-
-* Train VideoSAUR on PushT
-  ```
-  PYTHONPATH=. python src/third_party/videosaur/videosaur/train.py \
-      src/third_party/videosaur/configs/videosaur/pusht_dinov2_hf.yml \
-      dataset.train_shards="pusht_mixed/train/pusht-train-{000000..0000xx}.tar" \
-      dataset.val_shards="pusht_mixed/validation/pusht-val-{000000..00000x}.tar"
-  ```
-
-### 2. Model Checkpoints
-| Dataset      | Encoder    |  Hyperparams                      | Checkpoint Link                                                                                             |
-|--------------|------------------|---------------------------|------------------------------------------------------------------------------------------------------------|
-| CLEVRER       | VideoSAUR   | clevrer_dinov2_hf.yml        | [Checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/clevrer_videosaur_model.ckpt) |
-| CLEVRER       | SAVi   | stosavi_clevrer_params.py        | [Checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/clevrer_savi_model.pth) |
-| Push-T       | VideoSAUR   | pusht_dinov2_hf.yml        | [Checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/pusht_videosaur_model.ckpt) |
-
-### 3. Pre-extracted Slot Representations
-| Dataset      | Encoder    |  Config                      | Checkpoint Link                                                                                             |
-|--------------|------------------|---------------------------|------------------------------------------------------------------------------------------------------------|
-| CLEVRER       | VideoSAUR   | clevrer_dinov2_hf.yml        | [Checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/clevrer_videosaur_slots.pkl) |
-| CLEVRER       | SAVi   | stosavi_clevrer_params.py       | [Checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/clevrer_savi_slots.pkl) |
-| PUSHT       | VideoSAUR   | pusht_dinov2_hf.yml        | [Checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/pusht_videosaur_slots.pkl) |
-
-
-## Train / Download C-JEPA
-
-### Extract slot representations with the checkpoints
-
-Use this only if you want to extract slots by yourself. If you are using pre-extracted slots, you can skip this step and directly download the pre-extracted slots from HuggingFace.
-
-* CLEVRER SAVi slots 
-  *  Refer to slotformer repo to setup data for train savi. Then you have to modify `data_root` in `src/third_party/slotformer/base_slots/configs/stosavi_clevrer_params.py` to point to the data directory. After that, you can run the code below to train SAVi on CLEVRER.
-  ```
-  PYTHONPATH=. python src/third_party/slotformer/base_slots/extract_slots.py --params src/third_party/slotformer/base_slots/configs/stosavi_clevrer_params.py  --weight $WEIGHT  --save_path clevrer_savi_slots.pkl
-  ```
-* CLEVRER VideoSAUR 
-  ```
-  PYTHONPATH=. python src/third_party/slotformer/base_slots/extract_videosaur.py --weight $WEIGHT --data_root="~/.stable_worldmodel"   --save_path=$SAVE_DIR --dataset="clevrer"  --videosaur_config="src/third_party/videosaur/configs/videosaur/clevrer_dinov2_hf.yml" 
-  ```
-* PushT VideoSAUR Slots
-  ```
-  PYTHONPATH=. python src/third_party/slotformer/base_slots/extract_videosaur.py --weight $WEIGHT --data_root="~/.stable_worldmodel"   --save_path=$SAVE_DIR  --dataset="pusht_expert"  --videosaur_config="src/third_party/videosaur/configs/videosaur/pusht_dinov2_hf.yml"   --params="src/third_party/slotformer/aloe_pusht_params.py"
-  ```
-
-* Extracted pkl will look like:
-
-  ```
-  {
-      'train': {'0_pixels.mp4': slots, '1_pixels.mp4': slots, ...},  # slots: [T, N, 128] each
-      'val': {...},
-      'test': {...}
-  }
-  ```
-
-### 2. Run C-JEPA with pre-extracted slot representations
-
-Use scripts below. You can change the config file and the checkpoint path to run with different settings. For example, you can change `num_masked_slots` to control how many slots are masked.
-
-```sh
-sh script/clevrer/train_cjepa_from_slot.sh
-sh script/pusht/train_cjepa_from_slot.sh 
+```
+raw signals (B,T,N,F)
+  │  frozen encoder (Linear / GCN / T-GCN), pretrained GraphMAE-style
+  ▼
+latent slots (B,T,N,D)
+  │  MaskedNodePredictor: mask M nodes' history + all future, predict latents
+  ▼
+predicted latents (B,T,N,D)  ── JEPA loss (masked-history + forward) in latent space
+  │  linear / pairwise probe (fit separately, frozen backbone)
+  ▼
+forecast: speed MAE   |   link prediction MRR / Hits@k
 ```
 
-### 3. Download C-JEPA checkpoints
-* We release checkpoints for C-JEPA trained with different object-centric backbones and different number of masked slots. 
-* (*) means it performs best. (See the paper for details.)
+Labels enter **only at the probe stage** — encoder pretraining and JEPA
+training are fully self-supervised. (On METR-LA, "labels" are speed values
+used as masked-reconstruction targets within a window, not held-out future
+targets; the future-time supervision only appears in the probe.)
 
-| Dataset      |   OC-Backbone    |    Masked Slots / Total Slots    | Checkpoint Link                                                 |
-|--------------|------------------|---------------------------|------------------------------------------------------------------|
-| CLEVRER       | VideoSAUR   | 0/7       | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_videosaur_0_epoch_30_object.ckpt)                             |
-| CLEVRER       | VideoSAUR   | 1/7       | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_videosaur_1_epoch_30_object.ckpt)                             |
-| CLEVRER       | VideoSAUR   | 2/7      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_videosaur_2_epoch_30_object.ckpt)                             |
-| CLEVRER       | VideoSAUR   | 3/7      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_videosaur_3_epoch_30_object.ckpt)                             |
-| CLEVRER       | VideoSAUR   | 4/7 (*)     | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_videosaur_4_epoch_30_object.ckpt)                             |
-| CLEVRER       | SAVi        | 0/7      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_savi_0_epoch_30_object.ckpt)                             |
-| CLEVRER       | SAVi        | 1/7      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_savi_1_epoch_30_object.ckpt)                             |
-| CLEVRER       | SAVi        | 2/7 (*)     | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_savi_2_epoch_30_object.ckpt)                             |
-| CLEVRER       | SAVi        | 3/7      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_savi_3_epoch_30_object.ckpt)                             |
-| CLEVRER       | SAVi        | 4/7      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/clevrer_savi_4_epoch_30_object.ckpt)                             |
-| PUSHT       | VideoSAUR   | 0/4      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/pusht_videosaur_0_epoch_30_object.ckpt)                             |
-| PUSHT       | VideoSAUR   | 1/4  (*)    | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/pusht_videosaur_1_epoch_30_object.ckpt)                             |
-| PUSHT       | VideoSAUR   | 2/4      | [checkpoint](https://huggingface.co/HazelNam/CJEPA/blob/main/cjepa-ckpts/pusht_videosaur_2_epoch_30_object.ckpt)                             |   
+## Files
 
-## Evaluation
-### Evaluate Control on Push-T
-  ```
-  sh scripts/pusht/test_planning.sh
-  ```
+**Core model**
+- [`src/cjepa_graph_predictor.py`](../src/cjepa_graph_predictor.py) —
+  `MaskedNodePredictor` (spacetime transformer with SDPA attention,
+  per-timestep adjacency, optional edge head), `compute_graph_jepa_loss`,
+  `build_spacetime_mask`.
+- [`src/world_models/graph_jepa_encoder.py`](../src/world_models/graph_jepa_encoder.py) —
+  encoders (`LinearNodeEncoder`, `GCNNodeEncoder`, `TGCNEncoder`),
+  `EncoderPretrainer` (masked-feature reconstruction), probes
+  (`LinearProbe`, `LinkPredictionProbe`), `link_ranking_metrics`,
+  `normalize_adjacency`, `build_encoder`.
 
-### Evaluate Visual Reasoning on CLEVRER
+**Datasets**
+- [`src/custom_codes/metr_la_dataset.py`](../src/custom_codes/metr_la_dataset.py) —
+  METR-LA via the HuggingFace parquet mirror or the DCRNN `.h5`; synthetic fallback.
+- [`src/custom_codes/dblp_dataset.py`](../src/custom_codes/dblp_dataset.py) —
+  DBLP-style yearly co-authorship from an `(src,dst,year)` CSV; synthetic fallback.
 
-  * We will first rollout slots (from 128 frame to 160 frame) with C-JEPA checkpoint and pre-extracted slots.
+**Training**
+- `src/train/pretrain_encoder_{metr_la,dblp}.py` — GraphMAE-style encoder pretraining.
+- `src/train/train_cjepa_{metr_la,dblp}.py` — JEPA training + probe + eval.
 
-  ```
-  # change CKPTPATH and SLOTPATH, `predictor_lr`, `num_masked_slots` before. SLOTPATH should be matched with the checkpoint that you are using (dataset, oc-encoder) and it should point to the pre-extracted slot representations. For example, if you are using `clevrer_savi_2.ckpt`, you should use `clevrer_savi_slots.pkl` and set `num_masked_slots` to 2.
-  # `predictor_lr` (default=5e-4), `num_masked_slots` should be matched with config is CKPT that you are using (they go to the output name)
-  # output name will be like : rollout_{SLOTPATH name}_{CKPT lr, CKPT masked slot}
-  sh scripts/clevrer/rollout_from_slot.sh
-  ```
-  * This will save output file under the same directory as the pre-extracted slot representations.
-  ```
-  # rollout_clevrer_slots_{configuration}.pkl :
-  {
-      'train': {'0_pixels.mp4': slots, '1_pixels.mp4': slots, ...},  # slots: [160, N, 128] each
-      'val': {...},
-      'test': {...}
-  }
-  ```
-  * Then you can run the code below to evaluate C-JEPA on CLEVRER visual question answering.
-  * Again, before running the code, replace whole `src/third_party/nerv/nerv/utils/misc.py` with `src/custom_codes/misc.py`. This is because the thrid-party code is based on `pytorch-lightning==0.8.*` while we are using `pytorch-lightning==2.6.*`.
-  * You should change params manually in `src/third_party/slotformer/clevrer_vqa/configs/aloe_clevrer_params-rollout.py`. For example, 
-    * `gpu` (it should exactly match the number of the visible devices)
-    * `lr`
-  * Then run script below to train and test aloe.
+**Scripts**
+- `scripts/metr_la/` — `download_metr_la.sh`, `train_cjepa.sh` (laptop),
+  `slurm_pretrain_encoder.sh`, `slurm_pretrain_tgcn.sh`, `slurm_train.sh`,
+  `requirements.txt`.
+- `scripts/dblp/` — `preprocess_dblp_xml.py` (raw dump → CSV),
+  `pickled_to_csv.py` / `tgb_to_edges_csv.py` (other source formats),
+  `slurm_preprocess_dblp.sh`, `slurm_pretrain_encoder.sh`, `slurm_train.sh`.
 
-  ```
-  sh scripts/clevrer/train_aloe.sh
-  sh scripts/clevrer/test_aloe.sh
-  ```
+## Setup
+
+```bash
+conda create -n cjepa python=3.10 -y && conda activate cjepa
+pip install -r scripts/metr_la/requirements.txt   # torch<2.6 (sm_70-friendly), einops, pandas, pyarrow, h5py, huggingface_hub
+pip install lxml                                   # only for DBLP XML preprocessing
+```
+
+On a V100 (CC 7.0) pin `torch==2.5.1+cu121` — PyPI wheels ≥2.6 drop sm_70.
+
+## METR-LA workflow
+
+```bash
+# 1. Data (HuggingFace mirror, ~217 MB)
+bash scripts/metr_la/download_metr_la.sh
+
+# 2. Pretrain the encoder (GraphMAE-style masked-speed reconstruction)
+sbatch scripts/metr_la/slurm_pretrain_tgcn.sh          # T-GCN encoder
+#   or scripts/metr_la/slurm_pretrain_encoder.sh        # plain GCN encoder
+
+# 3. JEPA train + linear probe + test eval
+sbatch scripts/metr_la/slurm_train.sh \
+    --encoder_ckpt outputs/metr_la_encoder_tgcn/encoder.ckpt --epochs 10
+
+# Local smoke test (no data / no GPU needed)
+PYTHONPATH=. python src/train/train_cjepa_metr_la.py --synthetic --smoke --device cpu
+```
+
+The JEPA trainer auto-detects the encoder kind / dims from the checkpoint, so
+you never pass `--encoder_kind` when loading a pretrained encoder.
+
+### Results (linear probe on frozen latents)
+
+| encoder | MAE@15 | MAE@30 | MAE@60 |
+|---|---|---|---|
+| random GCN | 8.00 | 8.38 | 9.19 |
+| pretrained GCN | 7.56 | 8.01 | 8.58 |
+| **pretrained T-GCN** | **5.28** | **5.98** | **7.22** |
+| DCRNN (supervised, end-to-end) | 2.77 | 3.15 | 3.60 |
+
+The gap to DCRNN is the standard **linear-probe-vs-supervised** gap — DCRNN
+trains everything on speed labels end-to-end; we train a tiny linear map on a
+frozen self-supervised representation. Add end-to-end fine-tuning to close it.
+
+## DBLP (dynamic graph) workflow
+
+```bash
+# 1. Get edges as `src,dst,year` CSV. Either:
+#    (a) parse the official XML dump (run as a job; OOMs on login nodes):
+wget https://dblp.org/xml/dblp.xml.gz -O dataset/dblp/dblp.xml.gz
+sbatch scripts/dblp/slurm_preprocess_dblp.sh    # → dataset/dblp/edges.csv
+#    (b) convert a pickled-snapshots dump (DySAT/EvolveGCN style):
+python scripts/dblp/pickled_to_csv.py --input graphs.pkl --output dataset/dblp/edges.csv
+
+# 2. Subsample to a tractable node count (dense NxN adjacency!)
+python - <<'PY'
+import pandas as pd
+df = pd.read_csv('dataset/dblp/edges.csv', header=None, names=['src','dst','year'])
+deg = pd.concat([df.src, df.dst]).value_counts()
+keep = set(deg.head(2000).index)
+sub = df[df.src.isin(keep) & df.dst.isin(keep)].copy()
+ids = {o:n for n,o in enumerate(sorted(set(sub.src)|set(sub.dst)))}
+sub.src, sub.dst = sub.src.map(ids), sub.dst.map(ids)
+sub.to_csv('dataset/dblp/edges_top2k.csv', header=False, index=False)
+PY
+
+# 3. Pretrain encoder, then JEPA train + link-prediction probe
+sbatch scripts/dblp/slurm_pretrain_encoder.sh
+sbatch scripts/dblp/slurm_train.sh   # auto-detects encoder.ckpt + edges.csv
+
+# Local smoke test
+PYTHONPATH=. python src/train/train_cjepa_dblp.py --synthetic --smoke \
+    --device cpu --synthetic_years 60
+```
+
+## Key design notes
+
+- **Per-timestep adjacency.** `_spatial_aggregate` dispatches any adjacency
+  shape — `(N,N)` static, `(T,N,N)` dynamic, `(B,N,N)`, `(B,T,N,N)` — through
+  the right einsum, so METR-LA (broadcast static) and DBLP (per-year) share one
+  code path.
+- **SDPA attention.** `MaskedNodePredictor` uses
+  `F.scaled_dot_product_attention`; the dense `(B,1,TN,TN)` structural mask is
+  off by default (`--no_attention_mask`) on METR-LA because at 207 nodes it
+  forces SDPA off its memory-efficient kernel.
+- **Per-batch random node masking.** Masked node indices are resampled every
+  forward pass during training (fixed seed only in eval) — fixing them collapses
+  training on graphs where node identity is geographic.
+- **Best-checkpoint reload before probe.** Training that bottoms early then
+  diverges still evaluates the best-val checkpoint, not the final-epoch one.
+- **Encoder ceiling.** Plain GCN pretraining saturates at ~13% explained
+  variance (no temporal mixing); T-GCN (spatial GCN + bidirectional GRU) reaches
+  ~24% and is the reason MAE drops from 7.56 → 5.28.
+
+## Status / next steps
+
+- [x] METR-LA spatiotemporal pipeline (pretrain → JEPA → probe → MAE)
+- [x] T-GCN encoder closes most of the gap to supervised baselines
+- [x] DTDG scaffolding: per-timestep adjacency, DBLP dataset, link-prediction probe
+- [x] DBLP XML preprocessor
+- [ ] First link-prediction numbers on real DBLP (top-K subsample)
+- [ ] End-to-end fine-tune variant for apples-to-apples vs supervised baselines
+- [ ] Edge-masking pretraining objective (more principled for DTDG)
+- [ ] Sparse adjacency for full-scale graphs (>10k nodes)
