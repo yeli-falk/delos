@@ -213,11 +213,12 @@ def _parse_jodie_csv(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return users, items, times
 
 
-def _state_label_vector(path: Path, num_nodes: int, top_k_users: int,
-                        top_k_items: int) -> np.ndarray:
+def _state_label_vector(path: Path, num_nodes: int, top_k_users: Optional[int],
+                        top_k_items: Optional[int]) -> np.ndarray:
     """Per-node binary 'ever underwent a state change' label, JODIE's canonical
-    dynamic-node-classification target. Users in the top-K subset get 0/1;
-    everyone else (and all items) gets -1 (excluded from the probe)."""
+    dynamic-node-classification target. Users in the top-K subset (every user
+    when top_k_users is 0/None) get 0/1; everyone else (and all items) gets -1
+    (excluded from the probe)."""
     users_full, items_full, _, states_full = _parse_jodie_csv_with_state_labels(path)
     keep_u, _ = top_k_bipartite(users_full, items_full, top_k_users, top_k_items)
     keep_u_arr = np.array(sorted(keep_u), dtype=np.int64)
@@ -237,7 +238,7 @@ def _state_label_vector(path: Path, num_nodes: int, top_k_users: int,
 
 
 def _state_label_matrix(path: Path, num_nodes: int, num_bins: int,
-                        top_k_users: int, top_k_items: int,
+                        top_k_users: Optional[int], top_k_items: Optional[int],
                         mode: str = "event") -> np.ndarray:
     """Per-(bin, node) binary state-change label — the *dynamic* JODIE target.
 
@@ -316,6 +317,8 @@ class JODIEDynamicGraphDataset(Dataset):
                  cache key).
       num_bins:  number of DTDG snapshots to bin events into (default 30).
       top_k_users / top_k_items: keep only the most-active K of each side.
+                 0 / None (the default) keeps every node, i.e. the dataset
+                 is used at its full size.
       history_size / num_preds: window lengths.
       split:     "train" | "val" | "test", chronological 70/10/20.
     """
@@ -330,8 +333,8 @@ class JODIEDynamicGraphDataset(Dataset):
         num_preds: int = 1,
         dataset: str = "reddit",
         num_bins: int = 30,
-        top_k_users: int = 800,
-        top_k_items: int = 200,
+        top_k_users: Optional[int] = 0,
+        top_k_items: Optional[int] = 0,
         feat_dim: int = 8,
         stride: int = 1,
         seed: int = 42,

@@ -10,7 +10,7 @@ Data sources:
   - "jodie_wikipedia": JODIE Wikipedia binned to DTDG
   - "jodie_mooc":      JODIE MOOC binned to DTDG (densest state labels)
 
-JODIE-specific kwargs (num_bins, top_k_users, top_k_items, jodie_data_path)
+JODIE-specific kwargs (num_bins, top_k_users, top_k_items [0 = full size], jodie_data_path)
 are passed through; the DBLP class quietly ignores them.
 """
 from __future__ import annotations
@@ -56,8 +56,13 @@ def add_dataset_cli_flags(p) -> None:
                         "dataset/jodie/<dataset>.csv when --data_source is jodie_*.")
     p.add_argument("--jodie_num_bins", type=int, default=30,
                    help="Number of DTDG snapshots to bin JODIE events into.")
-    p.add_argument("--jodie_top_k_users", type=int, default=800)
-    p.add_argument("--jodie_top_k_items", type=int, default=200)
+    p.add_argument("--jodie_top_k_users", type=int, default=0,
+                   help="Keep only the K most-active users. 0 (default) keeps "
+                        "every user: JODIE Wikipedia / Reddit / MOOC are used "
+                        "at full size unless a subset is explicitly requested.")
+    p.add_argument("--jodie_top_k_items", type=int, default=0,
+                   help="Keep only the K most-active items. 0 (default) keeps "
+                        "every item.")
     p.add_argument("--reddit_data_path", default=None,
                    help="Path to a SNAP Reddit-hyperlinks TSV. Defaults to "
                         "dataset/reddit/soc-redditHyperlinks-<variant>.tsv "

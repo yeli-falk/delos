@@ -23,7 +23,7 @@ Protocol (matched to every other baseline for direct comparability):
 Usage:
     python -m src.baselines.jodie.train_jodie \
         --data_source jodie_mooc --jodie_data_path dataset/jodie/mooc.csv \
-        --jodie_num_bins 30 --jodie_top_k_users 3000 --jodie_top_k_items 97 \
+        --jodie_num_bins 30 \
         --with_edge_features --node_dim 128 --epochs 30 --device cuda \
         --out_dir outputs/jodie_mooc
 

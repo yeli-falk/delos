@@ -225,10 +225,10 @@ label 0) is reported too.
 
 ```bash
 # needs the final-table artefacts for the seed (shared encoder, jepa_frozen, ddgcl)
-DATASET=mooc TOPU=7047 ROOT=outputs/cls_mooc_full SEED=42 \
+DATASET=mooc ROOT=outputs/cls_mooc_full SEED=42 \
     bash scripts/classification/slurm_finetune.sh --list          # 40 cells
 for S in 42 43 44; do
-  DATASET=mooc TOPU=7047 ROOT=outputs/cls_mooc_full SEED=$S \
+  DATASET=mooc ROOT=outputs/cls_mooc_full SEED=$S \
     sbatch --array=0-39%6 scripts/classification/slurm_finetune.sh
 done
 python scripts/classification/aggregate_finetune.py \

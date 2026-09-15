@@ -35,7 +35,7 @@ windows, select on val AUROC, report test.
 
 Run:
     python src/train/finetune_state.py --data_source jodie_mooc \
-        --with_edge_features --jodie_top_k_users 7047 --jodie_top_k_items 97 \
+        --with_edge_features \
         --jepa_ckpt outputs/cls_mooc_full/jepa_frozen_s42/best.ckpt \
         --init jepa --label_fraction 0.1 --aux_jepa_weight 1.0 \
         --out_dir outputs/cls_mooc_full/finetune/jepa_aux1_f0.1_s42

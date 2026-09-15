@@ -27,7 +27,6 @@ Usage:
     python scripts/dblp/run_baselines.py \\
         --data_source jodie_reddit \\
         --jodie_data_path dataset/jodie/reddit.csv \\
-        --jodie_top_k_users 800 --jodie_top_k_items 200 \\
         --out_dir outputs/baselines_jodie_reddit
 """
 from __future__ import annotations

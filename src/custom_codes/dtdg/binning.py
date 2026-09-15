@@ -27,13 +27,30 @@ from src.custom_codes.dtdg.features import aggregate_edge_features_to_nodes
 # ---------------------------------------------------------------------------
 # Top-K node selection
 # ---------------------------------------------------------------------------
+def _keep_all(k: Optional[int]) -> bool:
+    """``None`` or a non-positive K means "no subsetting, keep every node"."""
+    return k is None or int(k) <= 0
+
+
 def top_k_bipartite(users: np.ndarray, items: np.ndarray,
-                    top_k_users: int, top_k_items: int) -> Tuple[set, set]:
-    """Return (kept_user_ids, kept_item_ids) by raw activity count."""
+                    top_k_users: Optional[int],
+                    top_k_items: Optional[int]) -> Tuple[set, set]:
+    """Return (kept_user_ids, kept_item_ids) by raw activity count.
+
+    A K of ``None`` or ``<= 0`` on either side keeps that whole side (the
+    default everywhere: JODIE Wikipedia / Reddit / MOOC are used at full size
+    unless a subset is explicitly requested).
+    """
     u_unique, u_counts = np.unique(users, return_counts=True)
     i_unique, i_counts = np.unique(items, return_counts=True)
-    keep_u = set(u_unique[np.argsort(u_counts)[::-1][:top_k_users]].tolist())
-    keep_i = set(i_unique[np.argsort(i_counts)[::-1][:top_k_items]].tolist())
+    if _keep_all(top_k_users):
+        keep_u = set(u_unique.tolist())
+    else:
+        keep_u = set(u_unique[np.argsort(u_counts)[::-1][:top_k_users]].tolist())
+    if _keep_all(top_k_items):
+        keep_i = set(i_unique.tolist())
+    else:
+        keep_i = set(i_unique[np.argsort(i_counts)[::-1][:top_k_items]].tolist())
     return keep_u, keep_i
 
 
@@ -87,12 +104,14 @@ def scatter_snapshots(src_idx: np.ndarray, dst_idx: np.ndarray,
 # ---------------------------------------------------------------------------
 def bin_bipartite(
     users: np.ndarray, items: np.ndarray, times: np.ndarray,
-    top_k_users: int, top_k_items: int, num_bins: int,
+    top_k_users: Optional[int], top_k_items: Optional[int], num_bins: int,
     edge_features: Optional[np.ndarray] = None,
     normalize_edge_features: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """Bin a bipartite (user, item) CTDG stream into DTDG snapshots.
 
+    ``top_k_users`` / ``top_k_items`` of ``None`` or ``<= 0`` keep every node
+    on that side (see :func:`top_k_bipartite`).
     Items occupy node indices [n_users, n_users + n_items). Returns
     (adj, active, node_edge_feats) where the third entry is the per-(bin,
     node) mean of ``edge_features`` if provided, else ``None``.
@@ -116,10 +135,12 @@ def bin_bipartite(
             f"  events with kept-u:   {int(u_in.sum())} / {n_total}\n"
             f"  events with kept-i:   {int(i_in.sum())} / {n_total}\n"
             f"  joint (kept-u AND i): 0\n"
-            f"  unique users in data: {len(np.unique(users))}  (kept top {top_k_users})\n"
-            f"  unique items in data: {len(np.unique(items))}  (kept top {top_k_items})\n"
+            f"  unique users in data: {len(np.unique(users))}  "
+            f"(kept {'all' if _keep_all(top_k_users) else f'top {top_k_users}'})\n"
+            f"  unique items in data: {len(np.unique(items))}  "
+            f"(kept {'all' if _keep_all(top_k_items) else f'top {top_k_items}'})\n"
             "If the data has very many unique users/items relative to K, "
-            "raise --jodie_top_k_{users,items}. If unique counts look wrong "
+            "raise --jodie_top_k_{users,items} (0 = keep all). If unique counts look wrong "
             "(e.g. only one distinct user) the parse went sideways — inspect "
             "dataset/jodie/<dataset>.npz with np.load."
         )
