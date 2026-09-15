@@ -154,10 +154,15 @@ PYTHONPATH=. python src/train/train_cjepa_dblp.py --synthetic --smoke \
   shape — `(N,N)` static, `(T,N,N)` dynamic, `(B,N,N)`, `(B,T,N,N)` — through
   the right einsum, so METR-LA (broadcast static) and DBLP (per-year) share one
   code path.
-- **SDPA attention.** `MaskedNodePredictor` uses
-  `F.scaled_dot_product_attention`; the dense `(B,1,TN,TN)` structural mask is
-  off by default (`--no_attention_mask`) on METR-LA because at 207 nodes it
-  forces SDPA off its memory-efficient kernel.
+- **Structural attention, sparse by default.** The predictor's spacetime
+  mask (same-time neighbours + same node across time) is on by default and
+  evaluated as an edge list through gather/scatter attention
+  (`--attn_impl sparse`), so memory is linear in the number of allowed pairs
+  rather than `(T·N)²`; full-N MOOC (7k nodes) fits at ~1.4 GB/sample.
+  `--attn_impl dense` keeps the materialised `(B,1,TN,TN)` SDPA path for
+  parity checks (identical function, `tests/test_sparse_attention.py`).
+  `--no_attention_mask` drops the mask entirely (dense all-to-all attention);
+  the existing pipeline scripts still pass it to reproduce historical runs.
 - **Per-batch random node masking.** Masked node indices are resampled every
   forward pass during training (fixed seed only in eval) — fixing them collapses
   training on graphs where node identity is geographic.

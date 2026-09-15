@@ -28,6 +28,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from src.custom_codes.dtdg.features import time_of_day
+
 
 def _load_speed_dataframe(h5_path: Path) -> np.ndarray:
     import pandas as pd
@@ -137,22 +139,25 @@ def _make_synthetic(num_nodes: int, num_steps: int, seed: int = 0):
     return speeds, times, adj
 
 
-def _time_of_day(times: np.ndarray) -> np.ndarray:
-    """Fractional time-of-day in [0, 1)."""
-    nanos = times.astype("datetime64[ns]").astype("int64")
-    seconds = (nanos // 1_000_000_000) % (24 * 3600)
-    return (seconds / (24 * 3600)).astype(np.float32)
-
-
 class MetrLADataset(Dataset):
     """Sliding-window dataset over METR-LA.
 
     Each item yields:
       x_hist  : (T_hist, N, F) raw node features (speed + tod sin/cos)
       x_fut   : (T_pred, N, F) ground-truth future features (for target encoding)
-      adj     : (N, N) float adjacency, constant across time
+      signal  : (T_total, N) un-normalised speeds -- the regression target
+      speeds  : alias of `signal`, kept for callers predating the rename
+      active  : (T_total, N) bool, False where the sensor reading is missing
       mean    : (1,) speed mean used for de-normalisation at eval
       std     : (1,) speed std used for de-normalisation at eval
+
+    Note there is deliberately NO per-item `adj`: the graph is constant, so
+    materialising a (T_total, N, N) copy per window would dominate both the
+    collate cost and GPU memory. Consumers read the dataset-level `self.adj`
+    (N, N) instead -- see ``src/world_models/probes.py::graph_inputs``, which
+    falls back to it whenever a batch carries no `adj`. That fallback is what
+    lets the England-COVID probe/eval code run unchanged on METR-LA, so the
+    two datasets report through one metric implementation.
 
     Args:
       data_dir:    folder containing metr-la.h5 + adj_mx.pkl
@@ -203,7 +208,8 @@ class MetrLADataset(Dataset):
                 speeds, times, adj, split, normalize, stride,
             )
         else:
-            self._build_hf_parquet(data_dir, split, history_size, num_preds, normalize)
+            self._build_hf_parquet(data_dir, split, history_size, num_preds,
+                                   normalize, stride)
 
     # ------------------------------------------------------------------
     # H5 / synthetic path: contiguous time series, sliding windows
@@ -223,7 +229,7 @@ class MetrLADataset(Dataset):
             self.mean, self.std = 0.0, 1.0
 
         speeds_norm = (speeds - self.mean) / self.std
-        tod = _time_of_day(times)
+        tod = time_of_day(times)
         tod_sin = np.sin(2 * np.pi * tod)
         tod_cos = np.cos(2 * np.pi * tod)
 
@@ -257,7 +263,8 @@ class MetrLADataset(Dataset):
     # ------------------------------------------------------------------
     # HF parquet path: rows are pre-windowed (sensor, t0) tuples
     # ------------------------------------------------------------------
-    def _build_hf_parquet(self, data_dir, split, history_size, num_preds, normalize):
+    def _build_hf_parquet(self, data_dir, split, history_size, num_preds,
+                          normalize, stride=1):
         speeds, tods, _, n_nodes = _load_hf_parquet(
             data_dir / f"{split}.parquet", history_size, num_preds,
         )
@@ -294,17 +301,33 @@ class MetrLADataset(Dataset):
         adj_path = data_dir / "sensor_graph" / "adj_mx.npy"
         adj = np.load(adj_path).astype(np.float32)
         self.adj = adj
-        # `starts` is here only to make __len__ uniform with the h5 path.
-        self.starts = np.arange(len(self.windows), dtype=np.int64)
+        self.starts = np.arange(0, len(self.windows), stride, dtype=np.int64)
+
+        # The parquet release is PRE-WINDOWED, so it has no contiguous (T, N, F)
+        # series -- but the windows are stride-1, so window i begins at timestep
+        # i and `windows[:, 0]` reconstructs that series exactly. Exposing it
+        # under the same names the h5 path uses (`feats` / `raw_speeds`) is what
+        # lets the snapshot consumers -- CLDG / DDGCL / IDOL via
+        # baselines.common._fixed_topology_snapshots -- run on the REAL dataset.
+        # Without it they see no `.feats` and abort; that gap was invisible when
+        # testing against the synthetic generator, which takes the h5 path.
+        # NB: derived from the FULL window list, not the strided subset, so the
+        # snapshot timeline stays contiguous regardless of --metr_la_stride.
+        self.feats = windows[:, 0]                          # (T, N, F)
+        self.raw_speeds = self.raw_window_speeds[:, 0]      # (T, N)
 
     def __len__(self) -> int:
         return len(self.starts)
 
     def __getitem__(self, idx: int):
         if self.layout == "hf_parquet":
-            clip = self.windows[idx]                                # (T, N, F)
-            speeds = self.raw_window_speeds[idx]                    # (T, N)
-            start = int(idx)
+            # Index through `starts`, not `idx`: otherwise --metr_la_stride
+            # would shorten the epoch while still handing back the first N
+            # consecutive windows, i.e. silently training on a contiguous
+            # PREFIX of the split rather than a uniform subsample of it.
+            start = int(self.starts[idx])
+            clip = self.windows[start]                              # (T, N, F)
+            speeds = self.raw_window_speeds[start]                  # (T, N)
         else:
             start = int(self.starts[idx])
             clip = self.feats[start : start + self.window]
@@ -312,10 +335,17 @@ class MetrLADataset(Dataset):
         x_hist = torch.from_numpy(clip[: self.history_size])
         x_fut = torch.from_numpy(clip[self.history_size :])
         speeds_t = torch.from_numpy(speeds)
+        # A missing loop-detector reading is stored as 0.0 in the DCRNN release,
+        # which is also what every published METR-LA number masks out. Exposing
+        # it as `active` lets the shared probe apply the same rule it applies to
+        # England COVID instead of each call site re-deriving `speeds > 0`.
+        active_t = speeds_t > 0
         return {
             "x_hist": x_hist,
             "x_fut": x_fut,
-            "speeds": speeds_t,         # un-normalised, for MAE eval
+            "signal": speeds_t,         # un-normalised, for MAE eval
+            "speeds": speeds_t,         # legacy alias (fixed-topology probe)
+            "active": active_t,
             "start_idx": start,
         }
 

@@ -1,0 +1,456 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" width="1200" height="660" role="img" aria-label="DyG-JEPA architecture: training with node and future masking in latent space, and inference with a probe head">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#22252b"/></marker><marker id="arrowA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#b23a48"/></marker><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#e2e2e2"/><line x1="0" y1="0" x2="0" y2="4" stroke="#9a9a9a" stroke-width="1"/></pattern></defs>
+<rect width="1200" height="660" fill="#ffffff"/>
+<text x="24" y="34" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" fill="#22252b" font-weight="bold">A</text>
+<text x="44" y="34" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="13" text-anchor="start" fill="#22252b" font-weight="normal">Self-supervised training on one window of H history + P future snapshots</text>
+<rect x="24" y="170" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="33" y1="179" x2="46" y2="190" stroke="#22252b" stroke-width="0.9"/>
+<line x1="59" y1="179" x2="46" y2="190" stroke="#22252b" stroke-width="0.9"/>
+<line x1="46" y1="190" x2="31" y2="203" stroke="#22252b" stroke-width="0.9"/>
+<line x1="46" y1="190" x2="61" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="33" cy="179" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="59" cy="179" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="46" cy="190" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="31" cy="203" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="61" cy="202" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="46" cy="207" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="46.0" y="228" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="54.0" y="224" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t−3</text>
+<rect x="76" y="170" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="85" y1="179" x2="98" y2="190" stroke="#22252b" stroke-width="0.9"/>
+<line x1="111" y1="179" x2="98" y2="190" stroke="#22252b" stroke-width="0.9"/>
+<line x1="98" y1="190" x2="83" y2="203" stroke="#22252b" stroke-width="0.9"/>
+<line x1="98" y1="190" x2="113" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="83" y1="203" x2="98" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="85" cy="179" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="111" cy="179" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="98" cy="190" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="83" cy="203" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="113" cy="202" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="98" cy="207" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="98.0" y="228" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="106.0" y="224" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t−2</text>
+<rect x="128" y="170" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="137" y1="179" x2="150" y2="190" stroke="#22252b" stroke-width="0.9"/>
+<line x1="163" y1="179" x2="165" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="150" y1="190" x2="135" y2="203" stroke="#22252b" stroke-width="0.9"/>
+<line x1="150" y1="190" x2="165" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="135" y1="203" x2="150" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="137" cy="179" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="163" cy="179" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="150" cy="190" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="135" cy="203" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="165" cy="202" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="150" cy="207" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="150.0" y="228" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="158.0" y="224" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t−1</text>
+<rect x="180" y="170" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="189" y1="179" x2="202" y2="190" stroke="#22252b" stroke-width="0.9"/>
+<line x1="215" y1="179" x2="217" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="202" y1="190" x2="217" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="217" y1="202" x2="202" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<line x1="187" y1="203" x2="202" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="189" cy="179" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="215" cy="179" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="202" cy="190" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="187" cy="203" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="217" cy="202" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="202" cy="207" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="202.0" y="228" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="210.0" y="224" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t</text>
+<rect x="232" y="170" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9" stroke-dasharray="3 2"/>
+<line x1="241" y1="179" x2="267" y2="179" stroke="#22252b" stroke-width="0.9"/>
+<line x1="267" y1="179" x2="269" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="254" y1="190" x2="269" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="269" y1="202" x2="254" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<line x1="239" y1="203" x2="254" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="241" cy="179" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="267" cy="179" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="254" cy="190" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="239" cy="203" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="269" cy="202" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="254" cy="207" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="254.0" y="228" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="262.0" y="224" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t+1</text>
+<rect x="284" y="170" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9" stroke-dasharray="3 2"/>
+<line x1="293" y1="179" x2="319" y2="179" stroke="#22252b" stroke-width="0.9"/>
+<line x1="319" y1="179" x2="321" y2="202" stroke="#22252b" stroke-width="0.9"/>
+<line x1="306" y1="190" x2="306" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<line x1="321" y1="202" x2="306" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<line x1="291" y1="203" x2="306" y2="207" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="293" cy="179" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="319" cy="179" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="306" cy="190" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="291" cy="203" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="321" cy="202" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="306" cy="207" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="306.0" y="228" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="314.0" y="224" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t+2</text>
+<line x1="230" y1="158" x2="230" y2="248" stroke="#6b6f78" stroke-width="0.9" stroke-dasharray="3 3"/>
+<text x="124.0" y="244" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">history, H = 4</text>
+<text x="280.0" y="244" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">future, P = 2</text>
+<text x="24" y="160" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">snapshot G</text>
+<text x="76" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="start" fill="#6b6f78" font-weight="normal">t</text>
+<text x="82" y="160" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">= (X</text>
+<text x="103" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="start" fill="#6b6f78" font-weight="normal">t</text>
+<text x="108" y="160" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">, A</text>
+<text x="123" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="start" fill="#6b6f78" font-weight="normal">t</text>
+<text x="128" y="160" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">, active</text>
+<text x="165" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="start" fill="#6b6f78" font-weight="normal">t</text>
+<text x="170" y="160" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">)</text>
+<rect x="392" y="69.0" width="124" height="62" rx="3" fill="#f7f6f2" stroke="#22252b" stroke-width="1.1"/>
+<text x="454.0" y="88.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="bold">context encoder</text>
+<text x="454.0" y="103.85" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#22252b" font-weight="normal">f</text>
+<text x="454.0" y="118.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="normal">history snapshots only</text>
+<text x="460.0" y="103" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="9" text-anchor="middle" fill="#22252b" font-weight="normal">θ</text>
+<rect x="392" y="269.0" width="124" height="62" rx="3" fill="#f7f6f2" stroke="#22252b" stroke-width="1.1"/>
+<text x="454.0" y="288.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="bold">target encoder</text>
+<text x="454.0" y="303.85" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#22252b" font-weight="normal">f</text>
+<text x="454.0" y="318.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="normal">all H + P snapshots</text>
+<text x="460.0" y="303" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="9" text-anchor="middle" fill="#22252b" font-weight="normal">θ</text>
+<line x1="449.0" y1="288" x2="457.0" y2="288" stroke="#22252b" stroke-width="1"/>
+<path d="M 224 166 L 224 100 L 392 100" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="308.0" y="92" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#6b6f78" font-weight="normal">X, A for t−3 … t only</text>
+<path d="M 328 192.0 L 358 192.0 L 358 300 L 392 300" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="352" y="266" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="end" fill="#6b6f78" font-weight="normal">X, A for</text>
+<text x="352" y="278" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="end" fill="#6b6f78" font-weight="normal">all t−3 … t+2</text>
+<path d="M 454.0 131.0 L 454.0 269.0" fill="none" stroke="#22252b" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+<text x="462.0" y="190" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">EMA of f (stop-grad),</text>
+<text x="462.0" y="202" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">or a frozen copy</text>
+<rect x="566" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="583" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="600" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="617" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="634" y="50" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="651" y="50" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="566" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="583" y="67" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="600" y="67" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="617" y="67" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="634" y="67" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="651" y="67" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="566" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="583" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="600" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="617" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="634" y="84" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="651" y="84" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="566" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="583" y="101" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="600" y="101" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="617" y="101" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="634" y="101" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="651" y="101" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="566" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="583" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="600" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="617" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="634" y="118" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="651" y="118" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="566" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="583" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="600" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="617" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="634" y="135" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="651" y="135" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<text x="573.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−3</text>
+<text x="590.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−2</text>
+<text x="607.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−1</text>
+<text x="624.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t</text>
+<text x="641.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+1</text>
+<text x="658.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+2</text>
+<text x="617" y="34" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#22252b" font-weight="bold">predictor input</text>
+<text x="617" y="45" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">Z with mask tokens</text>
+<path d="M 516 100 L 562 100" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<line x1="562" y1="74.5" x2="556" y2="74.5" stroke="#6b6f78" stroke-width="0.8"/>
+<line x1="562" y1="108.5" x2="556" y2="108.5" stroke="#6b6f78" stroke-width="0.8"/>
+<text x="617" y="174" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">– marked rows: the M masked nodes,</text>
+<text x="617" y="184" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">history hidden for t ≥ 1; first step</text>
+<text x="617" y="194" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">stays visible as the identity anchor.</text>
+<text x="617" y="206" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">Hatched = learned mask token.</text>
+<rect x="566" y="250" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="583" y="250" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="600" y="250" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="617" y="250" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="634" y="250" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="651" y="250" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="566" y="267" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="583" y="267" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="600" y="267" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="617" y="267" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="634" y="267" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="651" y="267" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="566" y="284" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="583" y="284" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="600" y="284" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="617" y="284" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="634" y="284" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="651" y="284" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="566" y="301" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="583" y="301" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="600" y="301" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="617" y="301" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="634" y="301" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="651" y="301" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="566" y="318" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="583" y="318" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="600" y="318" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="617" y="318" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="634" y="318" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="651" y="318" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="566" y="335" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="583" y="335" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="600" y="335" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="617" y="335" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="634" y="335" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="651" y="335" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<text x="573.5" y="360" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−3</text>
+<text x="590.5" y="360" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−2</text>
+<text x="607.5" y="360" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−1</text>
+<text x="624.5" y="360" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t</text>
+<text x="641.5" y="360" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+1</text>
+<text x="658.5" y="360" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+2</text>
+<text x="617" y="234" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#22252b" font-weight="bold">target latents</text>
+<text x="617" y="245" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">Z̄ ∈ ℝ^(H+P)×N×D</text>
+<path d="M 516 300 L 562 300" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="617" y="374" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">rows = nodes, cols = time</text>
+<rect x="728" y="69.0" width="130" height="62" rx="3" fill="#f7f6f2" stroke="#22252b" stroke-width="1.1"/>
+<text x="793.0" y="88.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="bold">predictor</text>
+<text x="793.0" y="103.85" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#22252b" font-weight="normal">g</text>
+<text x="793.0" y="118.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="normal">spacetime transformer</text>
+<text x="800.0" y="103" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="9" text-anchor="middle" fill="#22252b" font-weight="normal">φ</text>
+<path d="M 670 126 L 698 126 L 698 100 L 728 100" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="793.0" y="145.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">token(t, i) = latent or mask token</text>
+<text x="793.0" y="156.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">+ time embedding + anchor(z</text>
+<text x="853.0" y="159.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="6.5" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−3, i</text>
+<text x="867.0" y="156.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">)</text>
+<rect x="912" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="929" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="946" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="963" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="980" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="978.8" y="48.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="997" y="50" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="995.8" y="48.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="912" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="929" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="927.8" y="65.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="946" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="944.8" y="65.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="963" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="961.8" y="65.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="980" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="978.8" y="65.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="997" y="67" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="995.8" y="65.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="912" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="929" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="946" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="963" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="980" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="978.8" y="82.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="997" y="84" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="995.8" y="82.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="912" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="929" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="927.8" y="99.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="946" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="944.8" y="99.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="963" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="961.8" y="99.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="980" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="978.8" y="99.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="997" y="101" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="995.8" y="99.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="912" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="929" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="946" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="963" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="980" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="978.8" y="116.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="997" y="118" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="995.8" y="116.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="912" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="929" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="946" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="963" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="980" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="978.8" y="133.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<rect x="997" y="135" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="995.8" y="133.8" width="17.4" height="17.4" rx="2" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<text x="919.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−3</text>
+<text x="936.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−2</text>
+<text x="953.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−1</text>
+<text x="970.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t</text>
+<text x="987.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+1</text>
+<text x="1004.5" y="160" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+2</text>
+<text x="963" y="34" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#22252b" font-weight="bold">predicted latents</text>
+<text x="963" y="45" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">Ẑ = g(Z), all (t, i) at once</text>
+<path d="M 858 100 L 908 100" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<rect x="1024" y="52" width="15" height="15" rx="1.5" fill="none" stroke="#22252b" stroke-width="1.5"/>
+<text x="1044" y="59" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="start" fill="#6b6f78" font-weight="normal">positions</text>
+<text x="1044" y="69" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="start" fill="#6b6f78" font-weight="normal">the loss reads</text>
+<rect x="912" y="262" width="260" height="78" rx="3" fill="#fbf3f4" stroke="#b23a48" stroke-width="1.2"/>
+<text x="1042.0" y="280" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#b23a48" font-weight="normal">L</text>
+<text x="1050.0" y="283" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="7" text-anchor="start" fill="#b23a48" font-weight="normal">JEPA</text>
+<text x="1042.0" y="299" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#22252b" font-weight="normal">‖Ẑ − Z̄‖²  averaged over active nodes at</text>
+<text x="1042.0" y="313" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9.5" text-anchor="middle" fill="#22252b" font-weight="normal">masked-history cells  +  all future cells</text>
+<text x="1042.0" y="328" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8.5" text-anchor="middle" fill="#6b6f78" font-weight="normal">gradient → g (and f if --train_encoder)</text>
+<path d="M 963 170 L 963 262" fill="none" stroke="#b23a48" stroke-width="1.1" marker-end="url(#arrowA)"/>
+<path d="M 670 300 L 912 300" fill="none" stroke="#b23a48" stroke-width="1.1" marker-end="url(#arrowA)"/>
+<text x="790.0" y="293" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#6b6f78" font-weight="normal">stop-grad</text>
+<text x="24" y="372" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">Masking (node_mask scheme): M nodes are drawn per step, shared across the batch; their latents at t ≥ 1 and every node's future latents are replaced by one learned mask token.</text>
+<text x="24" y="385" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">Optional variants in the code: hide the M nodes from the context encoder's input too (--mask_encoder_input), residual head Ẑ = anchor + g(·), EMA / VICReg / SIGReg targets, edge-mask head.</text>
+<line x1="24" y1="406" x2="1176" y2="406" stroke="#6b6f78" stroke-width="0.6"/>
+<text x="24" y="434" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="15" text-anchor="start" fill="#22252b" font-weight="bold">B</text>
+<text x="44" y="434" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="13" text-anchor="start" fill="#22252b" font-weight="normal">Inference and downstream readout (predictor and encoder frozen; only the head sees labels)</text>
+<rect x="24" y="510" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="33" y1="519" x2="46" y2="530" stroke="#22252b" stroke-width="0.9"/>
+<line x1="59" y1="519" x2="46" y2="530" stroke="#22252b" stroke-width="0.9"/>
+<line x1="46" y1="530" x2="31" y2="543" stroke="#22252b" stroke-width="0.9"/>
+<line x1="46" y1="530" x2="61" y2="542" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="33" cy="519" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="59" cy="519" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="46" cy="530" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="31" cy="543" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="61" cy="542" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="46" cy="547" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="46.0" y="568" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="54.0" y="564" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t−3</text>
+<rect x="76" y="510" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="85" y1="519" x2="98" y2="530" stroke="#22252b" stroke-width="0.9"/>
+<line x1="111" y1="519" x2="98" y2="530" stroke="#22252b" stroke-width="0.9"/>
+<line x1="98" y1="530" x2="83" y2="543" stroke="#22252b" stroke-width="0.9"/>
+<line x1="98" y1="530" x2="113" y2="542" stroke="#22252b" stroke-width="0.9"/>
+<line x1="83" y1="543" x2="98" y2="547" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="85" cy="519" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="111" cy="519" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="98" cy="530" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="83" cy="543" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="113" cy="542" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="98" cy="547" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="98.0" y="568" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="106.0" y="564" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t−2</text>
+<rect x="128" y="510" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="137" y1="519" x2="150" y2="530" stroke="#22252b" stroke-width="0.9"/>
+<line x1="163" y1="519" x2="165" y2="542" stroke="#22252b" stroke-width="0.9"/>
+<line x1="150" y1="530" x2="135" y2="543" stroke="#22252b" stroke-width="0.9"/>
+<line x1="150" y1="530" x2="165" y2="542" stroke="#22252b" stroke-width="0.9"/>
+<line x1="135" y1="543" x2="150" y2="547" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="137" cy="519" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="163" cy="519" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="150" cy="530" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="135" cy="543" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="165" cy="542" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="150" cy="547" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="150.0" y="568" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="158.0" y="564" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t−1</text>
+<rect x="180" y="510" width="44" height="44" rx="2" fill="#ffffff" stroke="#22252b" stroke-width="0.9"/>
+<line x1="189" y1="519" x2="202" y2="530" stroke="#22252b" stroke-width="0.9"/>
+<line x1="215" y1="519" x2="217" y2="542" stroke="#22252b" stroke-width="0.9"/>
+<line x1="202" y1="530" x2="217" y2="542" stroke="#22252b" stroke-width="0.9"/>
+<line x1="217" y1="542" x2="202" y2="547" stroke="#22252b" stroke-width="0.9"/>
+<line x1="187" y1="543" x2="202" y2="547" stroke="#22252b" stroke-width="0.9"/>
+<circle cx="189" cy="519" r="3.4" fill="#d9ead3" stroke="#6aa84f" stroke-width="1.1"/>
+<circle cx="215" cy="519" r="3.4" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="1.1"/>
+<circle cx="202" cy="530" r="3.4" fill="#fff2cc" stroke="#d4a72c" stroke-width="1.1"/>
+<circle cx="187" cy="543" r="3.4" fill="#f4cccc" stroke="#cc4125" stroke-width="1.1"/>
+<circle cx="217" cy="542" r="3.4" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="1.1"/>
+<circle cx="202" cy="547" r="3.4" fill="#fce5cd" stroke="#e69138" stroke-width="1.1"/>
+<text x="202.0" y="568" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="10" text-anchor="middle" fill="#22252b" font-weight="normal">G</text>
+<text x="210.0" y="564" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="7" text-anchor="middle" fill="#22252b" font-weight="normal">t</text>
+<text x="124.0" y="584" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">observed history only</text>
+<rect x="262" y="501.0" width="124" height="62" rx="3" fill="#f7f6f2" stroke="#22252b" stroke-width="1.1"/>
+<text x="324.0" y="520.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="bold">encoder</text>
+<text x="324.0" y="535.85" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#22252b" font-weight="normal">f</text>
+<text x="324.0" y="550.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="normal">trained weights, no masking</text>
+<text x="330.0" y="535.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="9" text-anchor="middle" fill="#22252b" font-weight="normal">θ</text>
+<path d="M 224 532.0 L 262 532.0" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<rect x="430" y="482.0" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="447" y="482.0" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="464" y="482.0" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="481" y="482.0" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9"/>
+<rect x="498" y="482.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="515" y="482.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="430" y="499.0" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="447" y="499.0" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="464" y="499.0" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="481" y="499.0" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9"/>
+<rect x="498" y="499.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="515" y="499.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="430" y="516.0" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="447" y="516.0" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="464" y="516.0" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="481" y="516.0" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9"/>
+<rect x="498" y="516.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="515" y="516.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="430" y="533.0" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="447" y="533.0" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="464" y="533.0" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="481" y="533.0" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9"/>
+<rect x="498" y="533.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="515" y="533.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="430" y="550.0" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="447" y="550.0" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="464" y="550.0" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="481" y="550.0" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9"/>
+<rect x="498" y="550.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="515" y="550.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="430" y="567.0" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="447" y="567.0" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="464" y="567.0" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="481" y="567.0" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9"/>
+<rect x="498" y="567.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<rect x="515" y="567.0" width="15" height="15" rx="1.5" fill="url(#hatch)" stroke="#9a9a9a" stroke-width="0.9"/>
+<text x="437.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−3</text>
+<text x="454.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−2</text>
+<text x="471.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t−1</text>
+<text x="488.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t</text>
+<text x="505.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+1</text>
+<text x="522.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+2</text>
+<text x="481" y="466.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#22252b" font-weight="bold">predictor input</text>
+<text x="481" y="477.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">no node masks; future = mask tokens</text>
+<path d="M 386 532.0 L 426 532.0" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<rect x="580" y="501.0" width="130" height="62" rx="3" fill="#f7f6f2" stroke="#22252b" stroke-width="1.1"/>
+<text x="645.0" y="520.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="bold">predictor</text>
+<text x="645.0" y="535.85" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#22252b" font-weight="normal">g</text>
+<text x="645.0" y="550.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="normal">one pass, all P steps</text>
+<text x="652.0" y="535.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="9" text-anchor="middle" fill="#22252b" font-weight="normal">φ</text>
+<path d="M 534 532.0 L 580 532.0" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="645.0" y="577.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">future edges withheld:</text>
+<text x="645.0" y="588.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">graph at t carried forward</text>
+<rect x="748" y="482.0" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="765" y="482.0" width="15" height="15" rx="1.5" fill="#d9ead3" stroke="#6aa84f" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="748" y="499.0" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="765" y="499.0" width="15" height="15" rx="1.5" fill="#d9d2e9" stroke="#8e7cc3" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="748" y="516.0" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="765" y="516.0" width="15" height="15" rx="1.5" fill="#fff2cc" stroke="#d4a72c" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="748" y="533.0" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="765" y="533.0" width="15" height="15" rx="1.5" fill="#f4cccc" stroke="#cc4125" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="748" y="550.0" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="765" y="550.0" width="15" height="15" rx="1.5" fill="#cfe2f3" stroke="#5b9bd5" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="748" y="567.0" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<rect x="765" y="567.0" width="15" height="15" rx="1.5" fill="#fce5cd" stroke="#e69138" stroke-width="0.9" fill-opacity="0.55"/>
+<text x="755.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+1</text>
+<text x="772.5" y="592.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="8" text-anchor="middle" fill="#6b6f78" font-weight="normal">t+2</text>
+<text x="765.0" y="466.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="10" text-anchor="middle" fill="#22252b" font-weight="bold">forecast</text>
+<text x="765.0" y="477.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="middle" fill="#6b6f78" font-weight="normal">Ẑ</text>
+<text x="773.0" y="480.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="6.5" text-anchor="start" fill="#6b6f78" font-weight="normal">t+1 … t+P</text>
+<path d="M 710 532.0 L 744 532.0" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<rect x="820" y="501.0" width="130" height="62" rx="3" fill="#f7f6f2" stroke="#22252b" stroke-width="1.1"/>
+<text x="885.0" y="520.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="bold">probe / head</text>
+<text x="885.0" y="535.85" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="13" text-anchor="middle" fill="#22252b" font-weight="normal">h</text>
+<text x="885.0" y="550.85" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#22252b" font-weight="normal">fit on labels, tiny MLP</text>
+<text x="892" y="535.0" font-family="'Source Serif 4', 'Times New Roman', serif" font-style="italic" font-size="9" text-anchor="middle" fill="#22252b" font-weight="normal">ψ</text>
+<path d="M 784 532.0 L 820 532.0" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="986" y="502.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#22252b" font-weight="bold">link prediction</text>
+<text x="986" y="514.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8.5" text-anchor="start" fill="#6b6f78" font-weight="normal">h(ẑᵢ, ẑⱼ) → MRR / Hits@k / AUC</text>
+<text x="986" y="532.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#22252b" font-weight="bold">node state (MOOC)</text>
+<text x="986" y="544.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8.5" text-anchor="start" fill="#6b6f78" font-weight="normal">h(ẑᵢ) → AUROC / AUPRC</text>
+<text x="986" y="562.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#22252b" font-weight="bold">node signal (COVID, METR-LA)</text>
+<text x="986" y="574.0" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="8.5" text-anchor="start" fill="#6b6f78" font-weight="normal">yₜ + σ·h(ẑᵢ) → MAE vs persistence</text>
+<path d="M 950 532.0 L 980 532.0" fill="none" stroke="#22252b" stroke-width="1.1" marker-end="url(#arrow)"/>
+<text x="24" y="610" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">Trained predictor is reloaded from the best-validation checkpoint; the head is then fit on train windows and scored on the chronological test split.</text>
+<text x="24" y="623" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">Intervention: passing a node set as do(·) replaces those nodes' history with mask tokens at inference, giving counterfactual forecasts for the others.</text>
+<text x="24" y="636" font-family="'IBM Plex Sans', Helvetica, Arial, sans-serif" font-size="9" text-anchor="start" fill="#6b6f78" font-weight="normal">Fine-tune protocol (finetune_state.py): same pieces, but f, g and h are trained end-to-end on labels, optionally with the JEPA loss as an auxiliary term.</text>
+</svg>

@@ -23,6 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch.utils.checkpoint import checkpoint
 
 
 class GraphMaskedAttention(nn.Module):
@@ -37,17 +38,80 @@ class GraphMaskedAttention(nn.Module):
         self.resid_drop = nn.Dropout(dropout)
 
     def forward(self, x, attn_mask=None):
+        """attn_mask is one of
+          - None: full attention (SDPA flash/mem-efficient kernel);
+          - (B, 1, L, L) bool: dense structural mask (SDPA, quadratic memory);
+          - (b_idx, q_idx, k_idx) LongTensor triple from
+            :func:`build_spacetime_edge_index`: the SAME structural mask as an
+            edge list, evaluated with gather/scatter so memory is linear in the
+            number of allowed pairs instead of (T*N)^2. Numerically identical
+            to the dense path (one softmax per query over the same key set).
+        """
         qkv = self.to_qkv(x).chunk(3, dim=-1)
         q, k, v = (rearrange(t, "b l (h d) -> b h l d", h=self.heads) for t in qkv)
-        # SDPA uses memory-efficient kernels (no materialised (L, L) matrix),
-        # which lets large graph sequences (T*N ~ 5k) fit on small GPUs.
-        out = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_mask,
-            dropout_p=self.attn_drop.p if self.training else 0.0,
-        )
+        if isinstance(attn_mask, tuple):
+            p_drop = self.attn_drop.p if self.training else 0.0
+            if torch.is_grad_enabled() and x.requires_grad:
+                # Recompute the per-pair gathers in backward instead of keeping
+                # (P, H, d) tensors alive for every layer: memory then scales
+                # with one layer's pairs, not depth x pairs. RNG state is
+                # preserved so the dropout mask is identical on recompute.
+                out = checkpoint(
+                    sparse_attention, q, k, v, *attn_mask,
+                    scale=self.scale, dropout_p=p_drop, use_reentrant=False,
+                )
+            else:
+                out = sparse_attention(q, k, v, *attn_mask,
+                                       scale=self.scale, dropout_p=p_drop)
+        else:
+            # SDPA uses memory-efficient kernels (no materialised (L, L) matrix),
+            # which lets large graph sequences (T*N ~ 5k) fit on small GPUs.
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=attn_mask,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+            )
         out = rearrange(out, "b h l d -> b l (h d)")
         return self.resid_drop(self.to_out(out))
+
+
+def sparse_attention(q, k, v, b_idx, q_idx, k_idx, scale, dropout_p=0.0):
+    """Multi-head attention restricted to an explicit list of (query, key)
+    token pairs.
+
+    q, k, v : (B, H, L, d)
+    b_idx, q_idx, k_idx : (P,) long -- pair p lets token (b, q_idx) attend to
+        token (b, k_idx). Every query token must appear in at least one pair
+        (the spacetime builder guarantees the diagonal), otherwise its output
+        row is zero.
+
+    Softmax is taken per query over exactly its listed keys, so this equals
+    ``F.scaled_dot_product_attention`` with the equivalent boolean mask. The
+    per-query max used for numerical stability is a constant shift and is
+    detached. Half-precision inputs (autocast) do the score/probability
+    arithmetic in float32; float32/64 inputs keep their dtype.
+    Returns (B, H, L, d).
+    """
+    B, H, L, d = q.shape
+    acc = torch.float32 if q.dtype in (torch.float16, torch.bfloat16) else q.dtype
+    qg = q[b_idx, :, q_idx]                               # (P, H, d)
+    kg = k[b_idx, :, k_idx]
+    vg = v[b_idx, :, k_idx].to(acc)
+    s = (qg * kg).sum(-1).to(acc) * scale                 # (P, H)
+    seg = b_idx * L + q_idx                               # (P,) query row id
+    seg_h = seg.unsqueeze(1).expand(-1, H)
+    m = torch.full((B * L, H), float("-inf"), device=s.device, dtype=s.dtype)
+    m = m.scatter_reduce(0, seg_h, s.detach(), reduce="amax", include_self=True)
+    m = torch.where(torch.isfinite(m), m, torch.zeros_like(m))   # rows w/o pairs
+    e = torch.exp(s - m[seg])                             # (P, H)
+    denom = torch.zeros(B * L, H, device=s.device, dtype=s.dtype)
+    denom = denom.index_add(0, seg, e)
+    p = e / denom[seg].clamp(min=torch.finfo(s.dtype).tiny)
+    if dropout_p > 0.0:
+        p = F.dropout(p, dropout_p, training=True)
+    out = torch.zeros(B * L, H, d, device=q.device, dtype=s.dtype)
+    out = out.index_add(0, seg, p.unsqueeze(-1) * vg)
+    return out.to(q.dtype).view(B, L, H, d).permute(0, 2, 1, 3)
 
 
 class GraphTransformerLayer(nn.Module):
@@ -133,6 +197,73 @@ def build_spacetime_mask(
     return allow.unsqueeze(1)
 
 
+def build_spacetime_edge_index(
+    adj: torch.Tensor,
+    active: torch.Tensor,
+    hidden_edges: Optional[torch.Tensor] = None,
+    allow_temporal_self: bool = True,
+    allow_temporal_neighbors: bool = False,
+) -> tuple:
+    """Edge-list form of :func:`build_spacetime_mask`.
+
+    Returns ``(b_idx, q_idx, k_idx)`` long tensors, one entry per allowed
+    (query, key) token pair in the flattened (B, T*N) token space, with the
+    SAME semantics as the dense builder (same-time visible neighbours, the
+    same node at other times, optional cross-time neighbours, both endpoints
+    active, and the full diagonal always allowed). The (T*N)^2 grid is never
+    materialised: peak memory is a few tensors of size ``P`` (number of allowed
+    pairs), which for sparse graphs is ~ sum_t nnz(adj_t) + T^2 * N.
+
+    Candidate pairs from the different sources can overlap (e.g. adjacency
+    self-loops vs. the diagonal), so they are de-duplicated -- a duplicated key
+    would otherwise be counted twice in the softmax.
+    """
+    B, T, N, _ = adj.shape
+    device = adj.device
+    L = T * N
+
+    adj_vis = adj & ~hidden_edges if hidden_edges is not None else adj
+    act_q = active.unsqueeze(-1)                      # (B, T, N, 1)
+    act_k = active.unsqueeze(-2)                      # (B, T, 1, N)
+
+    bs, qs, ks = [], [], []
+
+    # 1) same timestep, visible edge, both active
+    b, t, i, j = (adj_vis & act_q & act_k).nonzero(as_tuple=True)
+    bs.append(b); qs.append(t * N + i); ks.append(t * N + j)
+
+    # 2) same node, different timesteps, both active
+    if allow_temporal_self:
+        both = active.unsqueeze(2) & active.unsqueeze(1)          # (B, T, T, N)
+        both = both & ~torch.eye(T, dtype=torch.bool, device=device).view(1, T, T, 1)
+        b, t1, t2, i = both.nonzero(as_tuple=True)
+        bs.append(b); qs.append(t1 * N + i); ks.append(t2 * N + i)
+
+    # 3) neighbours at time t, attended at every other time t'
+    if allow_temporal_neighbors:
+        b, t, i, j = adj_vis.nonzero(as_tuple=True)
+        P0 = b.numel()
+        t2 = torch.arange(T, device=device).repeat(P0)              # (P0*T,)
+        b = b.repeat_interleave(T); t = t.repeat_interleave(T)
+        i = i.repeat_interleave(T); j = j.repeat_interleave(T)
+        keep = (t2 != t) & active[b, t, i] & active[b, t2, j]
+        bs.append(b[keep]); qs.append((t * N + i)[keep]); ks.append((t2 * N + j)[keep])
+
+    # 4) full diagonal (every token, active or not, sees itself)
+    diag = torch.arange(L, device=device)
+    bs.append(torch.arange(B, device=device).repeat_interleave(L))
+    qs.append(diag.repeat(B)); ks.append(diag.repeat(B))
+
+    b_idx = torch.cat(bs); q_idx = torch.cat(qs); k_idx = torch.cat(ks)
+    lin = (b_idx * L + q_idx) * L + k_idx
+    lin = torch.unique(lin)
+    k_idx = lin % L
+    rest = lin // L
+    q_idx = rest % L
+    b_idx = rest // L
+    return b_idx, q_idx, k_idx
+
+
 class ContinuousTimeEmbedding(nn.Module):
     def __init__(self, dim, num_freqs=8, max_period=10000.0):
         super().__init__()
@@ -145,7 +276,20 @@ class ContinuousTimeEmbedding(nn.Module):
         return self.proj(torch.cat([x.sin(), x.cos()], dim=-1))
 
 
-class MaskedNodePredictor(nn.Module):
+class DyGJEPAPredictor(nn.Module):
+    """DyG-JEPA spatio-temporal predictor over (timestep, node) tokens.
+
+    Configurable masking scheme:
+      - ``node_mask`` (default): hide ``num_masked_nodes`` whole nodes across
+        history AND mask the future — the model reconstructs masked-history and
+        forecasts future latents (the original MaskedNodePredictor behaviour).
+      - ``future_forecast``: mask only the future (no node hiding); a pure
+        causal forecaster. Equivalent to ``node_mask`` with 0 masked nodes.
+
+    The trajectory-block scheme is served by :class:`TrajectoryJEPAPredictor`
+    (different token granularity); use :func:`build_predictor` to pick.
+    """
+
     def __init__(
         self,
         num_nodes: int,
@@ -163,8 +307,28 @@ class MaskedNodePredictor(nn.Module):
         allow_temporal_neighbors: bool = False,
         use_edge_head: bool = False,
         use_attention_mask: bool = True,
+        mask_scheme: str = "node_mask",
+        residual_head: bool = False,
+        latent_norm: bool = False,
+        attn_impl: str = "sparse",
     ):
         super().__init__()
+        if attn_impl not in ("sparse", "dense"):
+            raise ValueError(f"attn_impl must be 'sparse' or 'dense', got {attn_impl!r}")
+        # How the structural attention mask is evaluated (only matters when
+        # use_attention_mask=True). 'dense' materialises the (B,1,TN,TN) bool
+        # mask and runs SDPA (quadratic memory, OOMs past ~3k nodes); 'sparse'
+        # feeds the identical mask as an edge list through gather/scatter
+        # attention (memory linear in #allowed pairs). Same function either way.
+        self.attn_impl = attn_impl
+        if mask_scheme not in ("node_mask", "future_forecast"):
+            raise ValueError(
+                f"DyGJEPAPredictor mask_scheme must be 'node_mask' or "
+                f"'future_forecast', got {mask_scheme!r}. For "
+                f"'trajectory_block' use TrajectoryJEPAPredictor / build_predictor.")
+        self.mask_scheme = mask_scheme
+        if mask_scheme == "future_forecast":
+            num_masked_nodes = 0
         self.num_nodes = num_nodes
         self.node_dim = node_dim
         self.history_frames = history_frames
@@ -174,6 +338,14 @@ class MaskedNodePredictor(nn.Module):
         self.seed = seed
         self.allow_temporal_neighbors = allow_temporal_neighbors
         self.use_attention_mask = use_attention_mask
+        # I-JEPA / V-JEPA normalise the TARGET latents over the channel dim
+        # (parameter-free LayerNorm) before the loss. We apply the same map to
+        # the predictor's INPUT latents here so that (a) the residual head's
+        # copy-last anchor lives in the same space as the normalised target and
+        # (b) every caller of forward()/inference() -- probes, fine-tuning,
+        # intervention eval -- gets the identical featurisation without having
+        # to remember the flag. Pair with compute_graph_jepa_loss(target_norm=True).
+        self.latent_norm = latent_norm
 
         self.mask_token = nn.Parameter(torch.zeros(1, 1, node_dim))
         nn.init.trunc_normal_(self.mask_token, std=0.02)
@@ -197,6 +369,17 @@ class MaskedNodePredictor(nn.Module):
             dim_head=dim_head, mlp_dim=mlp_dim, dropout=dropout,
         )
         self.to_out = nn.Linear(node_dim, node_dim)
+
+        # Residual parameterisation: pred = anchor + to_out(h), where anchor is
+        # each node's last VISIBLE history latent. Copy-last becomes the
+        # zero-parameter floor — with to_out zero-initialised the predictor
+        # starts exactly at the copy-last solution and training can only add
+        # dynamics on top, instead of having to first re-learn the identity
+        # (the failure mode where the forecast scores BELOW its own input).
+        self.residual_head = residual_head
+        if residual_head:
+            nn.init.zeros_(self.to_out.weight)
+            nn.init.zeros_(self.to_out.bias)
 
         self.edge_head = None
         if use_edge_head:
@@ -229,12 +412,15 @@ class MaskedNodePredictor(nn.Module):
         idx = rng.choice(pool.cpu().numpy(), self.num_masked_nodes, replace=False)
         return torch.from_numpy(idx).to(device)
 
-    def prepare_input(self, x, active, times=None):
+    def prepare_input(self, x, active, times=None, forced_masked_idx=None):
         B, T_hist, N, D = x.shape
         T_total = self.total_frames
         device = x.device
 
-        masked_idx = self._mask_indices(active[:, 0], device)
+        if forced_masked_idx is not None:
+            masked_idx = forced_masked_idx.to(device).long()
+        else:
+            masked_idx = self._mask_indices(active[:, 0], device)
         is_masked = torch.zeros(N, dtype=torch.bool, device=device)
         is_masked[masked_idx] = True
 
@@ -266,15 +452,22 @@ class MaskedNodePredictor(nn.Module):
 
         return out, masked_idx
 
-    def forward(self, x, adj, active, times=None, hidden_edges=None):
+    def forward(self, x, adj, active, times=None, hidden_edges=None,
+                forced_masked_idx=None):
         B, T_hist, N, D = x.shape
         T_total = self.total_frames
+        if self.latent_norm:
+            x = F.layer_norm(x, (D,))
 
-        x_input, masked_idx = self.prepare_input(x, active, times)
+        x_input, masked_idx = self.prepare_input(
+            x, active, times, forced_masked_idx=forced_masked_idx,
+        )
         x_flat = rearrange(x_input, "b t n d -> b (t n) d")
 
         if self.use_attention_mask:
-            attn_mask = build_spacetime_mask(
+            builder = (build_spacetime_edge_index if self.attn_impl == "sparse"
+                       else build_spacetime_mask)
+            attn_mask = builder(
                 adj, active,
                 hidden_edges=hidden_edges,
                 allow_temporal_self=True,
@@ -286,6 +479,17 @@ class MaskedNodePredictor(nn.Module):
         h_flat = self.transformer(x_flat, attn_mask=attn_mask)
         h = rearrange(h_flat, "b (t n) d -> b t n d", t=T_total, n=N)
         pred = self.to_out(h)
+
+        if self.residual_head:
+            # Anchor = last latent the predictor was allowed to see: the final
+            # history step for visible nodes, t=0 for masked nodes (their
+            # trajectory past t=0 is hidden — anchoring them at x[:, -1] would
+            # leak the masked history into the reconstruction task).
+            anchor = x[:, -1]
+            if masked_idx.numel() > 0:
+                anchor = anchor.clone()
+                anchor[:, masked_idx] = x[:, 0][:, masked_idx]
+            pred = pred + anchor.unsqueeze(1)
 
         edge_out = None
         if self.edge_head is not None and hidden_edges is not None:
@@ -300,14 +504,392 @@ class MaskedNodePredictor(nn.Module):
         return (b, t, i, j), logits
 
     @torch.no_grad()
-    def inference(self, x, adj, active, times=None):
+    def inference(self, x, adj, active, times=None, intervention_idx=None):
+        """Predict future-step latents. By default no nodes are masked
+        (observational forecast). Pass `intervention_idx` (a 1-D LongTensor
+        of node indices) to force those nodes' trajectories past t=0 to be
+        replaced with the learned mask token -- a do(.) intervention. The
+        returned predictions are over *all* nodes including the intervened
+        ones; downstream eval typically restricts attention to un-intervened
+        nodes (those are the ones for which counterfactual predictions are
+        well-defined).
+
+        Future graph structure is withheld here: the adjacency and activity at
+        forecast steps (t >= history_frames) are overwritten with the LAST
+        history step's values, so the predictor conditions only on history
+        connectivity -- it can never peek at future edges regardless of the
+        --no_attention_mask flag. This is a provable no-op on the
+        no-attention-mask path (adj/active are unused inside forward there) and
+        for prepare_input (which only reads history steps), but makes the "no
+        future peek" guarantee structural rather than incidental for the
+        attention-mask variant. Known future *timestamps* (`times`) are left
+        intact -- you legitimately know when you are forecasting, just not the
+        graph."""
+        H = self.history_frames
+        if adj is not None and adj.shape[1] > H:
+            adj = adj.clone()
+            adj[:, H:] = adj[:, H - 1:H]          # carry last-seen edges forward
+        if active is not None and active.shape[1] > H:
+            active = active.clone()
+            active[:, H:] = active[:, H - 1:H]     # carry last-seen activity forward
         saved = self.num_masked_nodes
-        self.num_masked_nodes = 0
+        if intervention_idx is None:
+            self.num_masked_nodes = 0
         try:
-            pred, _, _ = self.forward(x, adj, active, times=times)
+            pred, _, _ = self.forward(
+                x, adj, active, times=times,
+                forced_masked_idx=intervention_idx,
+            )
         finally:
             self.num_masked_nodes = saved
         return pred[:, self.history_frames:]
+
+
+def vicreg_terms(z: torch.Tensor, mask: torch.Tensor,
+                 gamma: float = 1.0, eps: float = 1e-4) -> tuple:
+    """VICReg variance + covariance regularizers on a node-latent tensor.
+
+    The MSE-style invariance term is already in `compute_graph_jepa_loss`; this
+    function provides the two complementary losses from VICReg (Bardes, Ponce
+    & LeCun, 2022) needed to prevent collapse:
+
+      - variance: per-dimension std should stay above gamma. Penalty:
+            mean_d( relu(gamma - std(z_d)) )
+        keeps no single dim from shrinking to a delta.
+      - covariance: off-diagonal entries of cov(z) should be zero. Penalty:
+            sum_{i != j} cov_ij^2 / D
+        decorrelates dims so dim-count != effective-rank.
+
+    Args:
+      z:    (B, T, N, D) predictor (or encoder) output.
+      mask: (B, T, N) bool — rows to include (active nodes at future steps).
+      gamma: variance floor. 1.0 is the VICReg default.
+
+    Returns (var_loss, cov_loss) as 0-d tensors. If fewer than 2 valid rows
+    are available the function returns zeros (no signal possible).
+    """
+    rows = z[mask]
+    if rows.shape[0] < 2:
+        zero = z.sum() * 0.0
+        return zero, zero
+    std = torch.sqrt(rows.var(dim=0, unbiased=False) + eps)         # (D,)
+    var_loss = F.relu(gamma - std).mean()
+    rows_c = rows - rows.mean(dim=0, keepdim=True)
+    cov = (rows_c.T @ rows_c) / max(rows.shape[0] - 1, 1)           # (D, D)
+    D = cov.shape[0]
+    off2 = cov.pow(2).sum() - cov.diagonal().pow(2).sum()
+    cov_loss = off2 / D
+    return var_loss, cov_loss
+
+
+def sigreg_loss(rows: torch.Tensor, num_slices: int = 256, knots: int = 17,
+                t_max: float = 5.0, max_rows: int = 8192,
+                generator: "torch.Generator | None" = None) -> torch.Tensor:
+    """SIGReg (Sketched Isotropic Gaussian Regularisation) from LeJEPA
+    (Balestriero & LeCun, 2025).
+
+    Pushes the empirical distribution of ``rows`` toward an isotropic
+    standard Gaussian, which LeJEPA shows is the optimal embedding
+    distribution for a JEPA and which rules out every collapse mode
+    (total, dimensional, and the anisotropic ones VICReg's var/cov terms
+    miss). The test is one-dimensional: project onto ``num_slices`` random
+    unit directions and, per direction, compute the Epps-Pulley statistic
+
+        int |phi_n(t) - exp(-t^2/2)|^2 exp(-t^2/2) dt
+
+    between the empirical characteristic function phi_n and that of N(0, 1),
+    on a trapezoid grid of ``knots`` points over [0, t_max] (the integrand is
+    even, so the negative half is a constant factor). Because the target is
+    the *standard* normal the scale is pinned too -- no separate variance
+    floor is needed. Unlike VICReg it is invariant to which basis the
+    encoder happens to use.
+
+    Rows are sub-sampled to ``max_rows`` (a distributional test does not need
+    every token) and slices are chunked so the (n, M, K) cos/sin tensor never
+    exceeds ~64 MB. The classical n-factor on the statistic is dropped: the
+    caller's weight absorbs it and this keeps the loss batch-size-agnostic.
+
+    Args:
+      rows: (n, D) embeddings (predictor outputs and/or encoder latents).
+    Returns a 0-d tensor (mean statistic over slices).
+    """
+    n, D = rows.shape
+    if n < 2:
+        return rows.sum() * 0.0
+    if n > max_rows:
+        sel = torch.randperm(n, device=rows.device, generator=generator)[:max_rows]
+        rows = rows[sel]
+        n = max_rows
+    A = torch.randn(D, num_slices, device=rows.device, dtype=rows.dtype,
+                    generator=generator)
+    A = A / A.norm(dim=0, keepdim=True).clamp(min=1e-6)
+    t = torch.linspace(0.0, t_max, knots, device=rows.device, dtype=rows.dtype)
+    w = torch.exp(-0.5 * t * t)                       # = phi_N(0,1)(t) = weight
+    dt = t_max / max(knots - 1, 1)
+    chunk = max(1, (1 << 24) // (n * knots))          # slices per chunk
+    stats = []
+    for s0 in range(0, num_slices, chunk):
+        proj = rows @ A[:, s0:s0 + chunk]              # (n, m)
+        tx = proj.unsqueeze(-1) * t                    # (n, m, K)
+        re = torch.cos(tx).mean(0)                     # (m, K)
+        im = torch.sin(tx).mean(0)
+        err = (re - w).pow(2) + im.pow(2)
+        stats.append((err * w).sum(-1) * dt)           # (m,)
+    return torch.cat(stats).mean()
+
+
+class TrajectoryJEPAPredictor(nn.Module):
+    """V-JEPA-style predictor over trajectory-window tokens.
+
+    Differs from MaskedNodePredictor in three ways:
+      1. Token granularity is (window, node), not (timestep, node). The
+         caller passes already-pooled (B, K, N, D) tokens from
+         `TrajectoryWindowPooler`; this module just predicts.
+      2. Mask is a (K, N) bool grid (positions), not a node-index set.
+         No past/future split -- masking is bidirectional, V-JEPA style.
+      3. No anchor-query / new-node-token machinery. The pooled tokens
+         already carry node identity via the encoder; we add learned
+         window-position and node-position embeddings on top.
+
+    The transformer backbone is shared with MaskedNodePredictor
+    (GraphSpacetimeTransformer) so the per-layer compute is identical.
+    """
+
+    def __init__(self, num_windows: int, num_nodes: int, node_dim: int,
+                 depth: int = 4, heads: int = 4, dim_head: int = 32,
+                 mlp_dim: int = 512, dropout: float = 0.1,
+                 node_pos_mode: str = "off"):
+        """
+        node_pos_mode:
+          - "off"      (default): No per-node positional embedding. Node
+                        identity flows through the pooled tokens
+                        themselves -- the encoder's bidirectional GRU and
+                        the GCN already produce per-node-distinct values.
+                        Recommended for diagnostic interpretability.
+          - "learned"  : Free (N, D) lookup table. PROBLEMATIC: lets the
+                        model memorise per-node attributes (e.g. block ID
+                        in SBM) during training, contaminating downstream
+                        probes. Verified by zeroing test on the smoke run.
+          - "from_input": Project the encoder's first-window pooled token
+                          via a linear layer to produce the per-node
+                          anchor. Matches MaskedNodePredictor's approach.
+                          Adds D^2 parameters, all functional.
+        """
+        super().__init__()
+        if node_pos_mode not in ("off", "learned", "from_input"):
+            raise ValueError(f"unknown node_pos_mode {node_pos_mode!r}")
+        self.num_windows = num_windows
+        self.num_nodes = num_nodes
+        self.node_dim = node_dim
+        self.node_pos_mode = node_pos_mode
+
+        # Single learned mask token; broadcast at masked positions.
+        self.mask_token = nn.Parameter(torch.zeros(node_dim))
+        nn.init.trunc_normal_(self.mask_token, std=0.02)
+
+        # Window-position embedding: small (1, K, 1, D). This is harmless
+        # because it only encodes window index, which is a true temporal
+        # variable; the model can't memorise per-node attributes through it.
+        self.window_pos = nn.Parameter(
+            0.02 * torch.randn(1, num_windows, 1, node_dim)
+        )
+
+        # Node-position embedding: configurable to avoid the memorisation
+        # confound (see node_pos_mode docstring above).
+        if node_pos_mode == "learned":
+            self.node_pos = nn.Parameter(
+                0.02 * torch.randn(1, 1, num_nodes, node_dim)
+            )
+        elif node_pos_mode == "from_input":
+            self.id_projector = nn.Linear(node_dim, node_dim)
+
+        self.transformer = GraphSpacetimeTransformer(
+            dim=node_dim, depth=depth, heads=heads,
+            dim_head=dim_head, mlp_dim=mlp_dim, dropout=dropout,
+        )
+        self.to_out = nn.Linear(node_dim, node_dim)
+
+    def forward(self, tokens: torch.Tensor, mask: torch.Tensor):
+        """
+        tokens: (B, K, N, D) -- output of TrajectoryWindowPooler. Caller
+                must ensure K <= self.num_windows and N <= self.num_nodes.
+        mask:   (K, N) bool -- True at masked positions (V-JEPA style,
+                shared across the batch).
+
+        Returns:
+          pred:   (B, K, N, D) predicted tokens. Loss should be computed
+                  at masked positions; unmasked positions are not
+                  supervised but are output for completeness.
+        """
+        if tokens.dim() != 4:
+            raise ValueError(
+                f"expected tokens (B, K, N, D); got shape {tuple(tokens.shape)}"
+            )
+        B, K, N, D = tokens.shape
+        if mask.shape != (K, N):
+            raise ValueError(
+                f"mask shape {tuple(mask.shape)} != ({K}, {N})"
+            )
+
+        # Replace masked positions with the learned mask token.
+        mask_b = mask.view(1, K, N, 1).expand(B, K, N, D)
+        mtok = self.mask_token.view(1, 1, 1, D).expand(B, K, N, D)
+        x = torch.where(mask_b, mtok, tokens)
+
+        # Window position (always added; pure temporal info, no leak risk).
+        x = x + self.window_pos[:, :K]
+
+        # Node position: only if configured. Node identity comes from the
+        # tokens themselves in 'off' mode; from a projection of the first
+        # visible window's token in 'from_input' mode.
+        if self.node_pos_mode == "learned":
+            x = x + self.node_pos[:, :, :N]
+        elif self.node_pos_mode == "from_input":
+            # First-window pooled token per node, projected.
+            anchor = self.id_projector(tokens[:, 0])             # (B, N, D)
+            x = x + anchor.unsqueeze(1)                          # broadcast over K
+
+        # Spacetime transformer over the flattened (K*N) token sequence.
+        # No attention mask in v1 -- every token attends to every other.
+        x_flat = rearrange(x, "b k n d -> b (k n) d")
+        h_flat = self.transformer(x_flat, attn_mask=None)
+        h = rearrange(h_flat, "b (k n) d -> b k n d", k=K, n=N)
+        return self.to_out(h)
+
+
+# Backward-compatible alias: the predictor used to be named MaskedNodePredictor.
+MaskedNodePredictor = DyGJEPAPredictor
+
+
+class PlainForecaster(nn.Module):
+    """Graph-free, mask-free temporal forecaster -- the Tier-2 "generic
+    predictor" control for the masked spacetime transformer.
+
+    Answers the ablation reviewers actually ask: *is the win the masked graph
+    predictor, or just having ANY forecaster on top of the frozen encoder?*
+    It maps each node's history latents to its future latents INDEPENDENTLY --
+    no cross-node attention, no adjacency, no masking objective -- trained on
+    the identical future-latent-MSE loss (masked_idx is empty, so
+    ``compute_graph_jepa_loss`` supervises only the future positions). Two
+    backbones:
+      - ``mlp`` : flatten the H history latents per node -> MLP -> P*D.
+      - ``gru`` : GRU over the H history steps per node -> last hidden -> P*D.
+
+    Capacity is set by ``mlp_dim`` (hidden width) and ``depth`` (layers),
+    reusing the SAME CLI flags as the transformer so param counts can be
+    matched for a fair ablation. Supports ``residual_head`` so, exactly like
+    DyGJEPAPredictor, the forecast starts at copy-last -- keeping the two
+    predictors' training floor identical.
+
+    Drop-in for DyGJEPAPredictor: same ``forward`` / ``inference`` signatures,
+    returns ``(pred, empty_masked_idx, None)``. ``adj`` / ``active`` are
+    accepted for interface parity and DELIBERATELY IGNORED, so future graph
+    structure can never leak regardless of any attention-mask flag.
+    """
+
+    def __init__(self, num_nodes, node_dim, history_frames, pred_frames=1,
+                 kind="mlp", depth=2, mlp_dim=512, dropout=0.1,
+                 residual_head=False, **_ignored):
+        super().__init__()
+        if kind not in ("mlp", "gru"):
+            raise ValueError(f"PlainForecaster kind must be 'mlp' or 'gru', "
+                             f"got {kind!r}")
+        self.num_nodes = num_nodes
+        self.node_dim = node_dim
+        self.history_frames = history_frames
+        self.pred_frames = pred_frames
+        self.total_frames = history_frames + pred_frames
+        self.num_masked_nodes = 0            # interface parity (never used)
+        self.kind = kind
+        self.residual_head = residual_head
+        D, H, P = node_dim, history_frames, pred_frames
+        n_layers = max(1, depth)
+
+        if kind == "gru":
+            self.gru = nn.GRU(input_size=D, hidden_size=mlp_dim,
+                              num_layers=n_layers, batch_first=True,
+                              dropout=dropout if n_layers > 1 else 0.0)
+        else:
+            dims = [H * D] + [mlp_dim] * n_layers
+            layers = []
+            for a, b in zip(dims[:-1], dims[1:]):
+                layers += [nn.Linear(a, b), nn.GELU(), nn.Dropout(dropout)]
+            self.body = nn.Sequential(*layers)
+        self.to_out = nn.Linear(mlp_dim, P * D)
+
+        # Residual parameterisation parity with DyGJEPAPredictor: zero-init the
+        # head so the forecast STARTS at copy-last (anchor = last history
+        # latent) and can only add dynamics on top. Load-bearing on MOOC.
+        if residual_head:
+            nn.init.zeros_(self.to_out.weight)
+            nn.init.zeros_(self.to_out.bias)
+
+    def _forecast(self, x):
+        """x: (B, H, N, D) -> future latents (B, P, N, D). Per-node only."""
+        B, H, N, D = x.shape
+        P = self.pred_frames
+        xn = x.permute(0, 2, 1, 3).reshape(B * N, H, D)        # (B*N, H, D)
+        if self.kind == "gru":
+            out, _ = self.gru(xn)                              # (B*N, H, hid)
+            h = out[:, -1]
+        else:
+            h = self.body(xn.reshape(B * N, H * D))            # (B*N, hid)
+        fut = self.to_out(h).view(B, N, P, D).permute(0, 2, 1, 3)   # (B,P,N,D)
+        if self.residual_head:
+            fut = fut + x[:, -1].unsqueeze(1)                  # anchor copy-last
+        return fut
+
+    def forward(self, x, adj=None, active=None, times=None,
+                hidden_edges=None, forced_masked_idx=None):
+        fut = self._forecast(x)                                # (B, P, N, D)
+        pred = torch.cat([x, fut], dim=1)                      # (B, H+P, N, D)
+        empty = torch.empty(0, dtype=torch.long, device=x.device)
+        return pred, empty, None                               # no masking, no edges
+
+    @torch.no_grad()
+    def inference(self, x, adj=None, active=None, times=None,
+                  intervention_idx=None):
+        return self._forecast(x)                               # (B, P, N, D)
+
+
+def build_predictor(mask_scheme: str, **cfg):
+    """Construct the DyG-JEPA predictor for a masking scheme.
+
+    - ``node_mask`` / ``future_forecast`` -> :class:`DyGJEPAPredictor`
+      (expects cfg: num_nodes, node_dim, history_frames, pred_frames, ...).
+    - ``mlp_forecast`` / ``gru_forecast``  -> :class:`PlainForecaster`
+      (the graph-free Tier-2 ablation control; transformer-only cfg keys such
+      as heads/dim_head/use_attention_mask are accepted and ignored).
+    - ``trajectory_block``                -> :class:`TrajectoryJEPAPredictor`
+      (expects cfg: num_windows, num_nodes, node_dim, ...).
+    """
+    if mask_scheme in ("node_mask", "future_forecast"):
+        return DyGJEPAPredictor(mask_scheme=mask_scheme, **cfg)
+    if mask_scheme in ("mlp_forecast", "gru_forecast"):
+        kind = "mlp" if mask_scheme == "mlp_forecast" else "gru"
+        return PlainForecaster(kind=kind, **cfg)
+    if mask_scheme == "trajectory_block":
+        return TrajectoryJEPAPredictor(**cfg)
+    raise ValueError(
+        f"unknown mask_scheme {mask_scheme!r}; expected node_mask, "
+        f"future_forecast, mlp_forecast, gru_forecast, or trajectory_block.")
+
+
+def compute_trajectory_jepa_loss(pred: torch.Tensor, target: torch.Tensor,
+                                 mask: torch.Tensor) -> torch.Tensor:
+    """MSE in latent space, restricted to masked (predicted) positions.
+
+    pred, target: (B, K, N, D)
+    mask:         (K, N) bool, True at masked positions to supervise.
+
+    Returns a 0-d tensor. Returns the all-zero positions' MSE if the
+    mask is empty, to avoid NaN on degenerate batches.
+    """
+    B, K, N, D = pred.shape
+    diff2 = (pred - target).pow(2).mean(dim=-1)                  # (B, K, N)
+    mask_b = mask.view(1, K, N).expand(B, K, N).float()
+    n_masked = mask_b.sum().clamp(min=1.0)
+    return (diff2 * mask_b).sum() / n_masked
 
 
 def compute_graph_jepa_loss(
@@ -319,8 +901,39 @@ def compute_graph_jepa_loss(
     edge_out=None,
     edge_labels: Optional[torch.Tensor] = None,
     edge_weight: float = 1.0,
+    vicreg_var_weight: float = 0.0,
+    vicreg_cov_weight: float = 0.0,
+    vicreg_gamma: float = 1.0,
+    change_weight: float = 0.0,
+    target_norm: bool = False,
+    sigreg_weight: float = 0.0,
+    sigreg_slices: int = 256,
+    sigreg_knots: int = 17,
+    sigreg_extra_rows: "list[torch.Tensor] | None" = None,
 ):
+    """Latent-MSE JEPA loss (masked-history + future) with optional extras.
+
+    target_norm applies a parameter-free LayerNorm over the channel dim of
+    the target (I-JEPA / V-JEPA) so no node/dim with a large latent norm can
+    dominate the average and the loss scale stays fixed as an EMA target
+    drifts. The predictor must be built with ``latent_norm=True`` so its input
+    (and residual anchor) live in the same space.
+
+    sigreg_weight > 0 adds LeJEPA's SIGReg on the predictor output at the
+    supervised (masked-history + future) rows, averaged with any
+    ``sigreg_extra_rows`` (e.g. the online encoder's latents when it is
+    being trained). See :func:`sigreg_loss`.
+
+    change_weight > 0 turns on change-weighted MSE: each (b, t, n) term is
+    weighted by 1 + change_weight * ||z_t - z_{t-1}|| / mean(||.||), computed
+    on the TARGET latents. Transitions are rare, so the unweighted average is
+    dominated by static nodes — for which copying is optimal — and the
+    predictor never trains on the rows that matter. Weighted means keep the
+    loss scale comparable across change_weight settings.
+    """
     B, T_total, N, D = pred.shape
+    if target_norm:
+        target = F.layer_norm(target, (D,))
     diff2 = (pred - target).pow(2).mean(dim=-1)
 
     node_sel = torch.zeros(N, dtype=torch.bool, device=pred.device)
@@ -333,8 +946,21 @@ def compute_graph_jepa_loss(
     fut[:, T_hist:] = True
     fut = fut & active
 
-    loss_mh = (diff2 * mh.float()).sum() / mh.sum().clamp(min=1)
-    loss_fut = (diff2 * fut.float()).sum() / fut.sum().clamp(min=1)
+    if change_weight > 0:
+        with torch.no_grad():
+            delta = (target[:, 1:] - target[:, :-1]).pow(2).mean(dim=-1).sqrt()
+            delta = torch.cat([torch.zeros_like(delta[:, :1]), delta], dim=1)
+            sup = mh | fut
+            norm = (delta[sup].mean() if sup.any()
+                    else delta.mean()).clamp(min=1e-6)
+            w = 1.0 + change_weight * delta / norm                 # (B, T, N)
+        loss_mh = (diff2 * w * mh.float()).sum() \
+            / (w * mh.float()).sum().clamp(min=1e-6)
+        loss_fut = (diff2 * w * fut.float()).sum() \
+            / (w * fut.float()).sum().clamp(min=1e-6)
+    else:
+        loss_mh = (diff2 * mh.float()).sum() / mh.sum().clamp(min=1)
+        loss_fut = (diff2 * fut.float()).sum() / fut.sum().clamp(min=1)
     losses = {"loss_masked_history": loss_mh, "loss_future": loss_fut}
     total = loss_mh + loss_fut
 
@@ -343,6 +969,24 @@ def compute_graph_jepa_loss(
         loss_edge = F.binary_cross_entropy_with_logits(logits, edge_labels.float())
         losses["loss_edge"] = loss_edge
         total = total + edge_weight * loss_edge
+
+    # VICReg on predictor output at future + masked-history positions: that's
+    # where the predictor is forced to actually populate latents (elsewhere it
+    # just echoes visible inputs).
+    if vicreg_var_weight > 0 or vicreg_cov_weight > 0:
+        reg_mask = mh | fut
+        var_loss, cov_loss = vicreg_terms(pred, reg_mask, gamma=vicreg_gamma)
+        losses["loss_vicreg_var"] = var_loss
+        losses["loss_vicreg_cov"] = cov_loss
+        total = total + vicreg_var_weight * var_loss + vicreg_cov_weight * cov_loss
+
+    if sigreg_weight > 0:
+        groups = [pred[mh | fut]] + list(sigreg_extra_rows or [])
+        terms = [sigreg_loss(g, num_slices=sigreg_slices, knots=sigreg_knots)
+                 for g in groups if g.shape[0] >= 2]
+        sig = torch.stack(terms).mean() if terms else pred.sum() * 0.0
+        losses["loss_sigreg"] = sig
+        total = total + sigreg_weight * sig
 
     losses["loss"] = total
     return losses
