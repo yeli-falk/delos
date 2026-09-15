@@ -25,10 +25,9 @@ edge subsets:
 classification `gap`: the subset where echoing the input does not help. Report
 both; the sweep ranks on `new` by default for the same reason.
 
-**`TASK=link_pred` uses the full dataset** (TOPU=TOPI=0 keeps every node, the
-default for all JODIE datasets). The probe scores 99 negatives per positive per
-window, so cost grows ~N²; lower `BATCH` if you OOM. The node set comes from
-`_dataset_config.sh` and is shared by every arm — do not change it for one method.
+**`TASK=link_pred` uses the full dataset** (every node; JODIE datasets have no
+subset knob). The probe scores 99 negatives per positive per window, so cost
+grows ~N²; lower `BATCH` if you OOM.
 
 ## Arms
 

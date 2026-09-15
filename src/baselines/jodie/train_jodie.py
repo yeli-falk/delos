@@ -1,11 +1,11 @@
 """Train the JODIE baseline on a JODIE CSV, then dump per-bin embeddings.
 
 Protocol (matched to every other baseline for direct comparability):
-  - SAME node subset: ``top_k_bipartite`` -> sorted -> users are node ids
-    [0, n_users), items [n_users, n_users+n_items) -- identical to
+  - SAME node set: the full dataset, ``bipartite_node_ids`` -> users are
+    node ids [0, n_users), items [n_users, n_users+n_items) -- identical to
     ``bin_bipartite`` and to the state-label matrix.
-  - SAME bin edges: equal-width over the timestamps of events whose BOTH
-    endpoints are kept (identical to the graph's snapshots and labels).
+  - SAME bin edges: equal-width over all event timestamps (identical to the
+    graph's snapshots and labels).
   - SAME training range: only events in bins [0, 0.7*num_bins) are trained on
     (the chronological train split every method uses); no state labels are
     ever seen (self-supervised).
@@ -42,7 +42,7 @@ import torch.nn.functional as F
 from src.baselines.common import SPLITS_FALLBACK, BestValTracker
 from src.baselines.jodie.jodie import JODIE
 from src.custom_codes.dataset_factory import add_dataset_cli_flags
-from src.custom_codes.dtdg.binning import top_k_bipartite
+from src.custom_codes.dtdg.binning import bipartite_node_ids
 from src.custom_codes.jodie_dataset import (
     _parse_jodie_csv,
     _parse_jodie_csv_with_features,
@@ -52,10 +52,10 @@ from src.train.engine import set_deterministic, setup_output_dir
 
 
 # ---------------------------------------------------------------------------
-# Event preparation (mirrors bin_bipartite's subset + bin edges EXACTLY)
+# Event preparation (mirrors bin_bipartite's node ids + bin edges EXACTLY)
 # ---------------------------------------------------------------------------
 def load_events(args):
-    """Return time-sorted dense-indexed kept events + bin metadata.
+    """Return time-sorted dense-indexed events + bin metadata.
 
     Returns dict with users, items (dense ids), times, feats (E, F), bins,
     n_users, n_items, t_lo, span, num_bins.
@@ -68,16 +68,11 @@ def load_events(args):
         users, items, times = _parse_jodie_csv(path)
         feats = None
 
-    keep_u, keep_i = top_k_bipartite(users, items, args.jodie_top_k_users,
-                                     args.jodie_top_k_items)
-    keep_u_arr = np.array(sorted(keep_u), dtype=np.int64)
-    keep_i_arr = np.array(sorted(keep_i), dtype=np.int64)
-    keep = np.isin(users, keep_u_arr) & np.isin(items, keep_i_arr)
-
-    u = np.searchsorted(keep_u_arr, users[keep])
-    i = np.searchsorted(keep_i_arr, items[keep])
-    t = times[keep]
-    f = feats[keep] if feats is not None else np.zeros((len(t), 0), np.float32)
+    keep_u_arr, keep_i_arr = bipartite_node_ids(users, items)
+    u = np.searchsorted(keep_u_arr, users)
+    i = np.searchsorted(keep_i_arr, items)
+    t = times
+    f = feats if feats is not None else np.zeros((len(t), 0), np.float32)
 
     order = np.argsort(t, kind="stable")
     u, i, t, f = u[order], i[order], t[order], f[order]

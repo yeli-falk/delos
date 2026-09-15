@@ -70,8 +70,6 @@ def _make_args_namespace(saved_args: dict) -> types.SimpleNamespace:
         ("seed", 42),
         ("jodie_data_path", None),
         ("jodie_num_bins", 30),
-        ("jodie_top_k_users", 0),          # 0 = full dataset (factory default)
-        ("jodie_top_k_items", 0),
         ("reddit_data_path", None),
         ("reddit_num_bins", 36),
         ("reddit_top_k", 1000),

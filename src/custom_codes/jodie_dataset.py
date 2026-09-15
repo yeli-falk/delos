@@ -38,7 +38,7 @@ from typing import Optional, Tuple
 import numpy as np
 from torch.utils.data import Dataset
 
-from src.custom_codes.dtdg.binning import bin_bipartite, top_k_bipartite
+from src.custom_codes.dtdg.binning import bin_bipartite, bipartite_node_ids
 from src.custom_codes.dtdg.canonical import SnapshotSequence
 from src.custom_codes.dtdg.dataset import DTDGDataset
 from src.custom_codes.dtdg.features import build_graph_features
@@ -213,15 +213,12 @@ def _parse_jodie_csv(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return users, items, times
 
 
-def _state_label_vector(path: Path, num_nodes: int, top_k_users: Optional[int],
-                        top_k_items: Optional[int]) -> np.ndarray:
+def _state_label_vector(path: Path, num_nodes: int) -> np.ndarray:
     """Per-node binary 'ever underwent a state change' label, JODIE's canonical
-    dynamic-node-classification target. Users in the top-K subset (every user
-    when top_k_users is 0/None) get 0/1; everyone else (and all items) gets -1
-    (excluded from the probe)."""
+    dynamic-node-classification target. Users get 0/1; items get -1 (excluded
+    from the probe)."""
     users_full, items_full, _, states_full = _parse_jodie_csv_with_state_labels(path)
-    keep_u, _ = top_k_bipartite(users_full, items_full, top_k_users, top_k_items)
-    keep_u_arr = np.array(sorted(keep_u), dtype=np.int64)
+    keep_u_arr, _ = bipartite_node_ids(users_full, items_full)
     in_subset = np.isin(users_full, keep_u_arr)
     users_k = users_full[in_subset]
     states_k = states_full[in_subset]
@@ -238,15 +235,14 @@ def _state_label_vector(path: Path, num_nodes: int, top_k_users: Optional[int],
 
 
 def _state_label_matrix(path: Path, num_nodes: int, num_bins: int,
-                        top_k_users: Optional[int], top_k_items: Optional[int],
                         mode: str = "event") -> np.ndarray:
     """Per-(bin, node) binary state-change label — the *dynamic* JODIE target.
 
     Unlike :func:`_state_label_vector`, which OR-reduces every user's ban flags
     into one static bit, this keeps the time axis: it returns a
     ``(num_bins, num_nodes)`` matrix so a probe can ask a different question at
-    each snapshot. Kept users get 0/1; excluded users and all items get -1 at
-    every bin (filtered out downstream).
+    each snapshot. Users get 0/1; items get -1 at every bin (filtered out
+    downstream).
 
       mode='event':  Y[t, u] = 1 iff a state_label==1 event for user u falls in
                      snapshot t. The faithful dynamic benchmark target (a ban
@@ -255,34 +251,27 @@ def _state_label_matrix(path: Path, num_nodes: int, num_bins: int,
                      bin (cumulative 'currently banned' state); denser, still
                      time-varying (0 before the ban, 1 after).
 
-    The bins reproduce the graph's exact edges: equal-width over the timestamps
-    of events where BOTH endpoints are kept (matching ``bin_bipartite``), so
-    ``Y[t]`` aligns with snapshot ``t`` of ``ds.adj``.
+    The bins reproduce the graph's exact edges: equal-width over the event
+    timestamps (matching ``bin_bipartite``), so ``Y[t]`` aligns with snapshot
+    ``t`` of ``ds.adj``.
     """
     assert mode in ("event", "state"), f"unknown state_label_mode {mode!r}"
     users_full, items_full, times_full, states_full = \
         _parse_jodie_csv_with_state_labels(path)
-    keep_u, keep_i = top_k_bipartite(users_full, items_full,
-                                     top_k_users, top_k_items)
-    keep_u_arr = np.array(sorted(keep_u), dtype=np.int64)
-    keep_i_arr = np.array(sorted(keep_i), dtype=np.int64)
+    keep_u_arr, _ = bipartite_node_ids(users_full, items_full)
     n_users = len(keep_u_arr)
 
-    # Reproduce the graph's bin edges from the both-endpoints-kept subset.
-    keep_mask = np.isin(users_full, keep_u_arr) & np.isin(items_full, keep_i_arr)
-    times_k = times_full[keep_mask]
-    if times_k.size == 0:
-        raise ValueError("no kept events; cannot bin dynamic state labels")
-    t_lo = float(times_k.min())
-    span = max(float(times_k.max()) - t_lo, 1.0)
+    # Reproduce the graph's bin edges (bin_bipartite uses every event).
+    if times_full.size == 0:
+        raise ValueError("no events; cannot bin dynamic state labels")
+    t_lo = float(times_full.min())
+    span = max(float(times_full.max()) - t_lo, 1.0)
 
     labels = np.full((num_bins, num_nodes), -1, dtype=np.int64)
-    labels[:, :n_users] = 0                              # kept users default 0
+    labels[:, :n_users] = 0                              # users default 0
 
-    # Positive state-change events for kept users, binned by their timestamp
-    # with the *same* edges (independent of whether that interaction's item was
-    # kept, so a ban on a non-kept item still lands in the right snapshot).
-    pos = (states_full == 1) & np.isin(users_full, keep_u_arr)
+    # Positive state-change events, binned by timestamp with the same edges.
+    pos = states_full == 1
     pos_u = np.searchsorted(keep_u_arr, users_full[pos])           # 0..n_users-1
     pos_bin = np.clip(((times_full[pos] - t_lo) / span * num_bins).astype(np.int64),
                       0, num_bins - 1)
@@ -316,9 +305,6 @@ class JODIEDynamicGraphDataset(Dataset):
       dataset:   "reddit", "wikipedia" or "mooc" (controls default path +
                  cache key).
       num_bins:  number of DTDG snapshots to bin events into (default 30).
-      top_k_users / top_k_items: keep only the most-active K of each side.
-                 0 / None (the default) keeps every node, i.e. the dataset
-                 is used at its full size.
       history_size / num_preds: window lengths.
       split:     "train" | "val" | "test", chronological 70/10/20.
     """
@@ -333,8 +319,6 @@ class JODIEDynamicGraphDataset(Dataset):
         num_preds: int = 1,
         dataset: str = "reddit",
         num_bins: int = 30,
-        top_k_users: Optional[int] = 0,
-        top_k_items: Optional[int] = 0,
         feat_dim: int = 8,
         stride: int = 1,
         seed: int = 42,
@@ -369,8 +353,7 @@ class JODIEDynamicGraphDataset(Dataset):
             users, items, times = _parse_jodie_csv(path)
             edge_feats = None
         adj, active, node_edge_feats = bin_bipartite(
-            users, items, times, top_k_users=top_k_users,
-            top_k_items=top_k_items, num_bins=num_bins,
+            users, items, times, num_bins=num_bins,
             edge_features=edge_feats,
             normalize_edge_features=normalize_edge_features,
         )
@@ -394,12 +377,10 @@ class JODIEDynamicGraphDataset(Dataset):
         self.state_label_mode = state_label_mode
         if with_state_labels:
             if state_label_mode == "ever":
-                self.node_labels = _state_label_vector(
-                    path, self.num_nodes, top_k_users, top_k_items)
+                self.node_labels = _state_label_vector(path, self.num_nodes)
             else:
                 self.node_labels_dyn = _state_label_matrix(
-                    path, self.num_nodes, num_bins, top_k_users, top_k_items,
-                    mode=state_label_mode)
+                    path, self.num_nodes, num_bins, mode=state_label_mode)
                 # Static compat vector = ever-flagged (max over bins keeps -1
                 # for excluded, OR-reduces 0/1 for kept users).
                 self.node_labels = self.node_labels_dyn.max(axis=0)

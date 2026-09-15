@@ -25,33 +25,17 @@ from src.custom_codes.dtdg.features import aggregate_edge_features_to_nodes
 
 
 # ---------------------------------------------------------------------------
-# Top-K node selection
+# Node vocabulary
 # ---------------------------------------------------------------------------
-def _keep_all(k: Optional[int]) -> bool:
-    """``None`` or a non-positive K means "no subsetting, keep every node"."""
-    return k is None or int(k) <= 0
+def bipartite_node_ids(users: np.ndarray,
+                       items: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Sorted unique (user_ids, item_ids) of a bipartite stream.
 
-
-def top_k_bipartite(users: np.ndarray, items: np.ndarray,
-                    top_k_users: Optional[int],
-                    top_k_items: Optional[int]) -> Tuple[set, set]:
-    """Return (kept_user_ids, kept_item_ids) by raw activity count.
-
-    A K of ``None`` or ``<= 0`` on either side keeps that whole side (the
-    default everywhere: JODIE Wikipedia / Reddit / MOOC are used at full size
-    unless a subset is explicitly requested).
+    Every node is kept: bipartite datasets (JODIE Wikipedia / Reddit / MOOC)
+    are always used at their full size. Dense node indices are the position
+    in these sorted arrays (users first, then items).
     """
-    u_unique, u_counts = np.unique(users, return_counts=True)
-    i_unique, i_counts = np.unique(items, return_counts=True)
-    if _keep_all(top_k_users):
-        keep_u = set(u_unique.tolist())
-    else:
-        keep_u = set(u_unique[np.argsort(u_counts)[::-1][:top_k_users]].tolist())
-    if _keep_all(top_k_items):
-        keep_i = set(i_unique.tolist())
-    else:
-        keep_i = set(i_unique[np.argsort(i_counts)[::-1][:top_k_items]].tolist())
-    return keep_u, keep_i
+    return np.unique(users), np.unique(items)
 
 
 def top_k_combined(sources: np.ndarray, targets: np.ndarray,
@@ -103,22 +87,18 @@ def scatter_snapshots(src_idx: np.ndarray, dst_idx: np.ndarray,
 # Public entry points
 # ---------------------------------------------------------------------------
 def bin_bipartite(
-    users: np.ndarray, items: np.ndarray, times: np.ndarray,
-    top_k_users: Optional[int], top_k_items: Optional[int], num_bins: int,
+    users: np.ndarray, items: np.ndarray, times: np.ndarray, num_bins: int,
     edge_features: Optional[np.ndarray] = None,
     normalize_edge_features: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """Bin a bipartite (user, item) CTDG stream into DTDG snapshots.
 
-    ``top_k_users`` / ``top_k_items`` of ``None`` or ``<= 0`` keep every node
-    on that side (see :func:`top_k_bipartite`).
-    Items occupy node indices [n_users, n_users + n_items). Returns
-    (adj, active, node_edge_feats) where the third entry is the per-(bin,
-    node) mean of ``edge_features`` if provided, else ``None``.
+    The whole stream is used (every user and item). Items occupy node indices
+    [n_users, n_users + n_items). Returns (adj, active, node_edge_feats) where
+    the third entry is the per-(bin, node) mean of ``edge_features`` if
+    provided, else ``None``.
     """
-    keep_u, keep_i = top_k_bipartite(users, items, top_k_users, top_k_items)
-    keep_u_arr = np.array(sorted(keep_u), dtype=np.int64)
-    keep_i_arr = np.array(sorted(keep_i), dtype=np.int64)
+    keep_u_arr, keep_i_arr = bipartite_node_ids(users, items)
     n_users = len(keep_u_arr)
     n_items = len(keep_i_arr)
     N = n_users + n_items
@@ -128,20 +108,10 @@ def bin_bipartite(
     keep_mask = u_in & i_in
     users_k = users[keep_mask]; items_k = items[keep_mask]; times_k = times[keep_mask]
     if times_k.size == 0:
-        n_total = len(users)
         raise ValueError(
-            "After top-K filtering no events remain.\n"
-            f"  total events:         {n_total}\n"
-            f"  events with kept-u:   {int(u_in.sum())} / {n_total}\n"
-            f"  events with kept-i:   {int(i_in.sum())} / {n_total}\n"
-            f"  joint (kept-u AND i): 0\n"
-            f"  unique users in data: {len(np.unique(users))}  "
-            f"(kept {'all' if _keep_all(top_k_users) else f'top {top_k_users}'})\n"
-            f"  unique items in data: {len(np.unique(items))}  "
-            f"(kept {'all' if _keep_all(top_k_items) else f'top {top_k_items}'})\n"
-            "If the data has very many unique users/items relative to K, "
-            "raise --jodie_top_k_{users,items} (0 = keep all). If unique counts look wrong "
-            "(e.g. only one distinct user) the parse went sideways — inspect "
+            "JODIE stream has no events after parsing "
+            f"(unique users={len(np.unique(users))}, "
+            f"unique items={len(np.unique(items))}); inspect "
             "dataset/jodie/<dataset>.npz with np.load."
         )
     print(f"[jodie] kept {len(users_k)}/{len(users)} events "
