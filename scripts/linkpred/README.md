@@ -37,6 +37,7 @@ grows ~N²; lower `BATCH` if you OOM.
 | `supervised` | encoder + link head trained end-to-end from random init, no SSL |
 | `cldg` / `ddgcl` / `idol` | contrastive SSL encoder, scored by the same link probe on frozen latents |
 | `maskdgnn` | MaskDGNN (He et al., IJCAI'25): activeness-aware edge masking + masked/next-edge BCE on a GCN with an adaptive frequency layer. **Two rows**: its encoder through the same frozen link probe (`MaskDGNN`), and its own encoder + edge head scored end-to-end by the same evaluator (`MaskDGNN (end-to-end)` — the paper's protocol, read next to `supervised`) |
+| `dysubc` | DySubC (Chen et al., TKDD'23): temporal subgraph contrast — BFS subgraphs ranked by recency + degree, a time-weighted and an unweighted subgraph encoder, margin losses against a shuffled and an unweighted summary; encoder scored by the same frozen link probe |
 | `jepa_frozen` | SSL encoder frozen, JEPA predictor on top. Collapse impossible by construction. |
 | `jepa_naive` | `--train_encoder` alone — targets come from the encoder being optimised, so collapse is a global optimum. Separates "EMA helped" from "unfreezing helped". |
 | `jepa_ema` | `--train_encoder --ema_target` (I-JEPA) |
@@ -73,7 +74,7 @@ python scripts/linkpred/aggregate_hparam.py \
     --root outputs/lp_hparam/mooc_predictor --emit_flags        # -> BASE_HP="..."
 
 # 1b. baselines, so the table is not "our tuned method vs their defaults"
-DATASET=mooc STAGE=baselines sbatch --array=0-20%6 scripts/linkpred/slurm_hparam_search.sh
+DATASET=mooc STAGE=baselines sbatch --array=0-38%6 scripts/linkpred/slurm_hparam_search.sh
 python scripts/linkpred/aggregate_hparam.py \
     --root outputs/lp_hparam/mooc_baselines --by_arm --emit_flags
 
@@ -88,7 +89,7 @@ for S in 42 43 44; do
   DATASET=mooc SEED=$S BASE_HP="<step 1>" \
     VARIANT_HP_ema="<step 2>" VARIANT_HP_naive="<step 2>" VARIANT_HP_vicreg="<step 2>" \
     BASELINE_HP_cldg="<step 1b>" BASELINE_HP_ddgcl="<step 1b>" BASELINE_HP_idol="<step 1b>" \
-    BASELINE_HP_maskdgnn="<step 1b>" \
+    BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" \
     sbatch scripts/linkpred/slurm_all_methods.sh
 done
 

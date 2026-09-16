@@ -8,7 +8,7 @@ Layout it expects:
 
     outputs/cls_<dataset>/
       jepa_{frozen,naive,ema,vicreg}_s<seed>/state_probe.json
-      {cldg,ddgcl,idol,maskdgnn}_s<seed>/state_probe.json
+      {cldg,ddgcl,idol,maskdgnn,dysubc}_s<seed>/state_probe.json
 
 Every state_probe.json carries several COLUMNS, not just one number:
 
@@ -58,6 +58,7 @@ METHODS = [
     ("DDGCL",               "ddgcl"),
     ("IDOL",                "idol"),
     ("MaskDGNN",            "maskdgnn"),
+    ("DySubC",              "dysubc"),
     ("DyG-JEPA (frozen)",   "jepa_frozen"),
     ("DyG-JEPA (naive)",    "jepa_naive"),
     ("DyG-JEPA (EMA)",      "jepa_ema"),

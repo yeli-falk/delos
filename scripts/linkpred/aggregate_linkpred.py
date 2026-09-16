@@ -51,6 +51,7 @@ METHODS = [
     ("DDGCL",               ("ddgcl", "encoder")),
     ("IDOL",                ("idol", "encoder")),
     ("MaskDGNN",            ("maskdgnn", "encoder")),
+    ("DySubC",              ("dysubc", "encoder")),
     ("DyG-JEPA (frozen)",   ("jepa_frozen", None)),
     ("DyG-JEPA (naive)",    ("jepa_naive", None)),
     ("DyG-JEPA (EMA)",      ("jepa_ema", None)),

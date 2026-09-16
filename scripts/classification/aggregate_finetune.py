@@ -26,10 +26,11 @@ from pathlib import Path
 PAT = re.compile(r"^(?P<init>[a-z_]+)_aux(?P<aux>[0-9.e-]+)_f(?P<frac>[0-9.e-]+)_s(?P<seed>\d+)$")
 
 # Display order for rows.
-INIT_ORDER = ["random", "encoder", "jepa", "ddgcl", "cldg", "idol"]
+INIT_ORDER = ["random", "encoder", "jepa", "ddgcl", "cldg", "idol", "maskdgnn", "dysubc"]
 INIT_LABEL = {"random": "random init", "encoder": "edge-mask enc.",
               "jepa": "DyG-JEPA (enc.+pred.)", "ddgcl": "DDGCL enc.",
-              "cldg": "CLDG enc.", "idol": "IDOL enc."}
+              "cldg": "CLDG enc.", "idol": "IDOL enc.",
+              "maskdgnn": "MaskDGNN enc.", "dysubc": "DySubC enc."}
 
 
 def metric_of(blob: dict, metric: str, split: str):
