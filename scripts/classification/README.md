@@ -20,9 +20,12 @@ consistent experiments.
 
 | row | what it is |
 |---|---|
+| `grace` | GRACE (Zhu et al., 2020): **static** graph contrast — two augmented views (edge removal + feature-dimension masking) of one snapshot, inter- and intra-view negatives. Never sees two snapshots at once, so it is the control for "does the SSL objective need to be temporal at all?"; probed on frozen latents at the last history bin (static SSL, last frame) |
+| `graphmae` | GraphMAE (Hou et al., KDD'22): **static** masked-feature autoencoder — mask a fraction of one snapshot's nodes with a learnable token, re-mask their latents, GCN decoder, scaled cosine error on the masked nodes. The generative half of the static control block (GRACE is the contrastive half); probed on frozen latents at the last history bin (static SSL, last frame) |
 | `cldg` / `ddgcl` / `idol` | contrastive SSL encoder, probed on frozen latents |
 | `maskdgnn` | MaskDGNN (He et al., IJCAI'25): activeness-aware edge masking + masked/next-edge BCE on a GCN with an adaptive frequency layer; uses no state label, probed on frozen latents like the three above |
 | `dysubc` | DySubC (Chen et al., TKDD'23): temporal subgraph contrast — BFS subgraphs ranked by recency + degree, a time-weighted and an unweighted subgraph encoder, margin losses; uses no state label, probed on frozen latents |
+| `dyg2vec` | DyG2Vec (Alomrani et al., TMLR'24): window-based temporal attention encoder (its own encoder kind, like `maskdgnn`) pre-trained with VICReg on two distorted views (edge dropout + structural-feature masking) of each history window; encoder probed on frozen latents, which is the paper's own SSL-init protocol |
 | `jepa_frozen` | SSL encoder frozen, JEPA predictor on top. Collapse impossible by construction; the reference variant. |
 | `jepa_naive` | `--train_encoder` alone. Targets come from the encoder being optimised, so collapse is a global optimum. Exists so EMA's win is attributable to EMA and not merely to unfreezing. |
 | `jepa_ema` | `--train_encoder --ema_target` (I-JEPA) |
@@ -81,7 +84,7 @@ python scripts/classification/aggregate_hparam.py \
     --root outputs/cls_hparam/mooc_predictor --emit_flags        # -> BASE_HP="..."
 
 # 1b. tune the BASELINES too, or the table is "our tuned method vs their defaults"
-DATASET=mooc STAGE=baselines sbatch --array=0-38%6 scripts/classification/slurm_hparam_search.sh
+DATASET=mooc STAGE=baselines sbatch --array=0-53%6 scripts/classification/slurm_hparam_search.sh
 python scripts/classification/aggregate_hparam.py \
     --root outputs/cls_hparam/mooc_baselines --by_arm --emit_flags
 
@@ -100,7 +103,7 @@ for S in 42 43 44; do
     VARIANT_HP_ema_cos="<step 2>" VARIANT_HP_sigreg="<step 2>" VARIANT_HP_lejepa="<step 2>" \
     VARIANT_HP_ijepa="<step 2>" VARIANT_HP_lejepa_full="<step 2>" ARMS=all_jepa \
     BASELINE_HP_cldg="<step 1b>" BASELINE_HP_ddgcl="<step 1b>" BASELINE_HP_idol="<step 1b>" \
-    BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" \
+    BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" BASELINE_HP_grace="<step 1b>" BASELINE_HP_graphmae="<step 1b>" BASELINE_HP_dyg2vec="<step 1b>" \
     sbatch scripts/classification/slurm_all_methods.sh
 done
 
@@ -206,7 +209,7 @@ label-efficiency curve, so every cell is one (init, regime, label fraction).
 | `random` | nothing (the supervised floor) |
 | `encoder` | the table's shared edge-mask encoder; predictor from scratch |
 | `jepa` | encoder **and** predictor from `$ROOT/$JEPA_ARM_s$SEED/best.ckpt` |
-| `ddgcl` / `cldg` / `idol` / `maskdgnn` / `dysubc` | that baseline's `encoder.ckpt`; predictor from scratch |
+| `ddgcl` / `cldg` / `idol` / `maskdgnn` / `dysubc` / `grace` / `graphmae` / `dyg2vec` | that baseline's `encoder.ckpt`; predictor from scratch |
 
 `encoder` vs `jepa` is the row pair that isolates the JEPA predictor from
 encoder pretraining. Every row uses the predictor **architecture** of the JEPA

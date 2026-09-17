@@ -23,6 +23,21 @@
 #                                    NPRED=3 scores horizons h0..h2 too.)
 #
 # Arms produced (each writes its own state_probe.json):
+#   graphmae              GraphMAE (Hou et al., KDD'22): STATIC masked-feature
+#                         autoencoder -- mask a fraction of ONE snapshot's
+#                         nodes with a learnable token, re-mask their latents,
+#                         GCN decoder, scaled cosine error. The generative
+#                         half of the static control block (GRACE is the
+#                         contrastive half); probed on FROZEN latents at the
+#                         last history bin like the rows below.
+#   grace                 GRACE (Zhu et al., 2020): STATIC graph contrast --
+#                         two augmented views (edge removal + feature-
+#                         dimension masking) of ONE snapshot, inter- and
+#                         intra-view negatives. It never sees two snapshots
+#                         at once, so it is the control for "does the SSL
+#                         objective need to be temporal at all?". Probed on
+#                         FROZEN latents at the last history bin like the
+#                         rows below (static SSL, last frame).
 #   cldg / ddgcl / idol   contrastive SSL encoder, probed on FROZEN latents.
 #   maskdgnn              MaskDGNN (He et al., IJCAI'25): activeness-aware edge
 #                         masking + masked/next-edge BCE on a GCN with an
@@ -35,6 +50,12 @@
 #                         margin losses against a shuffled and an unweighted
 #                         summary. Encoder probed on FROZEN latents like the
 #                         three contrastive arms.
+#   dyg2vec               DyG2Vec (Alomrani et al., TMLR'24): window-based
+#                         temporal attention encoder (its own encoder kind,
+#                         like maskdgnn) pre-trained with VICReg on two
+#                         distorted views (edge dropout + structural-feature
+#                         masking) of each history window. Encoder probed on
+#                         FROZEN latents -- the paper's own SSL-init protocol.
 #   jepa_frozen           SSL encoder frozen, JEPA predictor on top. Targets are
 #                         fixed, so latent collapse is impossible by
 #                         construction. The reference arm.
@@ -124,7 +145,7 @@ PROBE_BATCH="${PROBE_BATCH:-4}"
 # --- which arms this job runs ------------------------------------------------
 # Default "all" runs the whole table in one job. Split with ARMS= when a single
 # JEPA arm is long enough that four of them will not fit the walltime.
-# Stage names: cldg ddgcl idol maskdgnn dysubc summary, plus jepa_<arm> for every arm in
+# Stage names: grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec summary, plus jepa_<arm> for every arm in
 # JEPA_ARMS below. ARMS=all runs the legacy five JEPA arms + baselines (the old
 # table); ARMS=all_jepa adds the JEPA-recipe arms too; ARMS=new_jepa runs only
 # those. Or list stages explicitly: ARMS="jepa_ijepa jepa_lejepa".
@@ -172,6 +193,9 @@ BASELINE_HP_ddgcl="${BASELINE_HP_ddgcl:-}"
 BASELINE_HP_idol="${BASELINE_HP_idol:-}"
 BASELINE_HP_maskdgnn="${BASELINE_HP_maskdgnn:-}"
 BASELINE_HP_dysubc="${BASELINE_HP_dysubc:-}"
+BASELINE_HP_dyg2vec="${BASELINE_HP_dyg2vec:-}"
+BASELINE_HP_grace="${BASELINE_HP_grace:-}"
+BASELINE_HP_graphmae="${BASELINE_HP_graphmae:-}"
 
 # --- predictor recipe --------------------------------------------------------
 # The MOOC-validated fix: residual head (copy-last is the training floor) plus
@@ -338,7 +362,7 @@ done
 # =============================================================================
 # 3. contrastive baselines: pretrain encoder -> the SAME frozen state probe
 # =============================================================================
-for M in cldg ddgcl idol maskdgnn dysubc; do
+for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
     want "$M" || continue
     D="$(d "$M")"
     mkdir -p "$D"
@@ -346,6 +370,26 @@ for M in cldg ddgcl idol maskdgnn dysubc; do
     if [[ ! -f "$D/encoder.ckpt" ]]; then
         echo; echo "=== ${M^^} pretrain -> $D ==="
         case "$M" in
+          graphmae)
+            # STATIC generative control: one snapshot per step, reference
+            # Cora defaults (mask_rate 0.5, replace_rate 0.05, gamma 2, Adam
+            # 1e-3 / wd 2e-4). Reconstructs every input channel, as published.
+            srun --export=ALL "$PY" -m src.baselines.graphmae.train_graphmae $DATA_ARG \
+                $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+                --mask_rate 0.5 --replace_rate 0.05 --sce_gamma 2 --target all \
+                --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 1e-3 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          grace)
+            # STATIC control: one snapshot per step, two augmented views of
+            # it, reference Cora defaults (tau 0.4, p_e 0.2/0.4, p_f 0.3/0.4,
+            # Adam 5e-4). Same per-step node budget as the temporal arms.
+            srun --export=ALL "$PY" -m src.baselines.grace.train_grace $DATA_ARG \
+                $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+                --tau 0.4 --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
+                --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 5e-4 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
           cldg)
             srun --export=ALL "$PY" -m src.baselines.cldg.train_cldg $DATA_ARG \
                 $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
@@ -393,6 +437,17 @@ for M in cldg ddgcl idol maskdgnn dysubc; do
                 --subgraph_size 20 --alpha 5 --beta 1 --margin 0.75 --lam 0.5 \
                 --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 \
                 --epochs "${BASE_EPOCHS:-100}" --lr 1e-3 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          dyg2vec)
+            # Own encoder kind (window temporal attention; the `--encoder_kind`
+            # after $ENCODER_ARG wins). --window defaults to HIST so the
+            # encoder is pre-trained on the length it is probed on. Paper
+            # defaults: p_d 0.3, VICReg 25/25/1, Adam 1e-4.
+            srun --export=ALL "$PY" -m src.baselines.dyg2vec.train_dyg2vec $DATA_ARG \
+                $ENCODER_ARG --encoder_kind dyg2vec $WINDOW_ARG $EARLY_STOP_ARG \
+                --p_edge 0.3 --p_struct 0.3 --lam 25 --mu 25 --nu 1 \
+                --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 1e-4 \
                 --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
         esac
         # Hard-fail: a missing row reads as "not applicable", not "this crashed".

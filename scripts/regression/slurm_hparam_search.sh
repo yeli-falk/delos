@@ -44,7 +44,7 @@
 #       in the predictor. The winner becomes BASE_HP for everything downstream.
 #
 #   STAGE=baselines  (independent of the other two)
-#       Tunes the COMPETING methods -- supervised / CLDG / DDGCL / IDOL /
+#       Tunes the COMPETING methods -- supervised / GRACE / CLDG / DDGCL / IDOL /
 #       STD-MAE -- so the final table is not "our tuned method vs their
 #       defaults". Each cell trains one baseline and probes VAL through the
 #       same probe and metrics as every other arm. Cheap: none of these run the
@@ -137,6 +137,22 @@ build_grid() {
         # degree; the paper's most sensitive knob after subgraph size).
         for lr in 1e-3 4e-3 1e-2; do
             for a in 1 5 10; do GRID+=("dysubc|--lr $lr --alpha $a"); done
+        done
+        # DyG2Vec: LR x distortion strength (p_d, the only knob the paper
+        # validates; 0.3 is its choice). Both dropouts move together.
+        for lr in 1e-4 1e-3 4e-3; do
+            for pd in 0.15 0.3; do GRID+=("dyg2vec|--lr $lr --p_edge $pd --p_struct $pd"); done
+        done
+        # GRACE (static control): LR x tau. The temperature is the paper's
+        # load-bearing knob after the drop rates, which stay at the Cora
+        # defaults; lr spans the reference 5e-4 up to the temporal arms' 4e-3.
+        for lr in 5e-4 1e-3 4e-3; do
+            for t in 0.2 0.4 0.7; do GRID+=("grace|--lr $lr --tau $t"); done
+        done
+        # GraphMAE (static control): LR x mask rate, the paper's headline knob
+        # (robust 0.3-0.75 on citation graphs; lower on feature-poor inputs).
+        for lr in 5e-4 1e-3 4e-3; do
+            for mr in 0.3 0.5 0.75; do GRID+=("graphmae|--lr $lr --mask_rate $mr"); done
         done
         # STEP: forecaster LR x --dgl_k, the discrete-graph-learning sparsity
         # that names the method. Both are forecaster-side, so all 9 cells share
@@ -296,6 +312,42 @@ if [[ "$STAGE" == "baselines" ]]; then
         srun --export=ALL python scripts/regression/probe_encoder_regression.py \
             --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
             --out_dir "$OUT" || { echo "[FATAL] DySubC probe failed" >&2; exit 27; }
+        ;;
+      dyg2vec)
+        # Not $SSL_COMMON: that carries --node_batch_size, which this
+        # window-based trainer does not define.
+        srun --export=ALL python -m src.baselines.dyg2vec.train_dyg2vec $DATA_ARG \
+            $ENC_ARGS --encoder_kind dyg2vec $WINDOW_ARG $EARLY_STOP_ARG $STRIDE_ARG \
+            --lam 25 --mu 25 --nu 1 --steps_per_epoch 20 --val_steps 10 \
+            --epochs "${SSL_EPOCHS:-100}" --device cuda --seed "$SEED" \
+            --out_dir "$OUT" $HP_ARGS \
+            || { echo "[FATAL] DyG2Vec cell failed" >&2; exit 29; }
+        srun --export=ALL python scripts/regression/probe_encoder_regression.py \
+            --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
+            --out_dir "$OUT" || { echo "[FATAL] DyG2Vec probe failed" >&2; exit 29; }
+        ;;
+      graphmae)
+        # Not $SSL_COMMON: that carries --node_batch_size, which this trainer
+        # (whole-snapshot masking, not node-batched) does not define.
+        srun --export=ALL python -m src.baselines.graphmae.train_graphmae $DATA_ARG \
+            $ENC_ARGS $WINDOW_ARG $EARLY_STOP_ARG $STRIDE_ARG \
+            --replace_rate 0.05 --sce_gamma 2 --target all \
+            --steps_per_epoch 20 --val_steps 10 \
+            --epochs "${SSL_EPOCHS:-100}" --device cuda --seed "$SEED" \
+            --out_dir "$OUT" $HP_ARGS \
+            || { echo "[FATAL] GraphMAE cell failed" >&2; exit 29; }
+        srun --export=ALL python scripts/regression/probe_encoder_regression.py \
+            --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
+            --out_dir "$OUT" || { echo "[FATAL] GraphMAE probe failed" >&2; exit 29; }
+        ;;
+      grace)
+        srun --export=ALL python -m src.baselines.grace.train_grace $SSL_COMMON \
+            --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
+            --steps_per_epoch 20 --val_steps 10 $HP_ARGS \
+            || { echo "[FATAL] GRACE cell failed" >&2; exit 28; }
+        srun --export=ALL python scripts/regression/probe_encoder_regression.py \
+            --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
+            --out_dir "$OUT" || { echo "[FATAL] GRACE probe failed" >&2; exit 28; }
         ;;
       stdmae)
         source "$REPO_ROOT/scripts/regression/_stdmae_config.sh"

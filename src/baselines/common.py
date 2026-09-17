@@ -1,5 +1,5 @@
 """Shared plumbing for the encoder-only baselines (CLDG / DDGCL / IDOL /
-MaskDGNN / DySubC).
+MaskDGNN / DySubC / GRACE / GraphMAE / DyG2Vec).
 
 These baselines differ ONLY in their self-supervised objective. Everything that
 could otherwise make their numbers incomparable lives here, so it is written

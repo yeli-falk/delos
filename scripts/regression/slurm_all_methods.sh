@@ -34,6 +34,19 @@
 #                   matters?
 #   jepa_enc        the frozen arm's encoder + a forecast head, NO predictor.
 #                   Isolates "does the predictor rollout help?"
+#   graphmae        GraphMAE (Hou et al., KDD'22): STATIC masked-feature
+#                   autoencoder -- mask a fraction of ONE snapshot's nodes
+#                   with a learnable token, re-mask their latents, GCN
+#                   decoder, scaled cosine error, + the SAME frozen forecast
+#                   head. The generative half of the static control block
+#                   (GRACE is the contrastive half).
+#   grace           GRACE (Zhu et al., 2020): STATIC graph contrast -- two
+#                   augmented views (edge removal + feature-dimension masking)
+#                   of ONE snapshot, inter- and intra-view negatives, + the
+#                   SAME frozen forecast head. Never sees two snapshots at
+#                   once: the control for "does the SSL objective need to be
+#                   temporal at all?". On a fixed topology the edge view
+#                   differs per step only through its random mask.
 #   cldg / ddgcl / idol
 #                   contrastive SSL encoders + the SAME frozen forecast head.
 #   maskdgnn        MaskDGNN (IJCAI'25): activeness-aware edge masking +
@@ -47,6 +60,11 @@
 #                   frozen forecast head. On a fixed topology every edge
 #                   shares one time level, so its sampling score reduces to
 #                   degree.
+#   dyg2vec         DyG2Vec (TMLR'24): window temporal attention encoder
+#                   (own encoder kind) pre-trained with VICReg on two
+#                   distorted views of each window, + the SAME frozen
+#                   forecast head. On a fixed topology every snapshot has
+#                   the same interactions; the time encoding separates them.
 #   step            STEP (KDD'22): TSFormer masked pre-training over a LONG
 #                   history window, then a LEARNED discrete graph + a Graph
 #                   WaveNet forecaster on the frozen representations. Uses no
@@ -117,11 +135,11 @@ PROBE_SPLIT="${PROBE_SPLIT:-test}"
 #   for A in jepa_frozen jepa_naive jepa_ema jepa_vicreg; do
 #     DATASET=metr_la SEED=42 ARMS=$A sbatch scripts/regression/slurm_all_methods.sh
 #   done
-#   DATASET=metr_la SEED=42 ARMS="baselines supervised jepa_enc cldg ddgcl idol maskdgnn dysubc" sbatch ...
+#   DATASET=metr_la SEED=42 ARMS="baselines supervised jepa_enc grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec" sbatch ...
 #   DATASET=metr_la SEED=42 ARMS=summary sbatch ...        # once the rest land
 #
 # Stage names: baselines supervised jepa_frozen jepa_naive jepa_ema jepa_vicreg
-#              jepa_enc cldg ddgcl idol maskdgnn dysubc stdmae step summary
+#              jepa_enc grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec stdmae step summary
 ARMS="${ARMS:-all}"
 want() {
     [[ " $ARMS " == *" all "* || " $ARMS " == *" $1 "* ]]
@@ -161,6 +179,9 @@ BASELINE_HP_ddgcl="${BASELINE_HP_ddgcl:-}"
 BASELINE_HP_idol="${BASELINE_HP_idol:-}"
 BASELINE_HP_maskdgnn="${BASELINE_HP_maskdgnn:-}"
 BASELINE_HP_dysubc="${BASELINE_HP_dysubc:-}"
+BASELINE_HP_dyg2vec="${BASELINE_HP_dyg2vec:-}"
+BASELINE_HP_grace="${BASELINE_HP_grace:-}"
+BASELINE_HP_graphmae="${BASELINE_HP_graphmae:-}"
 BASELINE_HP_stdmae="${BASELINE_HP_stdmae:-}"
 # STD-MAE's tuned flags straddle two commands: --mask_ratio belongs to the
 # pre-training, --lr to the forecaster. Split them rather than passing both to
@@ -335,8 +356,38 @@ fi
 # 5. contrastive baselines: pretrain encoder -> the same frozen forecast head
 # =============================================================================
 CLDG_DIR="$(d cldg)"; DDGCL_DIR="$(d ddgcl)"; IDOL_DIR="$(d idol)"
-MASKDGNN_DIR="$(d maskdgnn)"; DYSUBC_DIR="$(d dysubc)"
-mkdir -p "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" "$MASKDGNN_DIR" "$DYSUBC_DIR"
+MASKDGNN_DIR="$(d maskdgnn)"; DYSUBC_DIR="$(d dysubc)"; GRACE_DIR="$(d grace)"; GRAPHMAE_DIR="$(d graphmae)"
+DYG2VEC_DIR="$(d dyg2vec)"
+mkdir -p "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" "$MASKDGNN_DIR" "$DYSUBC_DIR" "$GRACE_DIR" "$GRAPHMAE_DIR" "$DYG2VEC_DIR"
+
+if want graphmae && [[ ! -f "$GRAPHMAE_DIR/encoder.ckpt" ]]; then
+    echo; echo "=== GraphMAE pretrain -> $GRAPHMAE_DIR ==="
+    # STATIC generative control: one snapshot per step, reference Cora
+    # defaults (mask_rate 0.5, replace_rate 0.05, gamma 2, Adam 1e-3 / wd
+    # 2e-4). Reconstructs every input channel, as published.
+    srun --export=ALL python -m src.baselines.graphmae.train_graphmae $DATA_ARG $ENC_ARGS \
+        $WINDOW_ARG $EARLY_STOP_ARG \
+        --mask_rate 0.5 --replace_rate 0.05 --sce_gamma 2 --target all \
+        --steps_per_epoch 20 --val_steps 10 \
+        --epochs "${SSL_EPOCHS:-100}" --lr 1e-3 \
+        --device cuda --seed "$SEED" --out_dir "$GRAPHMAE_DIR" $BASELINE_HP_graphmae
+    [[ -f "$GRAPHMAE_DIR/encoder.ckpt" ]] || fail "GraphMAE pretrain failed" 19
+fi
+if want grace && [[ ! -f "$GRACE_DIR/encoder.ckpt" ]]; then
+    echo; echo "=== GRACE pretrain -> $GRACE_DIR ==="
+    # STATIC control: one snapshot per step, two augmented views of it,
+    # reference Cora defaults (tau 0.4, p_e 0.2/0.4, p_f 0.3/0.4, Adam 5e-4).
+    # On METR-LA the graph never changes, so the edge view differs per step
+    # only through its random mask; the feature view carries that step's
+    # readings. Same per-step node budget as the temporal arms.
+    srun --export=ALL python -m src.baselines.grace.train_grace $DATA_ARG $ENC_ARGS \
+        $WINDOW_ARG $EARLY_STOP_ARG \
+        --tau 0.4 --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
+        --node_batch_size 128 --steps_per_epoch 20 --val_steps 10 \
+        --epochs "${SSL_EPOCHS:-100}" --lr 5e-4 \
+        --device cuda --seed "$SEED" --out_dir "$GRACE_DIR" $BASELINE_HP_grace
+    [[ -f "$GRACE_DIR/encoder.ckpt" ]] || fail "GRACE pretrain failed" 18
+fi
 
 if want cldg && [[ ! -f "$CLDG_DIR/encoder.ckpt" ]]; then
     echo; echo "=== CLDG pretrain -> $CLDG_DIR ==="
@@ -404,8 +455,21 @@ if want dysubc && [[ ! -f "$DYSUBC_DIR/encoder.ckpt" ]]; then
         --device cuda --seed "$SEED" --out_dir "$DYSUBC_DIR" $BASELINE_HP_dysubc
     [[ -f "$DYSUBC_DIR/encoder.ckpt" ]] || fail "DySubC pretrain failed" 17
 fi
+if want dyg2vec && [[ ! -f "$DYG2VEC_DIR/encoder.ckpt" ]]; then
+    echo; echo "=== DyG2Vec pretrain -> $DYG2VEC_DIR ==="
+    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins); --window
+    # defaults to HIST so the encoder is pre-trained on the length the
+    # forecast head probes. Paper defaults: p_d 0.3, VICReg 25/25/1, lr 1e-4.
+    srun --export=ALL python -m src.baselines.dyg2vec.train_dyg2vec $DATA_ARG $ENC_ARGS \
+        --encoder_kind dyg2vec $WINDOW_ARG $EARLY_STOP_ARG \
+        --p_edge 0.3 --p_struct 0.3 --lam 25 --mu 25 --nu 1 \
+        --steps_per_epoch 20 --val_steps 10 \
+        --epochs "${SSL_EPOCHS:-100}" --lr 1e-4 \
+        --device cuda --seed "$SEED" --out_dir "$DYG2VEC_DIR" $BASELINE_HP_dyg2vec
+    [[ -f "$DYG2VEC_DIR/encoder.ckpt" ]] || fail "DyG2Vec pretrain failed" 19
+fi
 
-for M in cldg ddgcl idol maskdgnn dysubc; do
+for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
     want "$M" || continue
     D="$(d "$M")"
     [[ -f "$D/encoder.ckpt" ]] || { echo "[skip] $M: no encoder.ckpt"; continue; }

@@ -19,6 +19,20 @@
 #                                    _dataset_config.sh with TASK=link_pred)
 #
 # Arms (each writes its own metrics JSON):
+#   graphmae              GraphMAE (Hou et al., KDD'22): STATIC masked-feature
+#                         autoencoder -- mask a fraction of ONE snapshot's
+#                         nodes with a learnable token, re-mask their latents,
+#                         GCN decoder, scaled cosine error. The generative
+#                         half of the static control block (GRACE is the
+#                         contrastive half); probed on FROZEN latents at the
+#                         last history bin like the rows below.
+#   grace                 GRACE (Zhu et al., 2020): STATIC graph contrast --
+#                         two augmented views (edge removal + feature-
+#                         dimension masking) of ONE snapshot, inter- and
+#                         intra-view negatives. Never sees two snapshots at
+#                         once: the control for "does the SSL objective need
+#                         to be temporal at all?". Scored by the same frozen
+#                         link probe (static SSL, last frame).
 #   cldg / ddgcl / idol   contrastive SSL encoder, scored by the link probe on
 #                         FROZEN latents (via analyze_jepa --link_sources encoder).
 #   maskdgnn              MaskDGNN (He et al., IJCAI'25): activeness-aware edge
@@ -34,6 +48,12 @@
 #                         margin losses against a shuffled and an unweighted
 #                         summary. Encoder probed on FROZEN latents like the
 #                         three contrastive arms.
+#   dyg2vec               DyG2Vec (Alomrani et al., TMLR'24): window-based
+#                         temporal attention encoder (its own encoder kind,
+#                         like maskdgnn) pre-trained with VICReg on two
+#                         distorted views (edge dropout + structural-feature
+#                         masking) of each history window. Encoder probed on
+#                         FROZEN latents -- the paper's own SSL-init protocol.
 #   jepa_frozen           SSL encoder frozen, JEPA predictor on top. Targets are
 #                         fixed, so latent collapse is impossible by construction.
 #   jepa_naive            --train_encoder alone: targets come from the SAME
@@ -63,6 +83,28 @@
 #
 # Tuned flags from scripts/linkpred/slurm_hparam_search.sh:
 #   BASE_HP="..." VARIANT_HP_ema="..." BASELINE_HP_cldg="..." ... sbatch ...
+#
+# TRANSFER TABLE -- link prediction from the CLASSIFICATION checkpoints.
+# The representation is selected ONCE (recipe + hyper-parameters on the
+# node-state val split) and then probed frozen on every downstream task; no
+# per-task retuning. Point ROOT at the classification tree and match its
+# feature set (TASK=state_probe trains WITH edge features):
+#
+#   for S in 42 43 44; do
+#     DATASET=mooc SEED=$S ROOT=outputs/cls_mooc EDGE_FEATS=1 \
+#         sbatch scripts/linkpred/slurm_all_methods.sh
+#   done
+#   python scripts/linkpred/aggregate_linkpred.py --dataset mooc \
+#       --root outputs/cls_mooc --seeds 42 43 44 --latex
+#
+# Nothing is retrained: the JEPA arms are skipped as complete (their
+# classification run already wrote the link test_metrics.json, because
+# train_dyg_jepa's downstream task defaults to link_pred), every baseline's
+# encoder.ckpt is found and only the frozen link probe runs, and the controls
+# reuse the shared encoder. The one row this cannot produce is
+# "MaskDGNN (end-to-end)": its trainer saves the encoder but not the edge
+# head, and the classification run used --e2e_eval none, so that row needs a
+# retrain (rm outputs/cls_<ds>/maskdgnn_s<seed>/encoder.ckpt first).
 
 set -uo pipefail
 mkdir -p logs
@@ -87,7 +129,7 @@ SEED="${SEED:-42}"
 NW="${SLURM_CPUS_PER_TASK:-8}"
 PROBE_SPLIT="${PROBE_SPLIT:-test}"
 
-# Stage names: cldg ddgcl idol maskdgnn dysubc jepa_frozen jepa_naive jepa_ema jepa_vicreg
+# Stage names: grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec jepa_frozen jepa_naive jepa_ema jepa_vicreg
 #              controls summary
 # `controls` produces the random + supervised link sources in one pass.
 ARMS="${ARMS:-all}"
@@ -130,6 +172,9 @@ BASELINE_HP_ddgcl="${BASELINE_HP_ddgcl:-}"
 BASELINE_HP_idol="${BASELINE_HP_idol:-}"
 BASELINE_HP_maskdgnn="${BASELINE_HP_maskdgnn:-}"
 BASELINE_HP_dysubc="${BASELINE_HP_dysubc:-}"
+BASELINE_HP_dyg2vec="${BASELINE_HP_dyg2vec:-}"
+BASELINE_HP_grace="${BASELINE_HP_grace:-}"
+BASELINE_HP_graphmae="${BASELINE_HP_graphmae:-}"
 
 RESIDUAL="${RESIDUAL:-1}"
 CHANGE_W="${CHANGE_W:-0}"
@@ -210,9 +255,23 @@ for ARM in frozen naive ema vicreg; do
     echo "    flags='$VFLAGS $HP_ARGS'"
     # train_dyg_jepa's own link probe writes test_metrics.json with the
     # all/new subsets -- that IS this arm's result, no second scoring pass.
-    srun --export=ALL python src/train/train_dyg_jepa.py $JEPA_COMMON \
-        --encoder_ckpt "$ENC_CKPT" $JEPA_BASE $BASE_HP $VFLAGS $HP_ARGS \
-        --out_dir "$OUT" || { echo "[warn] arm $ARM failed"; continue; }
+    # An arm is COMPLETE only with both files: best.ckpt alone is written on
+    # every val improvement, so a walltime kill leaves one behind. Same guard
+    # as the classification launcher, and what makes ROOT=outputs/cls_<ds>
+    # (transfer table, see header) a probe-only pass for these arms.
+    if [[ -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ]]; then
+        echo "[skip] $OUT complete (best.ckpt + test_metrics.json)"
+    else
+        if [[ -f "$OUT/best.ckpt" ]]; then
+            echo "[resume] $OUT has best.ckpt but no test_metrics.json (interrupted) -> restarting from scratch"
+            rm -f "$OUT/best.ckpt" "$OUT/history.json"
+        fi
+        srun --export=ALL python src/train/train_dyg_jepa.py $JEPA_COMMON \
+            --encoder_ckpt "$ENC_CKPT" $JEPA_BASE $BASE_HP $VFLAGS $HP_ARGS \
+            --out_dir "$OUT" || { echo "[warn] arm $ARM failed"; continue; }
+        [[ -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ]] \
+            || { echo "[warn] arm $ARM did not finish (no best.ckpt/test_metrics.json)"; continue; }
+    fi
 
     if [[ "$ARM" != "frozen" ]]; then
         srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
@@ -226,7 +285,7 @@ done
 # =============================================================================
 # 3. contrastive baselines: pretrain encoder -> the SAME frozen link probe
 # =============================================================================
-for M in cldg ddgcl idol maskdgnn dysubc; do
+for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
     want "$M" || continue
     D="$(d "$M")"
     mkdir -p "$D"
@@ -234,6 +293,26 @@ for M in cldg ddgcl idol maskdgnn dysubc; do
     if [[ ! -f "$D/encoder.ckpt" ]]; then
         echo; echo "=== ${M^^} pretrain -> $D ==="
         case "$M" in
+          graphmae)
+            # STATIC generative control: one snapshot per step, reference
+            # Cora defaults (mask_rate 0.5, replace_rate 0.05, gamma 2, Adam
+            # 1e-3 / wd 2e-4). Reconstructs every input channel, as published.
+            srun --export=ALL python -m src.baselines.graphmae.train_graphmae $DATA_ARG \
+                $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+                --mask_rate 0.5 --replace_rate 0.05 --sce_gamma 2 --target all \
+                --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 1e-3 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          grace)
+            # STATIC control: one snapshot per step, two augmented views of
+            # it, reference Cora defaults (tau 0.4, p_e 0.2/0.4, p_f 0.3/0.4,
+            # Adam 5e-4). Same per-step node budget as the temporal arms.
+            srun --export=ALL python -m src.baselines.grace.train_grace $DATA_ARG \
+                $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+                --tau 0.4 --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
+                --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 5e-4 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
           cldg)
             srun --export=ALL python -m src.baselines.cldg.train_cldg $DATA_ARG \
                 $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
@@ -284,10 +363,25 @@ for M in cldg ddgcl idol maskdgnn dysubc; do
                 --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 \
                 --epochs "${BASE_EPOCHS:-100}" --lr 1e-3 \
                 --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          dyg2vec)
+            # Own encoder kind (window temporal attention; the `--encoder_kind`
+            # after $ENCODER_ARG wins). --window defaults to HIST so the
+            # encoder is pre-trained on the length it is probed on. Paper
+            # defaults: p_d 0.3, VICReg 25/25/1, Adam 1e-4.
+            srun --export=ALL python -m src.baselines.dyg2vec.train_dyg2vec $DATA_ARG \
+                $ENCODER_ARG --encoder_kind dyg2vec $WINDOW_ARG $EARLY_STOP_ARG \
+                --p_edge 0.3 --p_struct 0.3 --lam 25 --mu 25 --nu 1 \
+                --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 1e-4 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
         esac
         [[ -f "$D/encoder.ckpt" ]] || fail "${M^^} pretrain failed" 13
     else
         echo "[skip] $D/encoder.ckpt exists"
+        if [[ "$M" == "maskdgnn" && ! -f "$D/link_e2e${PROBE_SPLIT/test/}.json" ]]; then
+            echo "[note] $D has no link_e2e json: the end-to-end row needs a retrain" \
+                 "(the trainer does not save the edge head). Frozen-probe row still runs."
+        fi
     fi
     echo; echo "=== link probe: frozen $M encoder -> $D ==="
     srun --export=ALL python -m src.train.analyze_jepa --link_sources encoder \
@@ -314,9 +408,9 @@ fi
 if want summary; then
     echo; echo "=== seed $SEED summary ==="
     srun --export=ALL python scripts/linkpred/aggregate_linkpred.py \
-        --dataset "$SHORT" --seeds "$SEED" || true
+        --dataset "$SHORT" --root "$ROOT" --seeds "$SEED" || true
 fi
 
 echo; echo "[done] $DATASET seed $SEED -> $ROOT"
 echo "Aggregate across seeds with:"
-echo "  python scripts/linkpred/aggregate_linkpred.py --dataset $SHORT --seeds 42 43 44 --latex"
+echo "  python scripts/linkpred/aggregate_linkpred.py --dataset $SHORT --root $ROOT --seeds 42 43 44 --latex"

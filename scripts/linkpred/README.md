@@ -35,9 +35,12 @@ grows ~N²; lower `BATCH` if you OOM.
 |---|---|
 | `random` | U(0,1) edge scores, no training. The floor. |
 | `supervised` | encoder + link head trained end-to-end from random init, no SSL |
+| `grace` | GRACE (Zhu et al., 2020): **static** graph contrast — two augmented views (edge removal + feature-dimension masking) of one snapshot, inter- and intra-view negatives. Never sees two snapshots at once, so it is the control for "does the SSL objective need to be temporal at all?"; encoder scored by the same frozen link probe (static SSL, last frame) |
+| `graphmae` | GraphMAE (Hou et al., KDD'22): **static** masked-feature autoencoder — mask a fraction of one snapshot's nodes with a learnable token, re-mask their latents, GCN decoder, scaled cosine error on the masked nodes. The generative half of the static control block (GRACE is the contrastive half); encoder scored by the same frozen link probe (static SSL, last frame) |
 | `cldg` / `ddgcl` / `idol` | contrastive SSL encoder, scored by the same link probe on frozen latents |
 | `maskdgnn` | MaskDGNN (He et al., IJCAI'25): activeness-aware edge masking + masked/next-edge BCE on a GCN with an adaptive frequency layer. **Two rows**: its encoder through the same frozen link probe (`MaskDGNN`), and its own encoder + edge head scored end-to-end by the same evaluator (`MaskDGNN (end-to-end)` — the paper's protocol, read next to `supervised`) |
 | `dysubc` | DySubC (Chen et al., TKDD'23): temporal subgraph contrast — BFS subgraphs ranked by recency + degree, a time-weighted and an unweighted subgraph encoder, margin losses against a shuffled and an unweighted summary; encoder scored by the same frozen link probe |
+| `dyg2vec` | DyG2Vec (Alomrani et al., TMLR'24): window-based temporal attention encoder (its own encoder kind, like `maskdgnn`) pre-trained with VICReg on two distorted views (edge dropout + structural-feature masking) of each history window; encoder probed on frozen latents, which is the paper's own SSL-init protocol |
 | `jepa_frozen` | SSL encoder frozen, JEPA predictor on top. Collapse impossible by construction. |
 | `jepa_naive` | `--train_encoder` alone — targets come from the encoder being optimised, so collapse is a global optimum. Separates "EMA helped" from "unfreezing helped". |
 | `jepa_ema` | `--train_encoder --ema_target` (I-JEPA) |
@@ -74,7 +77,7 @@ python scripts/linkpred/aggregate_hparam.py \
     --root outputs/lp_hparam/mooc_predictor --emit_flags        # -> BASE_HP="..."
 
 # 1b. baselines, so the table is not "our tuned method vs their defaults"
-DATASET=mooc STAGE=baselines sbatch --array=0-38%6 scripts/linkpred/slurm_hparam_search.sh
+DATASET=mooc STAGE=baselines sbatch --array=0-53%6 scripts/linkpred/slurm_hparam_search.sh
 python scripts/linkpred/aggregate_hparam.py \
     --root outputs/lp_hparam/mooc_baselines --by_arm --emit_flags
 
@@ -89,7 +92,7 @@ for S in 42 43 44; do
   DATASET=mooc SEED=$S BASE_HP="<step 1>" \
     VARIANT_HP_ema="<step 2>" VARIANT_HP_naive="<step 2>" VARIANT_HP_vicreg="<step 2>" \
     BASELINE_HP_cldg="<step 1b>" BASELINE_HP_ddgcl="<step 1b>" BASELINE_HP_idol="<step 1b>" \
-    BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" \
+    BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" BASELINE_HP_grace="<step 1b>" BASELINE_HP_graphmae="<step 1b>" BASELINE_HP_dyg2vec="<step 1b>" \
     sbatch scripts/linkpred/slurm_all_methods.sh
 done
 
@@ -107,6 +110,45 @@ python scripts/linkpred/aggregate_linkpred.py \
     --datasets reddit_body reddit dblp --seeds 42 43 44 \
     --exclude Random Supervised
 ```
+
+## Transfer table: link prediction from the classification checkpoints
+
+The representation is selected **once** (recipe and hyper-parameters on the
+node-state val split) and then probed frozen on every downstream task, with no
+per-task retuning. That is the transferability claim, so the link table for
+the state datasets comes from the classification trees, not from a second
+sweep. Point the launcher at that ROOT and match its feature set
+(`TASK=state_probe` trains **with** edge features; `TASK=link_pred` alone
+would build a different input dim and the checkpoints would not load):
+
+```bash
+for DS in mooc reddit wikipedia; do
+  for S in 42 43 44; do
+    DATASET=$DS SEED=$S ROOT=outputs/cls_$DS EDGE_FEATS=1 \
+        sbatch scripts/linkpred/slurm_all_methods.sh
+  done
+done
+python scripts/linkpred/aggregate_linkpred.py \
+    --datasets mooc reddit wikipedia --root_pattern outputs/cls_{ds} \
+    --seeds 42 43 44 --exclude Random Supervised
+```
+
+Nothing is retrained. `train_dyg_jepa.py` defaults `--downstream_task` to
+`link_pred`, so every JEPA arm's classification run already wrote the link
+`test_metrics.json` (all/new, test split) and the launcher skips it as
+complete. Every baseline's `encoder.ckpt` is found, so only the frozen link
+probe runs and writes `analysis.json` next to it; the controls reuse the
+shared encoder. Roughly a probe pass per arm per seed.
+
+The one row this cannot produce is **MaskDGNN (end-to-end)**: its trainer
+saves the encoder but not the edge head, and the classification run used
+`--e2e_eval none`. Either drop the row or retrain that arm alone
+(`rm outputs/cls_<ds>/maskdgnn_s<seed>/encoder.ckpt`, then
+`ARMS=maskdgnn` with the same ROOT / EDGE_FEATS).
+
+Caption for the paper: hyper-parameters selected on node-state validation,
+identical checkpoints for both tasks. A baseline that transfers badly under
+its state-selected config is a result, not something to retune.
 
 ## Checks that matter
 

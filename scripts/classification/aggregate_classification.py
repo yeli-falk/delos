@@ -8,7 +8,7 @@ Layout it expects:
 
     outputs/cls_<dataset>/
       jepa_{frozen,naive,ema,vicreg}_s<seed>/state_probe.json
-      {cldg,ddgcl,idol,maskdgnn,dysubc}_s<seed>/state_probe.json
+      {grace,graphmae,cldg,ddgcl,idol,maskdgnn,dysubc,dyg2vec}_s<seed>/state_probe.json
 
 Every state_probe.json carries several COLUMNS, not just one number:
 
@@ -52,13 +52,17 @@ import statistics as st
 from pathlib import Path
 
 # Display name -> directory stem under outputs/cls_<dataset>/.
-# Contrastive baselines first, then the DyG-JEPA arms, as the table should read.
+# Static SSL control first, then the temporal contrastive baselines, then the
+# DyG-JEPA arms, as the table should read.
 METHODS = [
+    ("GRACE (static)",      "grace"),
+    ("GraphMAE (static)",   "graphmae"),
     ("CLDG",                "cldg"),
     ("DDGCL",               "ddgcl"),
     ("IDOL",                "idol"),
     ("MaskDGNN",            "maskdgnn"),
     ("DySubC",              "dysubc"),
+    ("DyG2Vec",             "dyg2vec"),
     ("DyG-JEPA (frozen)",   "jepa_frozen"),
     ("DyG-JEPA (naive)",    "jepa_naive"),
     ("DyG-JEPA (EMA)",      "jepa_ema"),

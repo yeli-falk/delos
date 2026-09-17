@@ -339,6 +339,211 @@ class MaskDGNNEncoder(EncoderBase):
         return self.freq(self.gcn(x, adj_norm))
 
 
+# ---------------------------------------------------------------------------
+# DyG2Vec (Alomrani, Biparva, Zhang & Coates, TMLR'24) window encoder
+# ---------------------------------------------------------------------------
+class Time2Vec(nn.Module):
+    """Learnable cosine time encoding ``phi(dt) = [cos(w_k dt + b_k)]_k``
+    (DyG2Vec eq. 6, "a learnable Time2Vec module"). Frequencies are
+    initialised geometrically over ``10^0 .. 10^-1.5`` so the coordinates span
+    the snapshot-unit gaps a history window can contain."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.freq = nn.Parameter(torch.logspace(0.0, -1.5, dim))
+        self.phase = nn.Parameter(torch.zeros(dim))
+
+    def forward(self, dt: torch.Tensor) -> torch.Tensor:
+        return torch.cos(dt.unsqueeze(-1).float() * self.freq + self.phase)
+
+
+class TemporalAttentionLayer(nn.Module):
+    """One DyG2Vec message-passing layer (eq. 2-5) on an interaction list.
+
+    ``h^l_i = sigma( W1 h^{l-1}_i + MHA(q = h^{l-1}_i, K = V = {[h^{l-1}_{u_p}
+    || f_p]}_{p in N(i)}) )``. The key/value of interaction ``p`` is the
+    concatenation of the neighbour's embedding and the interaction's temporal
+    edge encoding ``f_p``; a linear map of a concatenation is the sum of two
+    linear maps, so ``K = k_h(h_u) + k_f(f)`` (same for ``V``). Softmax is
+    per query over ITS interactions (scatter-softmax on the edge list), so a
+    node attends over one entry per interaction, not per neighbour.
+    """
+
+    def __init__(self, dim: int, heads: int, dropout: float):
+        super().__init__()
+        if dim % heads:
+            raise ValueError(f"dim {dim} must be divisible by heads {heads}")
+        self.heads, self.dh = heads, dim // heads
+        self.q = nn.Linear(dim, dim)
+        self.k_h = nn.Linear(dim, dim)
+        self.k_f = nn.Linear(dim, dim, bias=False)
+        self.v_h = nn.Linear(dim, dim)
+        self.v_f = nn.Linear(dim, dim, bias=False)
+        self.o = nn.Linear(dim, dim)
+        self.skip = nn.Linear(dim, dim)                      # W1 (eq. 2)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, h: torch.Tensor, q_idx: torch.Tensor, n_idx: torch.Tensor,
+                f: torch.Tensor) -> torch.Tensor:
+        """``h`` (Q, D) node states; ``q_idx``/``n_idx`` (E,) query and
+        neighbour rows of each interaction; ``f`` (E, D) its edge encoding."""
+        Q, D = h.shape
+        H, dh = self.heads, self.dh
+        q = self.q(h).view(Q, H, dh)
+        kh = self.k_h(h).view(Q, H, dh)
+        vh = self.v_h(h).view(Q, H, dh)
+        agg = torch.zeros(Q, H, dh, device=h.device, dtype=h.dtype)
+        if q_idx.numel() > 0:
+            kf = self.k_f(f).view(-1, H, dh)
+            vf = self.v_f(f).view(-1, H, dh)
+            score = (q[q_idx] * (kh[n_idx] + kf)).sum(-1) / (dh ** 0.5)  # (E,H)
+            idx = q_idx[:, None].expand(-1, H)
+            m = torch.full((Q, H), float("-inf"), device=h.device, dtype=score.dtype)
+            m = m.scatter_reduce(0, idx, score, reduce="amax", include_self=True)
+            m = torch.where(torch.isfinite(m), m, torch.zeros_like(m))
+            w = torch.exp(score - m[q_idx])
+            denom = torch.zeros(Q, H, device=h.device, dtype=w.dtype).index_add_(0, q_idx, w)
+            w = w / (denom[q_idx] + 1e-12)
+            agg = agg.index_add(0, q_idx, (vh[n_idx] + vf) * w[..., None])
+        out = self.skip(h) + self.o(agg.reshape(Q, D))
+        return self.drop(F.relu(out))
+
+
+@register_encoder("dyg2vec")
+class DyG2VecEncoder(EncoderBase):
+    """DyG2Vec's window-based temporal attention encoder (Alomrani et al.,
+    TMLR'24, Sec. 4.1) on this project's snapshot windows.
+
+    The paper encodes a *history graph* -- the multigraph of the last ``W``
+    interactions -- once, with ``L = 3`` layers of temporal attention whose
+    keys are the individual interactions ``(u_p, t_p)`` of a node, each
+    carrying a Time2Vec encoding of the gap to the node's LATEST interaction
+    (``t_bar_i - t_p``, eq. 6-7; so the encoding is independent of any
+    prediction target) plus a linear map ``W2`` of three structural counts
+    (eq. 8): the two endpoints' degrees and their common-neighbour count at
+    ``t_p``. Message passing is "flat" and non-causal within the window, with
+    no node memory. Here:
+
+    * the window is the ``T`` snapshots the encoder is handed; every edge
+      ``(i, j)`` present in snapshot ``s`` is one interaction at time ``s``,
+      and the output at step ``t`` encodes the prefix window ``[0, t]`` (the
+      history graph ending at ``t``). The last step is therefore exactly the
+      paper's encoding of the probe's history window; earlier steps are the
+      same encoder on shorter histories.
+    * structural counts are taken on snapshot ``s`` (degree in ``s``,
+      common neighbours in ``s``) and ``log1p``-compressed before ``W2``.
+      There are no per-edge features in the DTDG loader (they are aggregated
+      into the node features), so the ``m_p`` term of eq. 5 is absent -- as
+      on the paper's LastFM / UCI / Enron / SocialEvol.
+    * ``h^0`` is a linear map of the pipeline's node features, so the input
+      matches every other baseline; a final linear map gives ``out_dim``.
+
+    ``struct_keep`` (B, T, N, N) bool, when given, zeroes the structural
+    encoding of the interactions it marks False -- the paper's "edge feature
+    masking" augmentation, applied to ``z_p`` / ``c_p`` during SSL. Edge
+    dropout is applied by the caller to the adjacency itself.
+
+    Defaults are the paper's: 3 layers, 2 heads, dropout 0.1, ReLU.
+    """
+
+    LAYERS: int = 3
+    HEADS: int = 2
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int,
+                 layers: int = LAYERS, heads: int = HEADS, dropout: float = 0.1):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.inp = nn.Linear(in_dim, hidden_dim)
+        self.time_enc = Time2Vec(hidden_dim)
+        self.struct = nn.Linear(3, hidden_dim, bias=False)   # W2 (eq. 8)
+        self.layers = nn.ModuleList(
+            TemporalAttentionLayer(hidden_dim, heads, dropout) for _ in range(layers))
+        self.out = nn.Linear(hidden_dim, out_dim)
+
+    # -- interaction list of one window ---------------------------------------
+    @staticmethod
+    def _edges_of(A: torch.Tensor):
+        """(i, j, deg_i, deg_j, cn_ij) of the edges of one (N, N) bool snapshot.
+        Common neighbours are gathered in chunks so no N x N float is built."""
+        deg = A.sum(dim=1)
+        ij = A.nonzero(as_tuple=False)                         # (E, 2)
+        i, j = ij[:, 0], ij[:, 1]
+        cn = torch.empty(i.shape[0], device=A.device, dtype=deg.dtype)
+        chunk = max(1, (1 << 26) // max(A.shape[0], 1))       # ~64M bools per chunk
+        for a in range(0, i.shape[0], chunk):
+            sl = slice(a, a + chunk)
+            cn[sl] = (A[i[sl]] & A[j[sl]]).sum(dim=1)
+        return i, j, deg, cn
+
+    def _window_edges(self, adj_b, T: int, N: int, keep_b):
+        """Interaction list of one batch item over all output steps.
+
+        Returns ``(q_idx, n_idx, f)``: flat ``t*N + node`` indices of the
+        query and the neighbour for every (output step ``t``, snapshot ``s <=
+        t``, edge ``(i, j)`` of ``s``) triple, and the edge encoding
+        ``f = phi(t_bar_i(t) - s) + W2[...]`` (E, D).
+        """
+        fixed = adj_b.dim() == 2
+        per_s = []
+        if fixed:
+            per_s = [self._edges_of(adj_b)] * T
+        else:
+            per_s = [self._edges_of(adj_b[s]) for s in range(T)]
+        deg_all = torch.stack([e[2] for e in per_s])           # (T, N)
+        # t_bar_i(t): latest snapshot <= t in which i has an interaction.
+        s_ar = torch.arange(T, device=adj_b.device)
+        act = torch.where(deg_all > 0, s_ar[:, None].expand(T, N),
+                          torch.full_like(deg_all, -1, dtype=torch.long))
+        last_active = torch.cummax(act, dim=0).values           # (T, N)
+        qs, ns, dts, feats, keeps = [], [], [], [], []
+        for t in range(T):
+            for s in range(t + 1):
+                i, j, deg, cn = per_s[s]
+                if i.numel() == 0:
+                    continue
+                qs.append(t * N + i); ns.append(t * N + j)
+                dts.append(last_active[t, i] - s)
+                feats.append(torch.stack([deg[i], deg[j], cn], dim=1))
+                if keep_b is not None:
+                    keeps.append(keep_b[s][i, j] if not fixed else keep_b[i, j])
+        if not qs:
+            D = self.hidden_dim
+            e = torch.zeros(0, dtype=torch.long, device=adj_b.device)
+            return e, e, torch.zeros(0, D, device=adj_b.device)
+        q_idx, n_idx = torch.cat(qs), torch.cat(ns)
+        dt = torch.cat(dts).clamp(min=0).float()
+        st = torch.log1p(torch.cat(feats).float())
+        if keeps:
+            st = st * torch.cat(keeps).float()[:, None]
+        f = self.time_enc(dt) + self.struct(st)
+        return q_idx, n_idx, f
+
+    def forward(self, x: torch.Tensor, adj_norm: torch.Tensor,
+                struct_keep: torch.Tensor | None = None) -> torch.Tensor:
+        # x: (B, T, N, F)  adj_norm: (N,N) | (T,N,N) | (B,N,N) | (B,T,N,N)
+        B, T, N, _ = x.shape
+        A = adj_norm > 0
+        if A.dim() >= 2:
+            A = A & ~torch.eye(N, dtype=torch.bool, device=A.device)  # drop self-loops
+        outs = []
+        for b in range(B):
+            if A.dim() == 4:
+                adj_b = A[b]
+            elif A.dim() == 3:
+                adj_b = A if A.shape[0] == T else A[b]        # (T,N,N) shared vs (B,N,N)
+            else:
+                adj_b = A
+            keep_b = None
+            if struct_keep is not None:
+                keep_b = struct_keep[b] if struct_keep.dim() == 4 else struct_keep
+            q_idx, n_idx, f = self._window_edges(adj_b, T, N, keep_b)
+            h = self.inp(x[b]).reshape(T * N, self.hidden_dim)
+            for layer in self.layers:
+                h = layer(h, q_idx, n_idx, f)
+            outs.append(self.out(h).view(T, N, -1))
+        return torch.stack(outs)                                 # (B, T, N, out)
+
+
 class LinkPredictionProbe(nn.Module):
     """Pairwise readout: maps two node latents -> edge logit.
 

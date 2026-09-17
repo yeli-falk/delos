@@ -37,6 +37,8 @@ TASK=${TASK:-state_probe}
 # same GCN (same hidden / out dims) plus MaskDGNN's adaptive frequency layer
 # along the window -- the layer is the method's representation learner, so it
 # has to be part of what the probe sees. Everything else stays shared.
+# The DyG2Vec arm does the same with `--encoder_kind dyg2vec` (the paper's
+# window temporal attention encoder is the method).
 ENC_KIND=${ENC_KIND:-gcn}
 ENC_HIDDEN=${ENC_HIDDEN:-128}
 NODE_DIM=${NODE_DIM:-128}

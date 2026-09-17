@@ -25,7 +25,7 @@
 #       predictor. The winner becomes BASE_HP for everything downstream.
 #
 #   STAGE=baselines  (independent of the other two)
-#       Tunes the COMPETING methods -- CLDG / DDGCL / IDOL -- so the final table
+#       Tunes the COMPETING methods -- GRACE / CLDG / DDGCL / IDOL / ... -- so the final table
 #       is not "our tuned method vs their defaults". Those defaults came from
 #       each paper's own datasets and were never tuned for this subset.
 #
@@ -143,6 +143,22 @@ build_grid() {
         # degree; the paper's most sensitive knob after subgraph size).
         for lr in 1e-3 4e-3 1e-2; do
             for a in 1 5 10; do GRID+=("dysubc|--lr $lr --alpha $a"); done
+        done
+        # DyG2Vec: LR x distortion strength (p_d, the only knob the paper
+        # validates; 0.3 is its choice). Both dropouts move together.
+        for lr in 1e-4 1e-3 4e-3; do
+            for pd in 0.15 0.3; do GRID+=("dyg2vec|--lr $lr --p_edge $pd --p_struct $pd"); done
+        done
+        # GRACE (static control): LR x tau. The temperature is the paper's
+        # load-bearing knob after the drop rates, which stay at the Cora
+        # defaults; lr spans the reference 5e-4 up to the temporal arms' 4e-3.
+        for lr in 5e-4 1e-3 4e-3; do
+            for t in 0.2 0.4 0.7; do GRID+=("grace|--lr $lr --tau $t"); done
+        done
+        # GraphMAE (static control): LR x mask rate, the paper's headline knob
+        # (robust 0.3-0.75 on citation graphs; lower on feature-poor inputs).
+        for lr in 5e-4 1e-3 4e-3; do
+            for mr in 0.3 0.5 0.75; do GRID+=("graphmae|--lr $lr --mask_rate $mr"); done
         done
     else
         echo "[FATAL] STAGE must be 'predictor', 'variants' or 'baselines', " \
@@ -285,6 +301,29 @@ if [[ "$STAGE" == "baselines" ]]; then
             --epochs "${BASE_EPOCHS:-100}" --device cuda --seed "$SEED" \
             --out_dir "$OUT" $HP_ARGS \
             || { echo "[FATAL] DySubC cell failed" >&2; exit 26; } ;;
+      dyg2vec)
+        srun --export=ALL "$PY" -m src.baselines.dyg2vec.train_dyg2vec $DATA_ARG \
+            $ENCODER_ARG --encoder_kind dyg2vec $WINDOW_ARG $EARLY_STOP_ARG \
+            --lam 25 --mu 25 --nu 1 --steps_per_epoch 20 --val_steps 10 \
+            --epochs "${BASE_EPOCHS:-100}" --device cuda --seed "$SEED" \
+            --out_dir "$OUT" $HP_ARGS \
+            || { echo "[FATAL] DyG2Vec cell failed" >&2; exit 29; } ;;
+      graphmae)
+        srun --export=ALL "$PY" -m src.baselines.graphmae.train_graphmae $DATA_ARG \
+            $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+            --replace_rate 0.05 --sce_gamma 2 --target all \
+            --steps_per_epoch 20 --val_steps 10 \
+            --epochs "${BASE_EPOCHS:-100}" --device cuda --seed "$SEED" \
+            --out_dir "$OUT" $HP_ARGS \
+            || { echo "[FATAL] GraphMAE cell failed" >&2; exit 29; } ;;
+      grace)
+        srun --export=ALL "$PY" -m src.baselines.grace.train_grace $DATA_ARG \
+            $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+            --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
+            --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 \
+            --epochs "${BASE_EPOCHS:-100}" --device cuda --seed "$SEED" \
+            --out_dir "$OUT" $HP_ARGS \
+            || { echo "[FATAL] GRACE cell failed" >&2; exit 28; } ;;
       *) echo "[FATAL] unknown baseline arm '$ARM'" >&2; exit 3 ;;
     esac
     srun --export=ALL "$PY" scripts/dblp/run_block_probe.py \
@@ -338,20 +377,29 @@ flock -u 9; exec 9>&-
 if [[ -f "$OUT/state_probe_val.json" ]]; then
     echo "[skip] cell $IDX complete: $OUT/state_probe_val.json exists"; exit 0
 fi
-if [[ -f "$OUT/best.ckpt" ]]; then
-    echo "[resume] cell $IDX has best.ckpt but no state_probe_val.json (interrupted) -> restarting from scratch"
-    rm -f "$OUT/best.ckpt" "$OUT/history.json" "$OUT/test_metrics.json"
+# Same completion rule as slurm_all_methods.sh: the trainer writes
+# test_metrics.json only after its last epoch + link probe, so best.ckpt AND
+# test_metrics.json = training finished cleanly (only the probe is missing,
+# e.g. it OOMed -- rerun with a smaller PROBE_BATCH); best.ckpt alone = killed
+# mid-training (saved on every val improvement) -> restart from scratch.
+if [[ -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ]]; then
+    echo "[skip] cell $IDX training complete (best.ckpt + test_metrics.json); running only the probe"
+else
+    if [[ -f "$OUT/best.ckpt" ]]; then
+        echo "[resume] cell $IDX has best.ckpt but no test_metrics.json (interrupted) -> restarting from scratch"
+        rm -f "$OUT/best.ckpt" "$OUT/history.json"
+    fi
+    srun --export=ALL "$PY" src/train/train_dyg_jepa.py \
+        $DATA_ARG $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+        --encoder_ckpt "$ENC_CKPT" --mask_scheme "${MASK_SCHEME:-node_mask}" \
+        --residual_head \
+        --heads "${HEADS:-4}" --mlp_dim "${MLP_DIM:-512}" \
+        --batch_size "$BATCH" --epochs "${JEPA_EPOCHS:-300}" \
+        --probe_epochs "${JEPA_PROBE_EPOCHS:-3}" \
+        --seed "$SEED" --num_workers "$NW" --device cuda --out_dir "$OUT" \
+        $BASE_HP $VFLAGS $HP_ARGS
+    [[ -f "$OUT/best.ckpt" ]] || { echo "[FATAL] cell $IDX produced no best.ckpt" >&2; exit 12; }
 fi
-srun --export=ALL "$PY" src/train/train_dyg_jepa.py \
-    $DATA_ARG $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
-    --encoder_ckpt "$ENC_CKPT" --mask_scheme "${MASK_SCHEME:-node_mask}" \
-    --residual_head \
-    --heads "${HEADS:-4}" --mlp_dim "${MLP_DIM:-512}" \
-    --batch_size "$BATCH" --epochs "${JEPA_EPOCHS:-300}" \
-    --probe_epochs "${JEPA_PROBE_EPOCHS:-3}" \
-    --seed "$SEED" --num_workers "$NW" --device cuda --out_dir "$OUT" \
-    $BASE_HP $VFLAGS $HP_ARGS
-[[ -f "$OUT/best.ckpt" ]] || { echo "[FATAL] cell $IDX produced no best.ckpt" >&2; exit 12; }
 
 srun --export=ALL "$PY" scripts/dblp/run_block_probe.py \
     --jepa_ckpt "$OUT/best.ckpt" $PROBE_COMMON \

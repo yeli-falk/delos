@@ -47,11 +47,14 @@ METHODS = [
     # MaskDGNN's own encoder + edge head (the paper's protocol), written by
     # its trainer as link_e2e[_val].json; the frozen-probe row is below.
     ("MaskDGNN (end-to-end)", ("maskdgnn", "e2e")),
+    ("GRACE (static)",      ("grace", "encoder")),
+    ("GraphMAE (static)",   ("graphmae", "encoder")),
     ("CLDG",                ("cldg", "encoder")),
     ("DDGCL",               ("ddgcl", "encoder")),
     ("IDOL",                ("idol", "encoder")),
     ("MaskDGNN",            ("maskdgnn", "encoder")),
     ("DySubC",              ("dysubc", "encoder")),
+    ("DyG2Vec",             ("dyg2vec", "encoder")),
     ("DyG-JEPA (frozen)",   ("jepa_frozen", None)),
     ("DyG-JEPA (naive)",    ("jepa_naive", None)),
     ("DyG-JEPA (EMA)",      ("jepa_ema", None)),
@@ -220,7 +223,13 @@ def main():
                         "\\multirow dataset column, both subsets side by side, "
                         "and best-per-column bolded WITHIN each dataset. This is "
                         "the paper layout; --dataset gives the per-dataset view.")
-    p.add_argument("--root", default=None)
+    p.add_argument("--root", default=None,
+                   help="Results tree for --dataset (default outputs/lp_<ds>). "
+                        "Point it at outputs/cls_<ds> for the transfer table "
+                        "built from the classification checkpoints.")
+    p.add_argument("--root_pattern", default="outputs/lp_{ds}",
+                   help="Same for --datasets, with {ds} substituted, e.g. "
+                        "outputs/cls_{ds}.")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     p.add_argument("--metrics", nargs="+", default=DEFAULT_METRICS)
     p.add_argument("--subset", choices=["all", "new", "both"], default="both")
@@ -243,7 +252,7 @@ def main():
     if args.datasets:
         per_ds = {}
         for ds in args.datasets:
-            r = Path(f"outputs/lp_{ds}")
+            r = Path(args.root_pattern.format(ds=ds))
             if not r.exists():
                 print(f"[skip] {r} does not exist")
                 continue

@@ -20,7 +20,7 @@
 #   random    encoder + predictor from scratch         (supervised floor)
 #   encoder   the table's shared edge-mask encoder, predictor from scratch
 #   jepa      encoder + predictor from $ROOT/$JEPA_ARM_s$SEED/best.ckpt
-#   ddgcl|cldg|idol|maskdgnn|dysubc   that baseline's encoder.ckpt, predictor from scratch
+#   ddgcl|cldg|idol|maskdgnn|dysubc|grace|graphmae|dyg2vec   that baseline's encoder.ckpt, predictor from scratch
 #
 # Regimes (AUXW, default "0 1.0"): 0 = pure fine-tuning (DDGCL fune_train),
 # w>0 = BCE + w * JEPA latent loss (DDGCL's multi-task scheme).
@@ -120,7 +120,7 @@ case "$INIT" in
     ENC=$(ls "$ROOT/_shared_encoder_s${SEED}"/encoder_*_edge_mask.ckpt 2>/dev/null | head -1)
     [[ -f "${ENC:-}" ]] || { echo "[FATAL] shared encoder missing under $ROOT/_shared_encoder_s${SEED}" >&2; exit 11; }
     INIT_ARGS="--init encoder --encoder_ckpt $ENC" ;;
-  ddgcl|cldg|idol|maskdgnn|dysubc)
+  ddgcl|cldg|idol|maskdgnn|dysubc|grace|graphmae|dyg2vec)
     ENC="$ROOT/${INIT}_s${SEED}/encoder.ckpt"
     [[ -f "$ENC" ]] || { echo "[FATAL] $ENC missing: run slurm_all_methods.sh (ARMS=$INIT) first" >&2; exit 12; }
     INIT_ARGS="--init encoder --encoder_ckpt $ENC" ;;
