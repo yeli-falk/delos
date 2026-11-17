@@ -349,10 +349,10 @@ if [[ "$STAGE" == "baselines" ]]; then
             --steps_per_epoch 20 --val_steps 10 \
             --epochs "${SSL_EPOCHS:-100}" --device cuda --seed "$SEED" \
             --out_dir "$OUT" $HP_ARGS \
-            || { echo "[FATAL] GraphMAE cell failed" >&2; exit 29; }
+            || { echo "[FATAL] GraphMAE cell failed" >&2; exit 33; }
         srun --export=ALL python scripts/regression/probe_encoder_regression.py \
             --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
-            --out_dir "$OUT" || { echo "[FATAL] GraphMAE probe failed" >&2; exit 29; }
+            --out_dir "$OUT" || { echo "[FATAL] GraphMAE probe failed" >&2; exit 33; }
         ;;
       grace)
         srun --export=ALL python -m src.baselines.grace.train_grace $SSL_COMMON \

@@ -371,7 +371,7 @@ if [[ "$STAGE" == "baselines" ]]; then
             --steps_per_epoch 20 --val_steps 10 \
             --epochs "${BASE_EPOCHS:-100}" --device cuda --seed "$SEED" \
             --out_dir "$OUT" $HP_ARGS \
-            || { echo "[FATAL] GraphMAE cell failed" >&2; exit 29; } ;;
+            || { echo "[FATAL] GraphMAE cell failed" >&2; exit 33; } ;;
       grace)
         srun --export=ALL python -m src.baselines.grace.train_grace $DATA_ARG \
             $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \

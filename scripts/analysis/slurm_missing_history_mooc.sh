@@ -14,7 +14,11 @@
 # (enc-last) of the SAME frozen encoder. The claim: jepa (trained with node
 # masking) degrades least as the hidden fraction grows. Post-hoc, no retraining.
 #
-#   for SEED in 42 43 44; do SEED=$SEED sbatch scripts/analysis/slurm_missing_history_mooc.sh; done
+# CKPT (required) is the best.ckpt of a trained MOOC DELOS run for that seed:
+#   for SEED in 42 43 44; do
+#     SEED=$SEED CKPT=outputs/cls_mooc/jepa_ema_s$SEED/best.ckpt \
+#       sbatch scripts/analysis/slurm_missing_history_mooc.sh
+#   done
 # Then aggregate:  python scripts/analysis/dump_missing_history.py --task mooc
 
 set -uo pipefail
@@ -28,9 +32,11 @@ SEED="${SEED:-42}"
 STATE_MODE="${STATE_MODE:-state}"
 FRACS="${FRACS:-0 0.25 0.5 0.75}"
 NW="${SLURM_CPUS_PER_TASK:-8}"
-# Tag of the trained MOOC DELOS run (matches the run_block_probe checkpoints).
-TAG="${TAG:-jodie_mooc_tgcn_ef_res_cw2_u3000i97_s${SEED}}"
-CKPT="outputs/${TAG}_cjepa/best.ckpt"
+CKPT="${CKPT:-}"
+if [[ -z "$CKPT" ]]; then
+    echo "[FATAL] set CKPT=/path/to/best.ckpt of a trained MOOC DELOS run" >&2
+    exit 2
+fi
 echo "[config] SEED=$SEED STATE_MODE=$STATE_MODE FRACS='$FRACS' CKPT=$CKPT"
 
 if [[ ! -f "$CKPT" ]]; then
