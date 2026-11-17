@@ -39,7 +39,6 @@ import argparse
 import contextlib
 import json
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -226,7 +225,7 @@ def main():
           f"encoder={args.encoder_kind} mask_ratio={args.mask_ratio} "
           f"alpha={args.alpha} target={args.target} window={args.window or args.history_size}",
           flush=True)
-    if args.encoder_kind != "maskdgnn":
+    if not args.encoder_kind.startswith("maskdgnn"):    # maskdgnn / maskdgnn_root
         print(f"[warn] MaskDGNN's native encoder is 'maskdgnn' (GCN + adaptive "
               f"frequency layer); got '{args.encoder_kind}' -- the 'w/o FE' "
               f"ablation if this is 'gcn'.", flush=True)

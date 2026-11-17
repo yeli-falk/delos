@@ -107,8 +107,6 @@ def train_ddgcl(model, train_snaps, val_snaps, args, device):
         if args.smoke:
             print("[smoke] ok"); return float("inf")
 
-        # Fixed-seed RNG so every epoch is scored on the SAME (t1, t2, nodes)
-        # draws — the epoch-to-epoch delta is then a model difference only.
         model.eval()
         val_loss = run_epoch(model, val_snaps, args, device,
                              np.random.default_rng(args.seed + 10_000),
@@ -191,10 +189,6 @@ def main():
     best = train_ddgcl(model, train_snaps, val_snaps, args, device)
     if args.smoke:
         return
-    # Filename is `encoder.ckpt`, matching CLDG / IDOL and what every launcher
-    # and probe looks for. It was briefly `<data_source>_encoder.ckpt`, which
-    # made the slurm scripts' existence checks fail silently and drop DDGCL
-    # from the results table.
     ckpt_path = out_dir / "encoder.ckpt"
     save_encoder_ckpt(ckpt_path, model.encoder, args,
                       feature_dim=train_ds.feature_dim,

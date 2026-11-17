@@ -89,8 +89,7 @@ def run_epoch(model, loader, mean, std, device, train: bool, opt=None,
         long_hist = batch["long_history"].to(device, non_blocking=True)
         with torch.set_grad_enabled(train):
             recon, label = model(long_hist)
-            # BasicTS scores the loss AFTER re-scaling, which is what makes
-            # null_val=0.0 mean "missing reading" rather than "mean speed".
+        
             loss = masked_mae(recon * std + mean, label * std + mean, 0.0)
         if train:
             opt.zero_grad(set_to_none=True)
@@ -138,9 +137,6 @@ def main():
         raise SystemExit("--long_history must be at least one patch long.")
 
     set_deterministic(args.seed)
-    # Both branches share one --out_dir (train_stdmae.py reads both ckpts from
-    # it), so the run record is per-variant: a shared args.json would only ever
-    # describe whichever branch was pre-trained last.
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / f"args_{VARIANTS[args.variant]}.json", "w") as f:
@@ -206,9 +202,6 @@ def main():
         "model": model.state_dict(),
         "variant": args.variant,
         "spatial": spatial,
-        # The forecasting stage rebuilds from THIS, not from its own flags, so
-        # a mismatched --patch_size / --embed_dim cannot silently produce a
-        # differently-shaped encoder than the one that was pre-trained.
         "mask_args": mask_args_from(args, "forecasting"),
         "long_history": args.long_history,
         "val_loss": tracker.best,

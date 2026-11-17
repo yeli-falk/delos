@@ -121,27 +121,6 @@ def debiased_hardneg(s_pos: torch.Tensor, s_neg: torch.Tensor,
     w = torch.softmax(beta * s_neg, dim=1)                   # (M, Q)
     weighted_neg = (w * F.softplus(s_neg)).sum(dim=1)        # (M,)
     loss_neg = (weighted_neg - tau * F.softplus(s_pos)) / (1.0 - tau)
-    # Clamp at 0. `weighted_neg` estimates E[softplus(s_neg)] over TRUE
-    # negatives -- a non-negative quantity -- and the debias term subtracts the
-    # estimated contribution of false negatives. When that correction overshoots
-    # the estimate goes negative, which is an estimation artifact, not signal.
-    #
-    # Without the clamp the objective is UNBOUNDED BELOW: softplus(s_pos) grows
-    # linearly, so -tau*softplus(s_pos)/(1-tau) can be driven to -inf by simply
-    # inflating the positive score. That is reachable without learning anything
-    # (the encoder just scales up its output norm), and it is a strictly better
-    # optimum than any real solution -- so training reliably ends up there. It
-    # was observed on METR-LA: loss fell monotonically past -24 (implying
-    # s_pos ~ 2400) while the train loss oscillated between -23 and +191.
-    #
-    # The failure is silent and actively harmful, because val loss decreases
-    # monotonically along the divergence, so BestValTracker restores the MOST
-    # diverged epoch as "best".
-    #
-    # Chuang et al. (2020), "Debiased Contrastive Learning", eq. 6 floors the
-    # debiased negative estimator for exactly this reason; clamping at 0 is the
-    # minimal form of that floor. With it, loss_pos >= 0 and loss_neg >= 0, so a
-    # negative total loss becomes impossible -- a cheap invariant to eyeball.
     loss_neg = loss_neg.clamp(min=0.0)
     return (loss_pos + loss_neg).mean()
 
@@ -172,8 +151,6 @@ class DDGCL(nn.Module):
             self.register_buffer(
                 "queue", F.normalize(torch.randn(latent_dim, queue_size), dim=0))
             self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
-            # Snapshot time each queued key was produced at, so a negative can
-            # be scored through its OWN time gap to the query (not the step's).
             self.register_buffer("queue_time", torch.zeros(queue_size))
 
     # -- MoCo bookkeeping ---------------------------------------------------
@@ -262,8 +239,6 @@ class DDGCL(nn.Module):
             # (M, queue, D, D) one. Fold W_neg into each key: kk_j = W_neg_j·k_j.
             gaps = (float(t_query) - self.queue_time).abs()   # (queue,)
             W_neg = self.bilinear(self.time_enc(gaps))        # (queue, D, D)
-            # .clone() so the in-place _push_queue below can't mutate the
-            # tensor autograd saved for W_neg's gradient.
             kk = torch.einsum("qde,qe->qd", W_neg,
                               self.queue.t().detach().clone())  # (queue, D)
             s_neg = q @ kk.t()                                # (M, queue)

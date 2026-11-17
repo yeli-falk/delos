@@ -282,10 +282,7 @@ def main():
         t0 = time.time()
         train_loss = run_stream(model, ev, train_sel, device, args,
                                 train=True, opt=opt)
-        # Val costs a SECOND full stream pass (it replays the train bins to warm
-        # the stateful banks before scoring the held-out ones), so on MOOC it
-        # more than doubles the epoch. --val_every amortises that; the last
-        # epoch is always scored so the best-val state is never missed.
+
         is_last = (epoch + 1) == n_epochs
         if not (is_last or (epoch + 1) % args.val_every == 0):
             print(f"[epoch {epoch+1}/{n_epochs}] loss={train_loss:.4f} "
@@ -300,7 +297,6 @@ def main():
               f"val_loss={val_loss:.4f}{'  (best)' if improved else ''} "
               f"({time.time()-t0:.1f}s)", flush=True)
         if stop:
-            # NB: with --val_every > 1 patience counts EVALUATIONS, not epochs.
             print(f"  early stopping: no val improvement for "
                   f"{args.early_stop_patience} evaluations", flush=True)
             break
@@ -308,10 +304,6 @@ def main():
     if tracker.restore(model):
         print(f"[best] restored best-val weights (val_loss={best:.4f})", flush=True)
 
-    # Frozen replay over the FULL stream: snapshot dynamic embeddings + each
-    # user's last-interaction time at the end of every bin. Info cutoff is
-    # respected downstream: the probe only reads bins <= the last history bin
-    # for its non-oracle columns.
     model.eval()
     snaps = dict(
         user_emb=np.zeros((ev["num_bins"], ev["n_users"], args.node_dim), np.float32),

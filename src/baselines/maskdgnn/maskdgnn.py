@@ -199,7 +199,6 @@ def sample_negative_pairs(adj_target: torch.Tensor, active: torch.Tensor,
         bad = (ri == rj) | a[ri, rj]
         if not bool(bad.any()):
             break
-        k = int(bad.sum())
         ri = torch.where(bad, draw(n), ri)
         rj = torch.where(bad, draw(n), rj)
     ok = (ri != rj) & ~a[ri, rj]

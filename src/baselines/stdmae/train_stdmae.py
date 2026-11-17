@@ -245,8 +245,6 @@ def main():
     train_loader, val_loader = loader(train_ds, True), loader(val_ds, False)
     eval_loader = loader(eval_ds, False)
 
-    # Fixed topology -> one set of supports as buffers. Dynamic topology ->
-    # the window's own graph per batch, so only the COUNT is fixed here.
     fixed_adj = getattr(train_ds, "adj", None)
     static = (np.asarray(fixed_adj) if fixed_adj is not None
               and np.asarray(fixed_adj).ndim == 2 else None)
@@ -281,8 +279,6 @@ def main():
         train_loss = run_epoch(model, train_loader, args, device, static, mean,
                                std, cl_len, train=True, opt=opt)
         with torch.no_grad():
-            # Always validated on the FULL horizon, so the selection signal
-            # does not change under the curriculum.
             val_loss = run_epoch(model, val_loader, args, device, static, mean,
                                  std, args.num_preds, train=False)
         sched.step()

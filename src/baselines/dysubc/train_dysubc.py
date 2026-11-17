@@ -73,7 +73,6 @@ def run_epoch(model, snaps, args, device, rng, n_steps, train: bool, opt=None):
         if present.size > args.node_batch_size:
             present = rng.choice(present, size=args.node_batch_size, replace=False)
         centres = torch.from_numpy(present).long().to(device)
-        # Eq. 10: the structural negative is another centre's summary.
         perm = torch.from_numpy(rng.permutation(present.size)).long().to(device)
 
         with contextlib.nullcontext() if train else torch.no_grad():
@@ -113,8 +112,6 @@ def train_dysubc(model, train_snaps, val_snaps, args, device):
         if args.smoke:
             print(f"[smoke] ok loss={train_loss:.4f}"); return float("inf")
 
-        # Fixed-seed RNG so every epoch is scored on the SAME anchor / centre
-        # draws — the epoch-to-epoch delta is then a model difference only.
         model.eval()
         val_loss, v1, v2 = run_epoch(model, val_snaps, args, device,
                                      np.random.default_rng(args.seed + 10_000),

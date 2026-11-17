@@ -1,5 +1,6 @@
 """Shared plumbing for the encoder-only baselines (CLDG / DDGCL / IDOL /
-MaskDGNN / DySubC / GRACE / GraphMAE / DyG2Vec).
+MaskDGNN / DySubC / GRACE / GraphMAE / BGRL /
+DyG2Vec).
 
 These baselines differ ONLY in their self-supervised objective. Everything that
 could otherwise make their numbers incomparable lives here, so it is written
@@ -100,8 +101,7 @@ def _fixed_topology_snapshots(ds, method: str) -> Optional[Snapshots]:
         return None
     feats = np.asarray(feats, dtype=np.float32)
     raw = getattr(ds, "raw_speeds", None)
-    # Channel 0 is the normalised signal, so "missing" cannot be read off it
-    # directly; use the raw series when the dataset kept one.
+    # Channel 0 is the normalised signal
     active = (np.asarray(raw) > 0 if raw is not None
               else np.ones(feats.shape[:2], dtype=bool))
     return (ConstantAdjacency(np.asarray(adj).astype(bool), feats.shape[0]),
@@ -113,7 +113,7 @@ def split_snapshots(ds, method: str, args=None) -> Tuple[Snapshots, Snapshots]:
 
     Two dataset families, one contract:
 
-    * **global DTDG** (dblp / jodie_* / reddit_* / england_covid) -- the wrapper
+    * **global DTDG** (dblp / jodie_* / reddit_* / cldg_* / england_covid) -- the wrapper
       holds the whole timeline in ``ds._ds``, so both ranges are sliced out of
       it here. Train is ``[0, train_end)`` and val is ``[train_end, val_end)``
       — the same chronological boundaries ``global_window_starts`` uses, so no
@@ -131,7 +131,7 @@ def split_snapshots(ds, method: str, args=None) -> Tuple[Snapshots, Snapshots]:
         if fixed is None:
             raise SystemExit(
                 f"{method} supports global dynamic-graph datasets "
-                "(--data_source dblp / jodie_* / reddit_* / england_covid) and "
+                "(--data_source dblp / jodie_* / reddit_* / cldg_* / tgbn_trade / england_covid) and "
                 "fixed-topology signal datasets (--data_source metr_la). The "
                 "chosen dataset exposes neither a global snapshot sequence nor "
                 "a (.feats, .adj) pair.")

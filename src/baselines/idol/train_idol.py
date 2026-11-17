@@ -8,7 +8,7 @@ sequence, then saves ``encoder.ckpt`` in the same schema as
 
     # 1. train the IDOL encoder
     python -m src.baselines.idol.train_idol --data_path dataset/dblp/edges.csv \
-        --encoder_kind ppr_gcn --encoder_hidden 128 --node_dim 128 \
+        --encoder_hidden 128 --node_dim 128 \
         --epochs 100 --device cuda --out_dir outputs/idol_dblp
 
     # 2. evaluate with the SAME link-prediction probe as DyG-JEPA
@@ -22,7 +22,9 @@ evolving) adjacency, and the encoder re-runs PPR propagation per snapshot — th
 dense analogue of InstantGNN's incremental PPR maintenance. Supports the global
 dynamic-graph datasets (dblp / jodie / reddit). The encoder consumes the
 pipeline's node features, so its input matches DyG-JEPA exactly — only the SSL
-objective differs.
+objective differs. The encoder is ALWAYS ``ppr_gcn``: any ``--encoder_kind``
+passed by a launcher is ignored (with a notice) so the shared ``$ENCODER_ARG``
+cannot silently swap IDOL onto another architecture.
 """
 from __future__ import annotations
 
@@ -42,6 +44,9 @@ from src.custom_codes.dataset_factory import (
 from src.train import cli
 from src.train.engine import save_encoder_ckpt, set_deterministic, setup_output_dir
 from src.world_models.graph_jepa_encoder import build_encoder
+
+# IDOL is defined by PPR-propagated features + GGD; the encoder is not a knob.
+IDOL_ENCODER_KIND = "ppr_gcn"
 
 
 def run_epoch(model, snaps, args, device, rng, train: bool, opt=None,
@@ -95,9 +100,6 @@ def train_idol(model, train_snaps, val_snaps, args, device):
         if args.smoke:
             print("[smoke] ok"); return float("inf")
 
-        # Fixed-seed RNG so the feature-permutation corruption (and hence the
-        # negative group) is identical every epoch — the val delta is then a
-        # model difference, not a resampling artefact.
         model.eval()
         val_loss = run_epoch(model, val_snaps, args, device,
                              np.random.default_rng(args.seed + 10_000),
@@ -122,7 +124,7 @@ def main():
     cli.add_dblp_synthetic_flags(p)
     add_dataset_cli_flags(p)
     cli.add_window_flags(p)                       # only used to construct the dataset
-    cli.add_encoder_flags(p, default_kind="ppr_gcn", node_dim=128, encoder_hidden=128)
+    cli.add_encoder_flags(p, default_kind=IDOL_ENCODER_KIND, node_dim=128, encoder_hidden=128)
     cli.add_run_flags(p, out_dir="outputs/idol")
     cli.add_early_stop_flags(p, patience=20, min_delta=0.0)
     # IDOL / GGD-specific (defaults from the reference repo)
@@ -148,14 +150,18 @@ def main():
     p.add_argument("--weight_decay", type=float, default=0.0)
     args = p.parse_args()
 
+    # IDOL's encoder is ALWAYS its native PPR-propagation GCN, regardless of
+    # the --encoder_kind the launcher passes.
+    if args.encoder_kind != IDOL_ENCODER_KIND:
+        print(f"[setup] --encoder_kind {args.encoder_kind!r} ignored: IDOL "
+              f"always uses its native {IDOL_ENCODER_KIND!r} encoder.", flush=True)
+        args.encoder_kind = IDOL_ENCODER_KIND
+
     set_deterministic(args.seed)
     out_dir = setup_output_dir(args.out_dir, args)
     device = torch.device(args.device)
     print(f"[setup] IDOL baseline  data={args.data_source} "
           f"encoder={args.encoder_kind} proj_layers={args.proj_layers}", flush=True)
-    if args.encoder_kind != "ppr_gcn":
-        print(f"[warn] IDOL's native encoder is 'ppr_gcn' (dynamic PPR "
-              f"propagation); got '{args.encoder_kind}'.", flush=True)
 
     train_ds = build_dynamic_dataset(args, split="train")
     train_snaps, val_snaps = split_snapshots(train_ds, "IDOL", args)
@@ -169,7 +175,7 @@ def main():
           f"F={train_ds.feature_dim}", flush=True)
 
     encoder = build_encoder(
-        args.encoder_kind, in_dim=train_ds.feature_dim,
+        IDOL_ENCODER_KIND, in_dim=train_ds.feature_dim,
         hidden_dim=args.encoder_hidden, out_dim=args.node_dim, freeze=False,
         bidirectional=args.bidirectional).to(device)
     model = GGD(encoder, latent_dim=args.node_dim, proj_layers=args.proj_layers).to(device)

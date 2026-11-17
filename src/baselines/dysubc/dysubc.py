@@ -69,12 +69,9 @@ from src.world_models.graph_jepa_encoder import normalize_adjacency
 
 # Reference normalises timestamps to [0, 10] before using them as edge weights
 # and importance scores (``load_data_as_graph``: ``(t - t_min) / (t_max -
-# t_min) * 10``). The same scale is used here so ``alpha`` means what it means
-# in the paper's sensitivity study.
+# t_min) * 10``).
 TIME_SCALE: float = 10.0
-# Safety cap on BFS depth. The paper's Algorithm 1 has no cap (it runs until
-# ``k`` nodes are collected); this only matters for a centre whose component
-# has fewer than ``k`` nodes, where the loop already stops on "no growth".
+# Safety cap on BFS depth.
 MAX_HOPS: int = 8
 
 
