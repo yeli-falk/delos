@@ -32,7 +32,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import MaskedNodePredictor
+from src.cjepa_graph_predictor import MaskedNodePredictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import build_dynamic_dataset
 from src.train.analyze_jepa import train_node_probe
 from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
@@ -66,7 +66,7 @@ def collect(encoder, predictor, loader, history_size, device, frac, fill,
     encoder.eval(); predictor.eval()
     g = torch.Generator(device=device).manual_seed(seed)
     for wid, batch in enumerate(loader):
-        x_hist = batch["x_hist"].to(device); x_fut = batch["x_fut"].to(device)
+        x_hist = batch["x_hist"].to(device)
         adj = batch["adj"].to(device); active = batch["active"].to(device)
         year = batch["year"]
         # Hide a fraction of each window's nodes that have a past to hide.
@@ -140,7 +140,7 @@ def main():
         dim_head=node_dim // saved.get("heads", 4),
         mlp_dim=saved.get("mlp_dim", 512), dropout=saved.get("dropout", 0.1),
         use_attention_mask=not saved.get("no_attention_mask", True),
-        residual_head=saved.get("residual_head", False)).to(device)
+        **predictor_flags_from_args(saved)).to(device)
     predictor.load_state_dict(ck["predictor"])
     fill = _feat_mean(train_loader, HS, device)
 

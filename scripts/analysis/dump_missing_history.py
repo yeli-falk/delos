@@ -105,7 +105,7 @@ def mooc(pattern):
         print(f"\n[{b}]  state AUROC on hidden nodes (mean±std over {len(ms)} seeds)")
         print(f"{'frac':>6}: " + "  ".join(f"{f:>13.2f}" for f in fracs))
         for col, key in (("enc-last", "enc_last_auroc"), ("jepa", "jepa_auroc")):
-            cells, first, last = [], [], []
+            cells = []
             for f in fracs:
                 vs = [m[str(f)][key] for m in ms if str(f) in m]
                 cells.append(_fnum(vs) if vs else "-")

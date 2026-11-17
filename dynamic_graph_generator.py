@@ -88,6 +88,9 @@ def generate_dynamic_graph(
     switch_mode: str = "iid",      # "iid" | "latent_driven"; see below
     switch_gain: float = 6.0,      # latent_driven: how sharply drift raises risk
     label_mode: str = "hazard",    # "hazard" | "nearest_anchor"; see below
+    feature_readout: str = "tanh", # "tanh" (2-layer tanh readout, legacy) | "linear"
+                                   # (x = z W): keeps position AND velocity linearly
+                                   # recoverable from feature differences; see below
     hysteresis: float = 0.0,       # nearest_anchor: relative margin before a
                                    # boundary crossing counts as a switch
     seed: int = 0,
@@ -179,6 +182,19 @@ def generate_dynamic_graph(
     w2 = rng.normal(size=(32, d_node_feat)) / np.sqrt(32)
     we = rng.normal(size=(d_latent, d_edge_feat)) / np.sqrt(d_latent)
     wy = rng.normal(size=d_latent) / np.sqrt(d_latent)   # continuous label readout
+    # feature_readout="linear": x = z @ wl. The legacy tanh readout saturates
+    # when nodes move ~1 latent unit per step (momentum 0.95), so feature
+    # DIFFERENCES are not linear in latent differences and the hidden velocity
+    # is capped at R^2 ~0.4 from the feature history even with no noise -- no
+    # encoder can then carry it. A linear readout lifts that ceiling to ~1
+    # (diffusion 0) / ~0.65 (diffusion 0.3). Drawn from a SEPARATE stream so
+    # the main one, hence the latents, labels and graph, is identical under
+    # both readouts for a given seed (a paired comparison), and the tanh path
+    # is byte-identical to the legacy generator.
+    if feature_readout not in ("tanh", "linear"):
+        raise ValueError("feature_readout must be 'tanh' or 'linear'")
+    wl = (np.random.default_rng(seed + 7_919).normal(size=(d_latent, d_node_feat)) / np.sqrt(d_latent)
+          if feature_readout == "linear" else None)
 
     # Switch hazard. Under "latent_driven" the risk rises with how far a node
     # has drifted from its anchor; drift is an OU process, hence autocorrelated,
@@ -253,7 +269,7 @@ def generate_dynamic_graph(
         np.fill_diagonal(a, 0)
 
         # Node features: readout of latent, optionally smoothed over the graph.
-        x = np.tanh(z @ w1) @ w2
+        x = (z @ wl) if feature_readout == "linear" else np.tanh(z @ w1) @ w2
         if diffusion_alpha > 0.0:
             deg = a.sum(axis=1, keepdims=True).clip(min=1)
             x = (1.0 - diffusion_alpha) * x + diffusion_alpha * (a @ x) / deg
@@ -299,6 +315,7 @@ def generate_dynamic_graph(
         "anchors": anchors.astype(np.float32),
         "label_mode": label_mode,
         "hysteresis": hysteresis,
+        "feature_readout": feature_readout,
     }
 
 

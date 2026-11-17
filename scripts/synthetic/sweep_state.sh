@@ -31,6 +31,9 @@
 #   AXIS=SYN_MOMENTUM VALUES="0.0 0.5 0.8 0.95" bash scripts/synthetic/sweep_state.sh
 #   AXIS=SYN_NODE_NOISE VALUES="0.0 0.25 0.5 1.0" ARMS="jepa_frozen jepa_ema cldg" bash ...
 #   AXIS=NPRED VALUES="1 3 6" bash ...                       # horizon axis
+# (For the horizon CURVE prefer scripts/synthetic/horizon_showcase.sh: one run
+#  at NPRED=12 whose probe fits a head per horizon; this axis retrains per
+#  value and is the robustness check that h=1 does not depend on the window.)
 # Any other SYN_* set in the environment is held fixed for the whole sweep.
 #
 # Report (after the jobs finish), one table per axis value plus a one-line
