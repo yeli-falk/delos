@@ -28,10 +28,13 @@ but override it for all arms or the rows stop being comparable.
 | `supervised` | encoder + head trained **end-to-end** on the forecast loss from random init. No SSL. The label-hungry reference. |
 | `grace` | GRACE (Zhu et al., 2020): **static** graph contrast — two augmented views (edge removal + feature-dimension masking) of one snapshot, inter- and intra-view negatives, + the same frozen forecast head. Never sees two snapshots at once, so it is the control for "does the SSL objective need to be temporal at all?". On a fixed topology the edge view differs per step only through its random mask |
 | `graphmae` | GraphMAE (Hou et al., KDD'22): **static** masked-feature autoencoder — mask a fraction of one snapshot's nodes with a learnable token, re-mask their latents, GCN decoder, scaled cosine error on the masked nodes. The generative half of the static control block (GRACE is the contrastive half), + the same frozen forecast head |
+| `bgrl` | BGRL (Thakoor et al., ICLR'22): **static** bootstrapped latents — two augmented views of one snapshot; an online encoder + predictor regress an EMA target encoder's embedding of the other view, no negatives. The negative-free member of the static control block and the closest static relative of `jepa_ema`: same bootstrap, but the target is the same snapshot re-augmented, not a future one, + the same frozen forecast head |
 | `cldg` / `ddgcl` / `idol` | contrastive SSL encoder + the same frozen forecast head |
 | `maskdgnn` | MaskDGNN (He et al., IJCAI'25): activeness-aware edge masking + masked/next-edge BCE on a GCN with an adaptive frequency layer, + the same frozen forecast head. On a fixed topology the dynamics score is 0, so masking is PageRank-weighted only |
 | `dysubc` | DySubC (Chen et al., TKDD'23): temporal subgraph contrast (BFS subgraphs ranked by recency + degree, time-weighted vs unweighted subgraph encoders, margin losses), + the same frozen forecast head. On a fixed topology every edge shares one time level, so the sampling score reduces to degree |
 | `dyg2vec` | DyG2Vec (Alomrani et al., TMLR'24): window temporal attention encoder (own encoder kind) pre-trained with VICReg on two distorted views of each window, + the same frozen forecast head |
+| `dygwm` | DyG-WM (Li et al., 2026, arXiv 2610.19364): **SSL-only core** of the dynamic graph world model — its context encoder (own encoder kind: shared GCN + node / neighbourhood trajectory GRUs + gated fusion) and path signatures of hand-crafted node / pair descriptors predict an EMA target encoder's **next-bin** node and relation latents (normalised squared distance + var / cov regularisers). The paper's supervised link + ranking losses are not used; + the same frozen forecast head |
+| `sgjepa` | SG-JEPA (Zhang et al., 2026, arXiv 2607.18412): the shared GCN's latents on the window's earlier snapshots drive spiking (PLIF) layers whose spike counts predict, from every prefix length (Matryoshka-style), the GCN's stop-gradient latent of the window's **last** snapshot under a per-node InfoNCE; + the same frozen forecast head |
 | `stdmae` | STD-MAE: S-MAE + T-MAE pre-training, then its own Graph WaveNet forecaster |
 | `step` | STEP (KDD'22): TSFormer masked pre-training (mask 75% of the time patches) over a **long** history window, then a **learned** discrete graph + a Graph WaveNet forecaster on the frozen representations |
 | `stdmae` | STD-MAE (IJCAI'24): masked pre-training decoupled into S-MAE (mask whole nodes) and T-MAE (mask whole time patches) over a **long** history window, then a Graph WaveNet forecaster on the frozen representations |
@@ -110,9 +113,9 @@ python scripts/regression/aggregate_hparam.py \
 #    independent once the shared encoder exists (built once, under flock).
 for S in 42 43 44; do
   # the cheap arms fit in one job
-  DATASET=metr_la SEED=$S ARMS="baselines supervised jepa_enc grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec stdmae" \
-    BASELINE_HP_grace="<step 1b>" BASELINE_HP_graphmae="<step 1b>" BASELINE_HP_cldg="<step 1b>" BASELINE_HP_ddgcl="<step 1b>" \
-    BASELINE_HP_idol="<step 1b>" BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" BASELINE_HP_dyg2vec="<step 1b>" \
+  DATASET=metr_la SEED=$S ARMS="baselines supervised jepa_enc grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa stdmae" \
+    BASELINE_HP_grace="<step 1b>" BASELINE_HP_graphmae="<step 1b>" BASELINE_HP_bgrl="<step 1b>" BASELINE_HP_cldg="<step 1b>" BASELINE_HP_ddgcl="<step 1b>" \
+    BASELINE_HP_idol="<step 1b>" BASELINE_HP_maskdgnn="<step 1b>" BASELINE_HP_dysubc="<step 1b>" BASELINE_HP_dyg2vec="<step 1b>" BASELINE_HP_dygwm="<step 1b>" BASELINE_HP_sgjepa="<step 1b>" \
     BASELINE_HP_supervised="<step 1b>" \
     BASELINE_HP_stdmae="<step 1b>" \
     sbatch scripts/regression/slurm_all_methods.sh

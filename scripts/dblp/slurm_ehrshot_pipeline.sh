@@ -55,8 +55,8 @@ PATIENCE=${PATIENCE:-0}
 
 # Where the raw EHRshot CSV lives. Default is a symlink inside the repo's
 # dataset/ dir; on the cluster create it once with:
-#   ln -s /gpfs/users/falkouskye/data/ehrshot/ehrshot.csv dataset/ehrshot/ehrshot.csv
-#   ln -s /gpfs/users/falkouskye/data/ehrshot/person_id_map.csv dataset/ehrshot/person_id_map.csv
+#   ln -s /path/to/ehrshot/ehrshot.csv dataset/ehrshot/ehrshot.csv
+#   ln -s /path/to/ehrshot/person_id_map.csv dataset/ehrshot/person_id_map.csv
 # Or override per-submit: EHRSHOT_CSV=/path/to/ehrshot.csv sbatch ...
 EHRSHOT_CSV=${EHRSHOT_CSV:-dataset/ehrshot/ehrshot.csv}
 EHRSHOT_SPLITS=${EHRSHOT_SPLITS:-dataset/ehrshot/person_id_map.csv}

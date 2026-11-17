@@ -2,8 +2,14 @@
 
 Companion of ``scripts/classification/slurm_ablation_mooc.sh``. Reads one
 ``state_probe.json`` per (arm, seed), where an arm's results live either in
-``$ROOT/abl_<arm>_s<seed>/`` or -- for the arms that coincide with a main-table
-run -- in that run's own directory (``jepa_ema_cos_s<seed>`` etc.).
+``$ROOT/abl_<arm>_s<seed>/`` (``abl_ema_<arm>_s<seed>/`` for ``--base ema``)
+or -- for the arms that coincide with a main-table run -- in that run's own
+directory (``jepa_ema_cos_s<seed>`` etc.).
+
+``--base`` picks which main-table row is the full model: ``ema_cos`` (cosine
+EMA schedule, default) or ``ema`` (constant EMA). The EMA-schedule row flips
+with it: ``const_ema`` is a removal only under ``ema_cos``, ``cos_ema`` an
+addition only under ``ema``.
 
 Every row is the ``jepa`` column (the predictor's forecast) of the probe. Two
 paired differences are reported next to the raw numbers, both differenced
@@ -34,10 +40,11 @@ from aggregate_classification import (  # noqa: E402
     _get, agg, fmt, latex_cell, paired_gap,
 )
 
-# arm -> (row label, legacy main-table stem or None)
+# arm -> (row label, legacy main-table stem or None); `full` is patched per --base
 ARMS = {
     "full":          ("DyG-JEPA (full: cosine-EMA target)", "jepa_ema_cos"),
     "const_ema":     ("w/o cosine anneal (constant EMA)",    "jepa_ema"),
+    "cos_ema":       ("+ cosine anneal (cosine EMA)",        "jepa_ema_cos"),
     "no_target_net": ("w/o EMA target (shared encoder)",     "jepa_naive"),
     "frozen_enc":    ("w/o encoder training (frozen)",       "jepa_frozen"),
     "no_node_mask":  ("w/o node masking",                    None),
@@ -50,18 +57,23 @@ ARMS = {
     "no_attn_mask":  ("w/o structural attention mask",       None),
     "ctx_mask":      ("+ context-input masking",             None),
 }
+# base -> (full-row label, full-row legacy stem, abl dir prefix, schedule arm it owns)
+BASES = {
+    "ema_cos": ("DyG-JEPA (full: cosine-EMA target)",  "jepa_ema_cos", "abl",     "const_ema"),
+    "ema":     ("DyG-JEPA (full: constant-EMA target)", "jepa_ema",     "abl_ema", "cos_ema"),
+}
 FLOORS = ((LAST_COL, "copy-last (encoder at last history step)"),
           (DEGREE_COL, "degree-trend control"),
           (ORACLE_COL, "oracle encoder (sees the target step)"))
 
 
-def load_arm(root: Path, arm: str, seeds, split: str):
-    """{seed: blob} for one arm, preferring abl_<arm> over the legacy stem."""
+def load_arm(root: Path, arm: str, seeds, split: str, prefix: str = "abl"):
+    """{seed: blob} for one arm, preferring <prefix>_<arm> over the legacy stem."""
     _, legacy = ARMS[arm]
     fname = "state_probe.json" if split == "test" else "state_probe_val.json"
     runs = {}
     for s in seeds:
-        cands = [root / f"abl_{arm}_s{s}" / fname]
+        cands = [root / f"{prefix}_{arm}_s{s}" / fname]
         if legacy:
             cands.append(root / f"{legacy}_s{s}" / fname)
         for c in cands:
@@ -89,6 +101,8 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dataset", default="mooc")
     p.add_argument("--root", default=None, help="default: outputs/cls_<dataset>")
+    p.add_argument("--base", choices=list(BASES), default="ema_cos",
+                   help="which main-table row is the full model (default ema_cos)")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     p.add_argument("--arms", nargs="+", default=list(ARMS),
                    help="arms to include, in table order (unknown names rejected)")
@@ -104,23 +118,29 @@ def main():
     p.add_argument("--json_out", default=None)
     args = p.parse_args()
 
+    full_label, full_stem, prefix, sched_arm = BASES[args.base]
+    ARMS["full"] = (full_label, full_stem)
+    other_sched = {"const_ema": "cos_ema", "cos_ema": "const_ema"}[sched_arm]
     bad = [a for a in args.arms if a not in ARMS]
     if bad:
         raise SystemExit(f"unknown arms {bad}; known: {list(ARMS)}")
+    if other_sched in args.arms:
+        raise SystemExit(f"arm {other_sched!r} is not defined under --base {args.base} "
+                         f"(it would coincide with `full`); use {sched_arm!r}")
     root = Path(args.root or f"outputs/cls_{args.dataset}")
     if not root.exists():
         raise SystemExit(f"{root} does not exist; run slurm_ablation_mooc.sh first")
 
-    full_runs = load_arm(root, "full", args.seeds, args.split)
+    full_runs = load_arm(root, "full", args.seeds, args.split, prefix)
     if not full_runs:
         print("[warn] no `full` runs found: Δ column will be empty")
 
     rows, blob_out = [], {}
     for arm in args.arms:
-        runs = load_arm(root, arm, args.seeds, args.split)
+        runs = load_arm(root, arm, args.seeds, args.split, prefix)
         label = ARMS[arm][0]
         if not runs:
-            print(f"[skip] {arm}: no state_probe under {root}/abl_{arm}_s* "
+            print(f"[skip] {arm}: no state_probe under {root}/{prefix}_{arm}_s* "
                   f"{'or ' + ARMS[arm][1] + '_s*' if ARMS[arm][1] else ''}")
             continue
         missing = [s for s in args.seeds if s not in runs]
@@ -139,7 +159,7 @@ def main():
         raise SystemExit("no ablation results found")
 
     # label-free floors, measured inside the full runs (or the first arm found)
-    ref = full_runs or load_arm(root, rows[0][0], args.seeds, args.split)
+    ref = full_runs or load_arm(root, rows[0][0], args.seeds, args.split, prefix)
     floors = []
     for col, flabel in (FLOORS if args.floors else ()):
         cells = {m: agg([_get(r, col, m) for r in ref.values()]) for m in args.metrics}
@@ -151,7 +171,7 @@ def main():
     prec = args.precision
 
     # --- text ------------------------------------------------------------------
-    print(f"\n{args.dataset} ablation  (seeds {args.seeds}, split={args.split}, HIGHER is better)")
+    print(f"\n{args.dataset} ablation  (base={args.base}, seeds {args.seeds}, split={args.split}, HIGHER is better)")
     hdr = f"  {'arm':<44}"
     for m in args.metrics:
         lbl = METRIC_LABEL.get(m, m)

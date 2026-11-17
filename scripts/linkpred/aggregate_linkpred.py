@@ -49,16 +49,31 @@ METHODS = [
     ("MaskDGNN (end-to-end)", ("maskdgnn", "e2e")),
     ("GRACE (static)",      ("grace", "encoder")),
     ("GraphMAE (static)",   ("graphmae", "encoder")),
+    ("BGRL (static)",       ("bgrl", "encoder")),
     ("CLDG",                ("cldg", "encoder")),
     ("DDGCL",               ("ddgcl", "encoder")),
     ("IDOL",                ("idol", "encoder")),
     ("MaskDGNN",            ("maskdgnn", "encoder")),
     ("DySubC",              ("dysubc", "encoder")),
     ("DyG2Vec",             ("dyg2vec", "encoder")),
+    ("DyG-WM (SSL)",        ("dygwm", "encoder")),
+    ("SG-JEPA",             ("sgjepa", "encoder")),
     ("DyG-JEPA (frozen)",   ("jepa_frozen", None)),
     ("DyG-JEPA (naive)",    ("jepa_naive", None)),
     ("DyG-JEPA (EMA)",      ("jepa_ema", None)),
     ("DyG-JEPA (VICReg)",   ("jepa_vicreg", None)),
+    ("DyG-JEPA (input-space)", ("jepa_input", None)),
+    # JEPA-recipe variants (opt-in flags in train_dyg_jepa.py), same rows and
+    # order as scripts/classification/aggregate_classification.py.
+    ("DyG-JEPA (frozen + ctx-mask)",  ("jepa_ctx", None)),
+    ("DyG-JEPA (frozen + target-LN)", ("jepa_tnorm", None)),
+    ("DyG-JEPA (EMA cosine)",         ("jepa_ema_cos", None)),
+    ("DyG-JEPA (EMA + target-LN)",    ("jepa_ema_tnorm", None)),
+    ("DyG-JEPA (EMA cosine + target-LN)", ("jepa_ema_cos_tnorm", None)),
+    ("DyG-JEPA (SIGReg)",             ("jepa_sigreg", None)),
+    ("DyG-JEPA (LeJEPA)",             ("jepa_lejepa", None)),
+    ("DyG-JEPA (I-JEPA recipe)",      ("jepa_ijepa", None)),
+    ("DyG-JEPA (LeJEPA + recipe)",    ("jepa_lejepa_full", None)),
 ]
 # Four ranking metrics; AUC is computed by link_ranking_metrics and can be
 # added back with --metrics, but the paper table does not carry it.
@@ -69,7 +84,9 @@ METRIC_LABEL = {"Hits@1": "H@1", "Hits@3": "H@3", "Hits@10": "H@10"}
 # Display names for the dataset column of the combined table.
 DATASET_LABEL = {"mooc": "MOOC", "reddit": "Reddit",
                  "wikipedia": "Wikipedia", "dblp": "DBLP",
-                 "reddit_body": "Reddit-Body", "reddit_title": "Reddit-Title"}
+                 "reddit_body": "Reddit-Body", "reddit_title": "Reddit-Title",
+                 "cldg_dblp": "DBLP (CLDG)", "cldg_patent": "Patent",
+                 "tgbn_trade": "UN Trade (TGB)"}
 
 
 def _load(path: Path):
@@ -79,14 +96,29 @@ def _load(path: Path):
         return json.load(f)
 
 
+# Set by --probe_subdir (PROBE_ONLY=1 runs of slurm_all_methods.sh): every
+# analyze_jepa link probe then lives in <run>/<subdir>/analysis.json, and the
+# DyG-JEPA rows are read from there too (source "jepa") so that ALL rows come
+# from the same probe rather than the trainer's own shorter one.
+PROBE_SUBDIR = None
+
+
 def read_run(root: Path, stem: str, source, seed: int, split: str):
     """One run's {"all":..., "new":...} block, from either writer."""
     suffix = "" if split == "test" else "_val"
     d = root / f"{stem}_s{seed}"
-    if source is None:
-        return _load(d / "test_metrics.json")
     if source == "e2e":
         return _load(d / f"link_e2e{suffix}.json")
+    if PROBE_SUBDIR:
+        blob = _load(d / PROBE_SUBDIR / f"analysis{suffix}.json")
+        hit = ((blob or {}).get("link_pred") or {}).get(source or "jepa")
+        if hit:
+            return hit
+        if source is None:
+            # Never mix the two probes silently inside one table.
+            return None
+    if source is None:
+        return _load(d / "test_metrics.json")
     blob = _load(d / f"analysis{suffix}.json")
     if not blob:
         return None
@@ -144,7 +176,6 @@ def combined_latex(per_ds, metrics, subsets, prec, sd_prec=2):
     Bolding is per column WITHIN a dataset, and excludes Random -- a floor is
     not a competitor, and bolding it would read as "every method lost".
     """
-    ncol = len(metrics) * len(subsets)
     print(r"\begin{table*}[t]")
     print(r"\centering")
     print(r"\caption{Link-prediction performance across datasets and methods. The "
@@ -230,6 +261,11 @@ def main():
     p.add_argument("--root_pattern", default="outputs/lp_{ds}",
                    help="Same for --datasets, with {ds} substituted, e.g. "
                         "outputs/cls_{ds}.")
+    p.add_argument("--probe_subdir", default=None,
+                   help="Read the analyze_jepa link probes from "
+                        "<run>/<subdir>/ (PROBE_ONLY=1 writes link_probe). "
+                        "The DyG-JEPA rows then come from that same probe "
+                        "instead of the trainer's test_metrics.json.")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     p.add_argument("--metrics", nargs="+", default=DEFAULT_METRICS)
     p.add_argument("--subset", choices=["all", "new", "both"], default="both")
@@ -247,6 +283,8 @@ def main():
                         "a prefix. e.g. --exclude Random Supervised gives the "
                         "7 learned rows only.")
     args = p.parse_args()
+    global PROBE_SUBDIR
+    PROBE_SUBDIR = args.probe_subdir
 
     subsets_pre = ["all", "new"] if args.subset == "both" else [args.subset]
     if args.datasets:

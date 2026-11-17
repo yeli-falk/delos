@@ -95,7 +95,13 @@ def main():
         f = d / "hp_args.txt"
         if f.exists():
             hp = f.read_text().strip()
-        rows.append({"cell": d.name, "arm": d.name.split("_", 1)[0],
+        # Arm from hp_args.txt ("arm=<name> flags=..."): arm names may contain
+        # "_" (ema_cos, lejepa_full), so splitting the dir name on the first
+        # "_" would file them under the wrong arm.
+        arm = d.name.split("_", 1)[0]
+        if hp.startswith("arm="):
+            arm = hp.split()[0][len("arm="):]
+        rows.append({"cell": d.name, "arm": arm,
                      "score": key, "new": s_new, "all": s_all, "hp": hp})
     if not rows:
         raise SystemExit(f"No finished cells under {root}.")

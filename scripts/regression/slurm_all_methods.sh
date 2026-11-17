@@ -40,6 +40,13 @@
 #                   decoder, scaled cosine error, + the SAME frozen forecast
 #                   head. The generative half of the static control block
 #                   (GRACE is the contrastive half).
+#   bgrl            BGRL (Thakoor et al., ICLR'22): STATIC bootstrapped latents
+#                   -- two augmented views of ONE snapshot, an online encoder +
+#                   predictor regress an EMA target's embedding of the other
+#                   view; no negatives, + the SAME frozen forecast head. The
+#                   closest static relative of jepa_ema: same bootstrap, but
+#                   the target is the same snapshot re-augmented, not a future
+#                   one.
 #   grace           GRACE (Zhu et al., 2020): STATIC graph contrast -- two
 #                   augmented views (edge removal + feature-dimension masking)
 #                   of ONE snapshot, inter- and intra-view negatives, + the
@@ -65,6 +72,18 @@
 #                   distorted views of each window, + the SAME frozen
 #                   forecast head. On a fixed topology every snapshot has
 #                   the same interactions; the time encoding separates them.
+#   dygwm           DyG-WM (Li et al., 2026): SSL-only core of the dynamic
+#                   graph world model -- context encoder (own encoder kind:
+#                   shared GCN + node / neighbourhood trajectory GRUs) + path
+#                   signatures predict an EMA target's NEXT-step node and
+#                   relation latents, + the SAME frozen forecast head. On a
+#                   fixed topology the structural descriptors are constant,
+#                   so it reduces to next-step latent prediction.
+#   sgjepa          SG-JEPA (Zhang et al., 2026): spiking (PLIF) context
+#                   encoder on the shared GCN's latents of the earlier
+#                   snapshots, spike counts predict the LAST snapshot's
+#                   stop-gradient latent (per-node InfoNCE), + the SAME
+#                   frozen forecast head.
 #   step            STEP (KDD'22): TSFormer masked pre-training over a LONG
 #                   history window, then a LEARNED discrete graph + a Graph
 #                   WaveNet forecaster on the frozen representations. Uses no
@@ -122,6 +141,16 @@ case "$DATASET" in
        exit 2 ;;
 esac
 SEED="${SEED:-42}"
+# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
+# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# trainers' default spans the whole --epochs budget, which early stopping
+# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
+# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
+# was the constant arm. 50 epochs is below every observed run length, so the
+# schedule finishes while the predictor still trains. 0 = whole run (legacy).
+# Same value for every arm and method so no row gets its own schedule.
+EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
+ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 NW="${SLURM_CPUS_PER_TASK:-8}"
 PROBE_SPLIT="${PROBE_SPLIT:-test}"
 
@@ -135,11 +164,11 @@ PROBE_SPLIT="${PROBE_SPLIT:-test}"
 #   for A in jepa_frozen jepa_naive jepa_ema jepa_vicreg; do
 #     DATASET=metr_la SEED=42 ARMS=$A sbatch scripts/regression/slurm_all_methods.sh
 #   done
-#   DATASET=metr_la SEED=42 ARMS="baselines supervised jepa_enc grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec" sbatch ...
+#   DATASET=metr_la SEED=42 ARMS="baselines supervised jepa_enc grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa" sbatch ...
 #   DATASET=metr_la SEED=42 ARMS=summary sbatch ...        # once the rest land
 #
 # Stage names: baselines supervised jepa_frozen jepa_naive jepa_ema jepa_vicreg
-#              jepa_enc grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec stdmae step summary
+#              jepa_enc grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa stdmae step summary
 ARMS="${ARMS:-all}"
 want() {
     [[ " $ARMS " == *" all "* || " $ARMS " == *" $1 "* ]]
@@ -180,8 +209,11 @@ BASELINE_HP_idol="${BASELINE_HP_idol:-}"
 BASELINE_HP_maskdgnn="${BASELINE_HP_maskdgnn:-}"
 BASELINE_HP_dysubc="${BASELINE_HP_dysubc:-}"
 BASELINE_HP_dyg2vec="${BASELINE_HP_dyg2vec:-}"
+BASELINE_HP_dygwm="${BASELINE_HP_dygwm:-}"
+BASELINE_HP_sgjepa="${BASELINE_HP_sgjepa:-}"
 BASELINE_HP_grace="${BASELINE_HP_grace:-}"
 BASELINE_HP_graphmae="${BASELINE_HP_graphmae:-}"
+BASELINE_HP_bgrl="${BASELINE_HP_bgrl:-}"
 BASELINE_HP_stdmae="${BASELINE_HP_stdmae:-}"
 # STD-MAE's tuned flags straddle two commands: --mask_ratio belongs to the
 # pre-training, --lr to the forecaster. Split them rather than passing both to
@@ -357,9 +389,23 @@ fi
 # =============================================================================
 CLDG_DIR="$(d cldg)"; DDGCL_DIR="$(d ddgcl)"; IDOL_DIR="$(d idol)"
 MASKDGNN_DIR="$(d maskdgnn)"; DYSUBC_DIR="$(d dysubc)"; GRACE_DIR="$(d grace)"; GRAPHMAE_DIR="$(d graphmae)"
-DYG2VEC_DIR="$(d dyg2vec)"
-mkdir -p "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" "$MASKDGNN_DIR" "$DYSUBC_DIR" "$GRACE_DIR" "$GRAPHMAE_DIR" "$DYG2VEC_DIR"
+BGRL_DIR="$(d bgrl)"
+DYG2VEC_DIR="$(d dyg2vec)"; DYGWM_DIR="$(d dygwm)"; SGJEPA_DIR="$(d sgjepa)"
+mkdir -p "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" "$MASKDGNN_DIR" "$DYSUBC_DIR" "$GRACE_DIR" "$GRAPHMAE_DIR" "$BGRL_DIR" "$DYG2VEC_DIR" "$DYGWM_DIR" "$SGJEPA_DIR"
 
+if want bgrl && [[ ! -f "$BGRL_DIR/encoder.ckpt" ]]; then
+    echo; echo "=== BGRL pretrain -> $BGRL_DIR ==="
+    # STATIC negative-free control: one snapshot per step, reference WikiCS
+    # config (p_e 0.2/0.3, p_f 0.2/0.1, EMA 0.99 -> 1 cosine, AdamW 5e-4 with
+    # warm-up + cosine decay). Val-loss selection like every other arm.
+    srun --export=ALL python -m src.baselines.bgrl.train_bgrl $DATA_ARG $ENC_ARGS \
+        $WINDOW_ARG $EARLY_STOP_ARG \
+        --p_e1 0.2 --p_e2 0.3 --p_f1 0.2 --p_f2 0.1 --ema_momentum 0.99 $ANNEAL_ARG \
+        --steps_per_epoch 20 --val_steps 10 \
+        --epochs "${SSL_EPOCHS:-100}" --lr 5e-4 \
+        --device cuda --seed "$SEED" --out_dir "$BGRL_DIR" $BASELINE_HP_bgrl
+    [[ -f "$BGRL_DIR/encoder.ckpt" ]] || fail "BGRL pretrain failed" 20
+fi
 if want graphmae && [[ ! -f "$GRAPHMAE_DIR/encoder.ckpt" ]]; then
     echo; echo "=== GraphMAE pretrain -> $GRAPHMAE_DIR ==="
     # STATIC generative control: one snapshot per step, reference Cora
@@ -468,8 +514,36 @@ if want dyg2vec && [[ ! -f "$DYG2VEC_DIR/encoder.ckpt" ]]; then
         --device cuda --seed "$SEED" --out_dir "$DYG2VEC_DIR" $BASELINE_HP_dyg2vec
     [[ -f "$DYG2VEC_DIR/encoder.ckpt" ]] || fail "DyG2Vec pretrain failed" 19
 fi
+if want dygwm && [[ ! -f "$DYGWM_DIR/encoder.ckpt" ]]; then
+    echo; echo "=== DyG-WM pretrain -> $DYGWM_DIR ==="
+    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins); --window
+    # defaults to HIST context steps + one target step. SSL-only core (no
+    # link / rank loss). Paper node-task defaults: EMA 0.995, B=32, decay 0.8,
+    # AdamW 1e-3 / wd 1e-5; var / cov keep the paper's ratios to the JEPA terms.
+    srun --export=ALL python -m src.baselines.dygwm.train_dygwm $DATA_ARG $ENC_ARGS \
+        --encoder_kind dygwm $WINDOW_ARG $EARLY_STOP_ARG \
+        --ema_momentum 0.995 --n_ctx 32 --decay 0.8 --cn_bonus 1.0 \
+        --lam_node 1 --lam_rel 1 --lam_var 0.25 --lam_cov 0.025 \
+        --node_batch_size 128 --pair_batch_size 128 \
+        --steps_per_epoch 20 --val_steps 10 \
+        --epochs "${SSL_EPOCHS:-100}" --lr 1e-3 \
+        --device cuda --seed "$SEED" --out_dir "$DYGWM_DIR" $BASELINE_HP_dygwm
+    [[ -f "$DYGWM_DIR/encoder.ckpt" ]] || fail "DyG-WM pretrain failed" 21
+fi
+if want sgjepa && [[ ! -f "$SGJEPA_DIR/encoder.ckpt" ]]; then
+    echo; echo "=== SG-JEPA pretrain -> $SGJEPA_DIR ==="
+    # Shared per-snapshot GCN as the stop-gradient target encoder; spiking
+    # context encoder on its latents. tau 0.1 / AdamW 1e-3 (paper gives neither).
+    srun --export=ALL python -m src.baselines.sgjepa.train_sgjepa $DATA_ARG $ENC_ARGS \
+        $WINDOW_ARG $EARLY_STOP_ARG \
+        --snn_layers 1 --tau 0.1 --init_tau 2.0 --v_th 1.0 \
+        --node_batch_size 128 --steps_per_epoch 20 --val_steps 10 \
+        --epochs "${SSL_EPOCHS:-100}" --lr 1e-3 \
+        --device cuda --seed "$SEED" --out_dir "$SGJEPA_DIR" $BASELINE_HP_sgjepa
+    [[ -f "$SGJEPA_DIR/encoder.ckpt" ]] || fail "SG-JEPA pretrain failed" 22
+fi
 
-for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
+for M in grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa; do
     want "$M" || continue
     D="$(d "$M")"
     [[ -f "$D/encoder.ckpt" ]] || { echo "[skip] $M: no encoder.ckpt"; continue; }

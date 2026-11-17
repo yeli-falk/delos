@@ -8,7 +8,7 @@ Layout it expects:
 
     outputs/cls_<dataset>/
       jepa_{frozen,naive,ema,vicreg}_s<seed>/state_probe.json
-      {grace,graphmae,cldg,ddgcl,idol,maskdgnn,dysubc,dyg2vec}_s<seed>/state_probe.json
+      {grace,graphmae,bgrl,cldg,ddgcl,idol,maskdgnn,dysubc,dyg2vec,dygwm,sgjepa}_s<seed>/state_probe.json
 
 Every state_probe.json carries several COLUMNS, not just one number:
 
@@ -38,10 +38,26 @@ Usage:
         --dataset mooc --seeds 42 43 44 --latex
     python scripts/classification/aggregate_classification.py \
         --dataset mooc --seeds 42 43 44 --metrics auroc_test auprc_test acc_test
+    # binary F1 (positive class, cut fitted on the train rows; needs a re-probe
+    # of runs whose state_probe.json predates the f1_test key)
+    python scripts/classification/aggregate_classification.py \
+        --dataset mooc --seeds 42 43 44 --metrics auroc_test auprc_test f1_test --latex
     # synthetic_dyn multiclass state: accuracy overall and on the switch rows
     python scripts/classification/aggregate_classification.py \
         --dataset synthetic_dyn --seeds 42 43 44 \
         --metrics acc_test subset_switch.acc_test subset_stay.acc_test
+    # tgbn_trade: per-step ranking of export shares, NDCG@10 (persistence floor
+    # printed under shared controls)
+    python scripts/classification/aggregate_classification.py \
+        --dataset tgbn_trade --seeds 42 43 44 --metrics ndcg10_test --latex
+    # cldg_dblp / cldg_patent: STATIC node classes on held-out nodes
+    python scripts/classification/aggregate_classification.py \
+        --dataset cldg_dblp --seeds 42 43 44 --metrics acc_test macro_f1_test --latex
+    # CHASE: chase_dblp_s / chase_gossipcop are binary (AUROC / AUPRC as MOOC);
+    # chase_music is a 5-class dynamic state, read like synthetic_dyn
+    python scripts/classification/aggregate_classification.py \
+        --dataset chase_music --seeds 42 43 44 \
+        --metrics acc_test macro_f1_test subset_switch.acc_test --latex
 """
 from __future__ import annotations
 
@@ -57,12 +73,15 @@ from pathlib import Path
 METHODS = [
     ("GRACE (static)",      "grace"),
     ("GraphMAE (static)",   "graphmae"),
+    ("BGRL (static)",       "bgrl"),
     ("CLDG",                "cldg"),
     ("DDGCL",               "ddgcl"),
     ("IDOL",                "idol"),
     ("MaskDGNN",            "maskdgnn"),
     ("DySubC",              "dysubc"),
     ("DyG2Vec",             "dyg2vec"),
+    ("DyG-WM (SSL)",        "dygwm"),
+    ("SG-JEPA",             "sgjepa"),
     ("DyG-JEPA (frozen)",   "jepa_frozen"),
     ("DyG-JEPA (naive)",    "jepa_naive"),
     ("DyG-JEPA (EMA)",      "jepa_ema"),
@@ -72,6 +91,8 @@ METHODS = [
     ("DyG-JEPA (frozen + ctx-mask)",  "jepa_ctx"),
     ("DyG-JEPA (frozen + target-LN)", "jepa_tnorm"),
     ("DyG-JEPA (EMA cosine)",         "jepa_ema_cos"),
+    ("DyG-JEPA (EMA + target-LN)",    "jepa_ema_tnorm"),
+    ("DyG-JEPA (EMA cosine + target-LN)", "jepa_ema_cos_tnorm"),
     ("DyG-JEPA (SIGReg)",             "jepa_sigreg"),
     ("DyG-JEPA (LeJEPA)",             "jepa_lejepa"),
     ("DyG-JEPA (I-JEPA recipe)",      "jepa_ijepa"),
@@ -87,6 +108,9 @@ PERSIST_COL = "label_persistence"     # multiclass state only: copy the label
 
 METRIC_LABEL = {"auroc_test": "AUROC", "auprc_test": "AUPRC",
                 "acc_test": "Acc", "macro_f1_test": "macro-F1",
+                # binary: positive-class F1 at the cut fitted on the TRAIN rows
+                "f1_test": "F1", "precision_test": "P", "recall_test": "R",
+                "subset_onset.f1_test": "F1(onset)",
                 "n_pos_test": "n_pos",
                 # subset metrics (multiclass state): "<subset>.<metric>"
                 "subset_switch.acc_test": "Acc(switch)",
@@ -94,7 +118,9 @@ METRIC_LABEL = {"auroc_test": "AUROC", "auprc_test": "AUPRC",
                 "subset_switch.macro_f1_test": "F1(switch)",
                 "change_f1": "changeF1", "change_precision": "changeP",
                 "change_recall": "changeR",
-                "latent_r2_test": "R2(z)", "delta_r2_test": "R2(dz)"}
+                "latent_r2_test": "R2(z)", "delta_r2_test": "R2(dz)",
+                # ranking (tgbn_trade): TGB's NDCG@10
+                "ndcg10_test": "NDCG@10"}
 
 
 def _load(path: Path):
@@ -175,15 +201,37 @@ def latex_cell(cell, prec, best=False, signed=False):
     return f"$\\mathbf{{{body}}}$" if best else f"${body}$"
 
 
+def default_metrics(dataset: str):
+    """The probe writes different columns per task, so the default metric list
+    must follow the dataset (mirrors AGG_METRICS in slurm_all_methods.sh).
+    A binary default on a multiclass root reports every cell as '--'."""
+    if dataset == "chase_music":
+        return ["acc_test", "macro_f1_test", "subset_switch.acc_test"]
+    if dataset == "synthetic_dyn" or dataset.startswith("cldg_"):
+        return ["acc_test", "macro_f1_test"]
+    if dataset.startswith("tgbn_"):
+        return ["ndcg10_test"]
+    return ["auroc_test", "auprc_test"]
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dataset", required=True,
-                   choices=["mooc", "reddit", "wikipedia", "synthetic_dyn"])
+                   choices=["mooc", "reddit", "wikipedia", "synthetic_dyn",
+                            "cldg_dblp", "cldg_patent", "tgbn_trade",
+                            "tgbn_genre", "tgbn_reddit", "tgbn_token",
+                            "bts_flights", "nyc_taxi",
+                            "chase_dblp_s", "chase_gossipcop", "chase_music"])
     p.add_argument("--root", default=None,
                    help="Results root (default: outputs/cls_<dataset>).")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
-    p.add_argument("--metrics", nargs="+", default=["auroc_test", "auprc_test"])
+    p.add_argument("--metrics", nargs="+", default=None,
+                   help="Default follows the dataset's probe task (same choice as "
+                        "slurm_all_methods.sh): binary -> auroc_test auprc_test; "
+                        "multiclass (synthetic_dyn, cldg_*) -> acc_test macro_f1_test; "
+                        "chase_music -> acc_test macro_f1_test subset_switch.acc_test; "
+                        "tgbn_* -> ndcg10_test.")
     p.add_argument("--split", choices=["test", "val"], default="test")
     p.add_argument("--precision", type=int, default=3)
     p.add_argument("--latex", action="store_true")
@@ -193,9 +241,27 @@ def main():
     p.add_argument("--probe_stem", default="state_probe",
                    help="Result file stem per arm: state_probe (default) or switch_probe "
                         "(binary switch-event probe derived from a state checkpoint).")
+    p.add_argument("--jepa_tag", nargs="*", default=[],
+                   help="Also report the tagged predictor variants written with JEPA_TAG, "
+                        "e.g. --jepa_tag vel adds a 'DyG-JEPA (<arm>) +vel' row under every "
+                        "DyG-JEPA row that has a jepa_<arm>_vel_s<seed> directory.")
     args = p.parse_args()
+    if args.metrics is None:
+        args.metrics = default_metrics(args.dataset)
+        print(f"[metrics] {args.dataset}: {' '.join(args.metrics)} "
+              f"(override with --metrics)")
     global PROBE_STEM
     PROBE_STEM = args.probe_stem
+    if args.jepa_tag:
+        # Insert the tagged variants right after their base arm so the table
+        # reads as pairs; a variant row is skipped later if it has no runs.
+        expanded = []
+        for label, stem in METHODS:
+            expanded.append((label, stem))
+            if stem.startswith("jepa_"):
+                for tag in args.jepa_tag:
+                    expanded.append((f"{label} +{tag}", f"{stem}_{tag}"))
+        METHODS[:] = expanded
 
     root = Path(args.root or f"outputs/cls_{args.dataset}")
     if not root.exists():
@@ -239,6 +305,7 @@ def main():
     if ref_runs:
         print(f"\nshared controls (from the DyG-JEPA runs, {len(ref_runs)} seeds)")
         for cname, clabel in ((PERSIST_COL, "label_persistence (floor)"),
+                              ("label_moving_average", "label_moving_avg (floor)"),
                               (ORACLE_COL, "encoder_oracle (upper bound)"),
                               (LAST_COL, "encoder_last (copy-last)"),
                               (DEGREE_COL, "degree_history (trend control)")):
@@ -269,6 +336,46 @@ def main():
         print(line + f"  n={n}")
     print("\n  gap = forecast - copy-last, differenced WITHIN each seed.")
     print("  Baselines are encoder-only, so copy-last IS their prediction (no gap).")
+
+    # --- multi-horizon guard ---------------------------------------------------
+    # With num_preds > 1 the rows above come from ONE probe pooled over all
+    # horizons: copy-last is handed the same latent for every horizon and
+    # cannot tell which one (or, on sub-daily bins, which time of day) it is
+    # answering, while the forecast latent is horizon-specific. The pooled gap
+    # is therefore inflated by construction (bts_flights at 6 h: pooled +0.093,
+    # per-horizon ~0). The per-horizon heads (subset_h<k>, fitted separately
+    # for every column) are the comparison to read.
+    ks = sorted({int(k[len("subset_h"):]) for _, _, _, _, _, runs in rows for r in runs
+                 for k in (r.get(LAST_COL) or {}) if k.startswith("subset_h")
+                 and k[len("subset_h"):].isdigit()})
+    if len(ks) >= 2:
+        m0 = args.metrics[0]
+        print(f"\n[WARN] multi-horizon run ({len(ks)} horizons): the pooled rows above "
+              f"handicap copy-last (one head for every horizon). Read the per-horizon "
+              f"table instead -- each column has its own head per horizon.")
+        print(f"\n  per-horizon {METRIC_LABEL.get(m0, m0)}  (value, then paired gap forecast - copy-last)")
+        hdr = f"  {'method':<22}" + "".join(f"{'h' + str(k):>26}" for k in ks)
+        print(hdr); print("  " + "-" * (len(hdr) - 2))
+        for label, _, _, has_fcast, n, runs in rows:
+            col = FORECAST_COL if has_fcast else LAST_COL
+            line = f"  {label:<22}"
+            for k in ks:
+                mk = f"subset_h{k}.{m0}"
+                v = agg([_get(r, col, mk) for r in runs])
+                cell = "--" if v is None else f"{v[0]:.{args.precision}f}"
+                if has_fcast:
+                    g = paired_gap(runs, mk)
+                    if g is not None:
+                        cell += f" ({g[0]:+.{args.precision}f}±{g[1]:.{args.precision}f})"
+                line += f"{cell:>26}"
+            print(line + f"  n={n}")
+        ref = next((r for _, _, _, hf, _, r in rows if hf), None)
+        if ref:
+            line = f"  {'copy-last (reference)':<22}"
+            for k in ks:
+                v = agg([_get(r, LAST_COL, f"subset_h{k}.{m0}") for r in ref])
+                line += f"{('--' if v is None else f'{v[0]:.{args.precision}f}'):>26}"
+            print(line)
 
     # --- LaTeX ---------------------------------------------------------------
     if args.latex:

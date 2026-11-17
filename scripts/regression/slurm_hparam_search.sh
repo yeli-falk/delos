@@ -13,8 +13,9 @@
 # aggregate_hparam.py ranks them.
 #
 # PREREQUISITE on METR-LA: run scripts/regression/slurm_lr_probe.sh first and
-# set LRS below from its output. At lr=5e-4 -- the LOWEST value this grid
-# shipped with -- the predictor's TRAIN loss rises from epoch 3 with a frozen
+# pass LRS="..." from its output (it replaces the shared default grid for EVERY
+# arm, so use the same override for all stages). At lr=5e-4 the predictor's
+# TRAIN loss rises from epoch 3 with a frozen
 # encoder (static targets), i.e. the optimiser diverges. Searching a grid whose
 # every cell diverges ranks "which LR diverges least" and poisons everything
 # downstream.
@@ -66,7 +67,7 @@
 #   python scripts/regression/aggregate_hparam.py --root outputs/reg_hparam/metr_la_variants --by_arm
 #
 #   DATASET=metr_la STAGE=baselines bash scripts/regression/slurm_hparam_search.sh --list
-#   DATASET=metr_la STAGE=baselines sbatch --array=0-32%8 scripts/regression/slurm_hparam_search.sh
+#   DATASET=metr_la STAGE=baselines sbatch --array=0-89%8 scripts/regression/slurm_hparam_search.sh
 #   python scripts/regression/aggregate_hparam.py --root outputs/reg_hparam/metr_la_baselines \
 #       --by_arm --emit_flags        # -> BASELINE_HP_cldg="..." etc.
 
@@ -75,9 +76,28 @@ set -uo pipefail
 DATASET="${DATASET:-england_covid}"
 STAGE="${STAGE:-predictor}"
 SEED="${SEED:-42}"
+# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
+# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# trainers' default spans the whole --epochs budget, which early stopping
+# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
+# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
+# was the constant arm. 50 epochs is below every observed run length, so the
+# schedule finishes while the predictor still trains. 0 = whole run (legacy).
+# Same value for every arm and method so no row gets its own schedule.
+EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
+ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 # One seed for the search: the ranking only needs to be consistent, and seeds
 # are far better spent on the 3-seed final table than on the sweep.
 BASE_HP="${BASE_HP:-}"
+# ONE learning-rate grid shared by every arm that sweeps --lr: all baselines and
+# DyG-JEPA's own predictor / ema_pred stages. Per-method grids centred on each
+# paper's default put several winners on a grid EDGE (CLDG lowest, DDGCL / IDOL
+# highest on MOOC) and made "who was tuned harder" depend on the method. A decade
+# ladder spans every reference default (1e-4 DyG2Vec ... 5e-3 STEP / STD-MAE).
+# Cell dirs are named by flag values, not index, so cells already on disk at
+# 1e-3 / 1e-2 are reused. Override: LRS="3e-5 1e-4 3e-4" (e.g. METR-LA, from
+# slurm_lr_probe.sh) -- but then use the SAME override for every stage.
+LRS="${LRS:-1e-4 1e-3 1e-2}"
 
 # ---------------------------------------------------------------------------
 # Grid definition. GRID entries are "arm|extra flags".
@@ -85,7 +105,7 @@ BASE_HP="${BASE_HP:-}"
 build_grid() {
     GRID=()
     if [[ "$STAGE" == "predictor" ]]; then
-        for lr in 5e-4 1e-3 2e-3; do
+        for lr in $LRS; do
             for nm in 20 30 50; do
                 for depth in 4 6; do
                     for cw in 0 2.0; do
@@ -113,57 +133,70 @@ build_grid() {
         # while the baselines sit at transferred defaults inflates our margin
         # for a reason unrelated to the method.
         # These are cheap: no T*N-token predictor, so cells are minutes.
-        for lr in 3e-4 1e-3 3e-3; do
+        for lr in $LRS; do
             for elr in default 1e-4; do
                 EXTRA=""; [[ "$elr" != "default" ]] && EXTRA="--encoder_lr $elr"
                 GRID+=("supervised|--lr $lr $EXTRA")
             done
         done
-        for lr in 1e-3 4e-3 1e-2; do
+        for lr in $LRS; do
             for v in 2 4; do GRID+=("cldg|--lr $lr --views $v"); done
         done
-        for lr in 1e-3 4e-3 1e-2; do
+        for lr in $LRS; do
             for g in 2 4 8; do GRID+=("ddgcl|--lr $lr --max_gap $g"); done
         done
-        for lr in 3e-4 1e-3 3e-3; do
+        for lr in $LRS; do
             for pl in 1 2; do GRID+=("idol|--lr $lr --proj_layers $pl"); done
         done
         # MaskDGNN: LR x mask ratio (the paper's most sensitive knob; best at
         # 10-30%, collapses past 40%).
-        for lr in 1e-3 4e-3 1e-2; do
+        for lr in $LRS; do
             for mr in 0.1 0.2 0.4; do GRID+=("maskdgnn|--lr $lr --mask_ratio $mr"); done
         done
         # DySubC: LR x alpha (the sampling trade-off between recency and
         # degree; the paper's most sensitive knob after subgraph size).
-        for lr in 1e-3 4e-3 1e-2; do
+        for lr in $LRS; do
             for a in 1 5 10; do GRID+=("dysubc|--lr $lr --alpha $a"); done
         done
         # DyG2Vec: LR x distortion strength (p_d, the only knob the paper
         # validates; 0.3 is its choice). Both dropouts move together.
-        for lr in 1e-4 1e-3 4e-3; do
+        for lr in $LRS; do
             for pd in 0.15 0.3; do GRID+=("dyg2vec|--lr $lr --p_edge $pd --p_struct $pd"); done
         done
+        # DyG-WM: LR x EMA momentum (the target encoder's own stability knob;
+        # the paper uses 0.995 for node tasks and 0.999 for links).
+        for lr in $LRS; do
+            for m in 0.995 0.999; do GRID+=("dygwm|--lr $lr --ema_momentum $m"); done
+        done
+        # SG-JEPA: LR x InfoNCE temperature (the paper names no temperature).
+        for lr in $LRS; do
+            for t in 0.1 0.5; do GRID+=("sgjepa|--lr $lr --tau $t"); done
+        done
         # GRACE (static control): LR x tau. The temperature is the paper's
-        # load-bearing knob after the drop rates, which stay at the Cora
-        # defaults; lr spans the reference 5e-4 up to the temporal arms' 4e-3.
-        for lr in 5e-4 1e-3 4e-3; do
+        # load-bearing knob after the drop rates, which stay at the Cora defaults.
+        for lr in $LRS; do
             for t in 0.2 0.4 0.7; do GRID+=("grace|--lr $lr --tau $t"); done
         done
         # GraphMAE (static control): LR x mask rate, the paper's headline knob
         # (robust 0.3-0.75 on citation graphs; lower on feature-poor inputs).
-        for lr in 5e-4 1e-3 4e-3; do
+        for lr in $LRS; do
             for mr in 0.3 0.5 0.75; do GRID+=("graphmae|--lr $lr --mask_rate $mr"); done
+        done
+        # BGRL (static control): LR x initial EMA momentum, the bootstrap's own
+        # stability knob.
+        for lr in $LRS; do
+            for m in 0.99 0.999; do GRID+=("bgrl|--lr $lr --ema_momentum $m"); done
         done
         # STEP: forecaster LR x --dgl_k, the discrete-graph-learning sparsity
         # that names the method. Both are forecaster-side, so all 9 cells share
         # ONE TSFormer pre-training.
-        for lr in 1e-3 5e-3 1e-2; do
+        for lr in $LRS; do
             for k in 5 10 20; do GRID+=("step|--lr $lr --dgl_k $k"); done
         done
         # STD-MAE: forecaster LR x pre-training mask ratio. The two MAEs are
         # pre-trained ONCE per mask_ratio and shared across the LR cells, so
         # this costs 2 pre-trains, not 6.
-        for lr in 1e-3 5e-3 1e-2; do
+        for lr in $LRS; do
             for mr in 0.25 0.5; do GRID+=("stdmae|--lr $lr --mask_ratio $mr"); done
         done
     else
@@ -248,6 +281,12 @@ echo "[cell $IDX] flags='$VFLAGS $HP_ARGS' base='$BASE_HP' -> $OUT"
 # Each baseline gets the SAME probe, metrics and val split as every other arm,
 # so aggregate_hparam.py ranks them on the identical basis it ranks DyG-JEPA.
 if [[ "$STAGE" == "baselines" ]]; then
+    # A cell is complete once its val metrics exist (test_metrics.json is the last
+    # thing a cell writes), so resubmitting the array -- after a walltime kill or
+    # a grid change -- re-runs only the missing cells. Delete the dir to force one.
+    if [[ -f "$OUT/test_metrics.json" ]]; then
+        echo "[skip] cell $IDX ($ARM) complete: $OUT/test_metrics.json exists"; exit 0
+    fi
     PROBE_ARGS="$DATA_ARG $WINDOW_ARG --probe_epochs ${PROBE_EPOCHS:-10} \
         --probe_hidden 64 --persist_residual --probe_split val \
         --batch_size $BATCH --num_workers $NW --seed $SEED --device cuda \
@@ -325,6 +364,41 @@ if [[ "$STAGE" == "baselines" ]]; then
         srun --export=ALL python scripts/regression/probe_encoder_regression.py \
             --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
             --out_dir "$OUT" || { echo "[FATAL] DyG2Vec probe failed" >&2; exit 29; }
+        ;;
+      dygwm)
+        # Not $SSL_COMMON's --node_batch_size default: both this trainer and
+        # SG-JEPA define it, so $SSL_COMMON is fine here.
+        srun --export=ALL python -m src.baselines.dygwm.train_dygwm $SSL_COMMON \
+            --encoder_kind dygwm --n_ctx 32 --decay 0.8 --cn_bonus 1.0 \
+            --lam_node 1 --lam_rel 1 --lam_var 0.25 --lam_cov 0.025 \
+            --pair_batch_size 128 --steps_per_epoch 20 --val_steps 10 $HP_ARGS \
+            || { echo "[FATAL] DyG-WM cell failed" >&2; exit 31; }
+        srun --export=ALL python scripts/regression/probe_encoder_regression.py \
+            --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
+            --out_dir "$OUT" || { echo "[FATAL] DyG-WM probe failed" >&2; exit 31; }
+        ;;
+      sgjepa)
+        srun --export=ALL python -m src.baselines.sgjepa.train_sgjepa $SSL_COMMON \
+            --snn_layers 1 --init_tau 2.0 --v_th 1.0 \
+            --steps_per_epoch 20 --val_steps 10 $HP_ARGS \
+            || { echo "[FATAL] SG-JEPA cell failed" >&2; exit 32; }
+        srun --export=ALL python scripts/regression/probe_encoder_regression.py \
+            --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
+            --out_dir "$OUT" || { echo "[FATAL] SG-JEPA probe failed" >&2; exit 32; }
+        ;;
+      bgrl)
+        # Not $SSL_COMMON: that carries --node_batch_size, which this trainer
+        # (per-node loss over every active node, no negatives) does not define.
+        srun --export=ALL python -m src.baselines.bgrl.train_bgrl $DATA_ARG \
+            $ENC_ARGS $WINDOW_ARG $EARLY_STOP_ARG $STRIDE_ARG \
+            --p_e1 0.2 --p_e2 0.3 --p_f1 0.2 --p_f2 0.1 \
+            --steps_per_epoch 20 --val_steps 10 \
+            --epochs "${SSL_EPOCHS:-100}" --device cuda --seed "$SEED" \
+            --out_dir "$OUT" $ANNEAL_ARG $HP_ARGS \
+            || { echo "[FATAL] BGRL cell failed" >&2; exit 30; }
+        srun --export=ALL python scripts/regression/probe_encoder_regression.py \
+            --encoder_ckpt "$OUT/encoder.ckpt" $PROBE_ARGS $STRIDE_ARG \
+            --out_dir "$OUT" || { echo "[FATAL] BGRL probe failed" >&2; exit 30; }
         ;;
       graphmae)
         # Not $SSL_COMMON: that carries --node_batch_size, which this trainer

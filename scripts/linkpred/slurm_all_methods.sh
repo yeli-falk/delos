@@ -26,6 +26,15 @@
 #                         half of the static control block (GRACE is the
 #                         contrastive half); probed on FROZEN latents at the
 #                         last history bin like the rows below.
+#   bgrl                  BGRL (Thakoor et al., ICLR'22): STATIC bootstrapped
+#                         latents -- two augmented views of ONE snapshot, an
+#                         online encoder + predictor regress an EMA target
+#                         encoder's embedding of the other view; no negatives.
+#                         The negative-free member of the static control
+#                         block and the closest static relative of jepa_ema:
+#                         same bootstrap, but the target is the SAME snapshot
+#                         re-augmented, not a future one. Probed on FROZEN
+#                         latents at the last history bin.
 #   grace                 GRACE (Zhu et al., 2020): STATIC graph contrast --
 #                         two augmented views (edge removal + feature-
 #                         dimension masking) of ONE snapshot, inter- and
@@ -54,6 +63,24 @@
 #                         distorted views (edge dropout + structural-feature
 #                         masking) of each history window. Encoder probed on
 #                         FROZEN latents -- the paper's own SSL-init protocol.
+#   dygwm                 DyG-WM (Li et al., 2026): SSL-only core of the
+#                         dynamic graph world model -- its context encoder
+#                         (own encoder kind: shared GCN + node / neighbourhood
+#                         trajectory GRUs + gated fusion) plus path signatures
+#                         of hand-crafted node / pair descriptors predict an
+#                         EMA target encoder's NEXT-bin node and relation
+#                         latents (normalised squared distance, var / cov
+#                         regularisers). The paper's supervised link + rank
+#                         losses are NOT used. Encoder probed on FROZEN latents
+#                         -- the paper's own node-classification protocol
+#                         (its link-prediction rows are supervised, not this).
+#   sgjepa                SG-JEPA (Zhang et al., 2026): the shared GCN's latents
+#                         on the window's earlier snapshots drive spiking
+#                         (PLIF) layers whose spike counts predict, from every
+#                         prefix length, the GCN's stop-gradient latent of the
+#                         window's LAST snapshot (per-node InfoNCE, other
+#                         target nodes as negatives). Encoder probed on FROZEN
+#                         latents like the rows above.
 #   jepa_frozen           SSL encoder frozen, JEPA predictor on top. Targets are
 #                         fixed, so latent collapse is impossible by construction.
 #   jepa_naive            --train_encoder alone: targets come from the SAME
@@ -62,6 +89,14 @@
 #                         helped".
 #   jepa_ema              --train_encoder --ema_target (I-JEPA).
 #   jepa_vicreg           --train_encoder + VICReg variance/covariance.
+#   jepa_input            predictor regresses input space, not latents.
+#   JEPA-recipe arms (same flags as scripts/classification/, opt-in in
+#   train_dyg_jepa.py): jepa_ctx (frozen + context-encoder masking), jepa_tnorm
+#   (frozen + target LayerNorm), jepa_ema_cos (EMA, cosine momentum),
+#   jepa_sigreg (stop-grad target + SIGReg), jepa_lejepa (no stop-grad +
+#   SIGReg), jepa_ijepa (ema_cos + ctx + tnorm), jepa_lejepa_full (lejepa +
+#   ctx + tnorm). ARMS=all runs the legacy five + baselines; ARMS=all_jepa
+#   adds the recipe arms; ARMS=new_jepa runs only those.
 #   random                U(0,1) edge scores, no training. Free: analyze_jepa
 #                         computes it as a link source.
 #   supervised            encoder + link head trained end-to-end from random
@@ -97,6 +132,24 @@
 #   python scripts/linkpred/aggregate_linkpred.py --dataset mooc \
 #       --root outputs/cls_mooc --seeds 42 43 44 --latex
 #
+# PROBE_ONLY=1 makes "no retraining" a guarantee and puts every row on the
+# SAME probe:
+#
+#   DATASET=mooc SEED=42 ROOT=outputs/cls_mooc EDGE_FEATS=1 PROBE_ONLY=1 \
+#     ARMS="grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa jepa_ema" \
+#     sbatch scripts/linkpred/slurm_all_methods.sh
+#   python scripts/linkpred/aggregate_linkpred.py --dataset mooc \
+#       --root outputs/cls_mooc --probe_subdir link_probe --seeds 42 43 44
+#
+#   * nothing is ever trained: an arm whose checkpoint is missing is skipped
+#     with a [warn], never pretrained into someone else's tree;
+#   * the JEPA arms are scored from best.ckpt by analyze_jepa
+#     (--link_sources jepa) with the SAME 30-epoch link probe the baselines
+#     get, instead of the trainer's own 3-epoch probe in test_metrics.json;
+#   * every probe writes to <run>/link_probe/, because analyze_jepa dumps its
+#     own args.json and would otherwise overwrite the run's training record.
+#
+# Without PROBE_ONLY the same ROOT still works, as follows.
 # Nothing is retrained: the JEPA arms are skipped as complete (their
 # classification run already wrote the link test_metrics.json, because
 # train_dyg_jepa's downstream task defaults to link_pred), every baseline's
@@ -120,22 +173,54 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
 DATASET="${DATASET:-mooc}"
 case "$DATASET" in
-    mooc|reddit|wikipedia|reddit_body|dblp) ;;
+    mooc|reddit|wikipedia|reddit_body|dblp|cldg_dblp|cldg_patent|patent|tgbn_trade|chase_dblp_s|chase_gossipcop|chase_music) ;;
     *) echo "[FATAL] DATASET must be one of: mooc reddit wikipedia reddit_body " \
-            "dblp -- got '$DATASET'" >&2
+            "dblp cldg_dblp cldg_patent tgbn_trade chase_{dblp_s,gossipcop,music} -- got '$DATASET'" >&2
        exit 2 ;;
 esac
 SEED="${SEED:-42}"
+# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
+# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# trainers' default spans the whole --epochs budget, which early stopping
+# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
+# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
+# was the constant arm. 50 epochs is below every observed run length, so the
+# schedule finishes while the predictor still trains. 0 = whole run (legacy).
+# Same value for every arm and method so no row gets its own schedule.
+EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
+ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 NW="${SLURM_CPUS_PER_TASK:-8}"
 PROBE_SPLIT="${PROBE_SPLIT:-test}"
 
-# Stage names: grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec jepa_frozen jepa_naive jepa_ema jepa_vicreg
-#              controls summary
+# Stage names: grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa controls summary,
+# plus jepa_<arm> for every arm in JEPA_ARMS below. ARMS=all runs the legacy
+# five JEPA arms + baselines (the old table); ARMS=all_jepa adds the
+# JEPA-recipe arms too; ARMS=new_jepa runs only those. Or list stages
+# explicitly: ARMS="jepa_ijepa jepa_lejepa".
 # `controls` produces the random + supervised link sources in one pass.
+JEPA_ARMS_OLD="frozen naive ema vicreg input"
+JEPA_ARMS_NEW="ctx tnorm ema_cos sigreg lejepa ijepa lejepa_full ema_tnorm ema_cos_tnorm"
+JEPA_ARMS="$JEPA_ARMS_OLD $JEPA_ARMS_NEW"
 ARMS="${ARMS:-all}"
-want() { [[ " $ARMS " == *" all "* || " $ARMS " == *" $1 "* ]]; }
+# PROBE_ONLY=1: score existing checkpoints, never train (see header).
+PROBE_ONLY="${PROBE_ONLY:-0}"
+# Where the analyze_jepa link probes land inside a run dir.
+lp_dir() { [[ "$PROBE_ONLY" == "1" ]] && echo "$1/link_probe" || echo "$1"; }
+want() {
+    [[ " $ARMS " == *" all "* || " $ARMS " == *" $1 "* ]] && return 0
+    case "$1" in
+        jepa_*)
+            local a="${1#jepa_}"
+            [[ " $ARMS " == *" all_jepa "* ]] && return 0
+            [[ " $ARMS " == *" new_jepa "* && " $JEPA_ARMS_NEW " == *" $a "* ]] && return 0
+            ;;
+    esac
+    return 1
+}
 need_encoder() {
-    want jepa_frozen || want jepa_naive || want jepa_ema || want jepa_vicreg
+    local a
+    for a in $JEPA_ARMS; do want "jepa_$a" && return 0; done
+    return 1
 }
 
 # Each source keeps its raw file somewhere different; check the right one and
@@ -151,6 +236,18 @@ case "$DATASET" in
     dblp)
         RAW="dataset/dblp/edges.csv"
         FETCH="see scripts/dblp/preprocess_dblp_xml.py (or fetch_preprocessed_dblp.sh)" ;;
+    cldg_dblp|cldg_patent|patent)
+        # CLDG-release graphs (labelled; here used for links only). Snapshot
+        # grid / top-K / features come from _dataset_config.sh (CLDG_*).
+        N="${DATASET#cldg_}"
+        RAW="dataset/cldg/${N}/${N}.txt"
+        FETCH="bash scripts/dblp/extract_cldg_datasets.sh" ;;
+    tgbn_trade)
+        RAW="dataset/tgb/tgbn-trade/tgbn-trade_node_labels.csv"
+        FETCH="bash scripts/dblp/fetch_tgbn_trade.sh" ;;
+    chase_dblp_s)   RAW="dataset/chase/DBLP-S.pkl";    FETCH="bash scripts/dblp/fetch_chase.sh" ;;
+    chase_gossipcop) RAW="dataset/chase/GossipCop.pkl"; FETCH="bash scripts/dblp/fetch_chase.sh" ;;
+    chase_music)    RAW="dataset/chase/Music.pkl";     FETCH="bash scripts/dblp/fetch_chase.sh" ;;
 esac
 if [[ ! -f "$RAW" ]]; then
     echo "[FATAL] $RAW missing. From the LOGIN node:" >&2
@@ -173,8 +270,11 @@ BASELINE_HP_idol="${BASELINE_HP_idol:-}"
 BASELINE_HP_maskdgnn="${BASELINE_HP_maskdgnn:-}"
 BASELINE_HP_dysubc="${BASELINE_HP_dysubc:-}"
 BASELINE_HP_dyg2vec="${BASELINE_HP_dyg2vec:-}"
+BASELINE_HP_dygwm="${BASELINE_HP_dygwm:-}"
+BASELINE_HP_sgjepa="${BASELINE_HP_sgjepa:-}"
 BASELINE_HP_grace="${BASELINE_HP_grace:-}"
 BASELINE_HP_graphmae="${BASELINE_HP_graphmae:-}"
+BASELINE_HP_bgrl="${BASELINE_HP_bgrl:-}"
 
 RESIDUAL="${RESIDUAL:-1}"
 CHANGE_W="${CHANGE_W:-0}"
@@ -197,9 +297,12 @@ JEPA_COMMON="$DATA_ARG $WINDOW_ARG $EARLY_STOP_ARG $ENCODER_ARG \
 
 # analyze_jepa scores a frozen encoder with the SAME link probe the JEPA arms
 # get, so the baseline columns are attributable to the representation.
+# LINK_BATCH: probe window batch; B x HIST float (N, N) adjacencies live on
+# the GPU, so reddit (N=10984) needs LINK_BATCH=1 on an 11 GB card. Keep it
+# equal to the value used in slurm_hparam_search.sh.
 LINK_COMMON="$DATA_ARG $WINDOW_ARG --skip_diagnostic --probe_split $PROBE_SPLIT \
     --link_epochs ${LINK_EPOCHS:-30} --link_lr ${LINK_LR:-1e-3} \
-    --link_probe_hidden 64 --seed $SEED --device cuda"
+    --link_probe_hidden 64 --batch_size ${LINK_BATCH:-4} --seed $SEED --device cuda"
 
 echo "[config] DATASET=$DATASET SEED=$SEED BATCH=$BATCH"
 echo "[config] ARMS='$ARMS' JEPA_BASE='$JEPA_BASE' BASE_HP='$BASE_HP' probe_split=$PROBE_SPLIT"
@@ -215,7 +318,9 @@ mkdir -p "$ENC_DIR"
 if need_encoder || want controls; then
     exec 9>"$ENC_DIR/.pretrain.lock"
     flock -w 21600 9 || fail "encoder lock timeout" 10
-    if [[ ! -f "$ENC_CKPT" ]]; then
+    if [[ ! -f "$ENC_CKPT" && "$PROBE_ONLY" == "1" ]]; then
+        echo "[warn] PROBE_ONLY: no shared encoder at $ENC_CKPT (controls will be skipped)"
+    elif [[ ! -f "$ENC_CKPT" ]]; then
         echo; echo "=== shared encoder pretrain (lock held) -> $ENC_DIR ==="
         srun --export=ALL python src/train/pretrain_encoder.py $DATA_ARG \
             $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
@@ -236,21 +341,47 @@ fi
 # =============================================================================
 arm_flags() {
     case "$1" in
-        frozen) echo "" ;;
-        naive)  echo "--train_encoder" ;;
-        ema)    echo "--train_encoder --ema_target" ;;
-        vicreg) echo "--train_encoder --vicreg_cov 1.0 --vicreg_var 5.0" ;;
-        *)      echo "__UNKNOWN__" ;;
+        frozen)      echo "" ;;
+        naive)       echo "--train_encoder" ;;
+        ema)         echo "--train_encoder --ema_target" ;;
+        vicreg)      echo "--train_encoder --vicreg_cov 1.0 --vicreg_var 5.0" ;;
+        input)       echo "--predict_space input" ;;
+        # --- JEPA-recipe variants (2026-09): each flag is opt-in in
+        # train_dyg_jepa.py, so the five arms above are byte-for-byte the old ones.
+        ctx)         echo "--mask_encoder_input" ;;
+        tnorm)       echo "--target_norm" ;;
+        ema_cos)     echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG" ;;
+        # EMA + target LayerNorm, no context masking (2026-09-23): the
+        # I-JEPA target normalisation on its own, on top of each EMA arm.
+        ema_tnorm)     echo "--train_encoder --ema_target --target_norm" ;;
+        ema_cos_tnorm) echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG --target_norm" ;;
+        sigreg)      echo "--train_encoder --sigreg 1.0" ;;
+        lejepa)      echo "--train_encoder --target_grad --sigreg 1.0" ;;
+        ijepa)       echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG --mask_encoder_input --target_norm" ;;
+        lejepa_full) echo "--train_encoder --target_grad --sigreg 1.0 --mask_encoder_input --target_norm" ;;
+        *)           echo "__UNKNOWN__" ;;
     esac
 }
 
-for ARM in frozen naive ema vicreg; do
+for ARM in $JEPA_ARMS; do
     want "jepa_$ARM" || continue
     VFLAGS="$(arm_flags "$ARM")"
     [[ "$VFLAGS" == "__UNKNOWN__" ]] && fail "unknown arm '$ARM'" 12
     eval "HP_ARGS=\${VARIANT_HP_${ARM}:-}"
     OUT="$(d "jepa_$ARM")"
-    mkdir -p "$OUT"
+    [[ "$PROBE_ONLY" == "1" ]] || mkdir -p "$OUT"
+    if [[ "$PROBE_ONLY" == "1" ]]; then
+        # Complete run only (see the guard below): a lone best.ckpt is an
+        # interrupted, under-trained arm and must not reach the table.
+        if [[ ! ( -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ) ]]; then
+            echo "[warn] PROBE_ONLY: $OUT is not a complete run -> skipped"; continue
+        fi
+        echo; echo "=== link probe: DyG-JEPA [$ARM] best.ckpt -> $(lp_dir "$OUT") ==="
+        srun --export=ALL python -m src.train.analyze_jepa --link_sources jepa \
+            $LINK_COMMON --jepa_ckpt "$OUT/best.ckpt" --out_dir "$(lp_dir "$OUT")" \
+            || echo "[warn] link probe failed for $OUT"
+        continue
+    fi
     echo; echo "=== DyG-JEPA [$ARM] -> $OUT ==="
     echo "    flags='$VFLAGS $HP_ARGS'"
     # train_dyg_jepa's own link probe writes test_metrics.json with the
@@ -285,9 +416,12 @@ done
 # =============================================================================
 # 3. contrastive baselines: pretrain encoder -> the SAME frozen link probe
 # =============================================================================
-for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
+for M in grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa; do
     want "$M" || continue
     D="$(d "$M")"
+    if [[ "$PROBE_ONLY" == "1" && ! -f "$D/encoder.ckpt" ]]; then
+        echo "[warn] PROBE_ONLY: no $D/encoder.ckpt -> $M skipped"; continue
+    fi
     mkdir -p "$D"
     eval "HP=\${BASELINE_HP_${M}:-}"
     if [[ ! -f "$D/encoder.ckpt" ]]; then
@@ -302,6 +436,18 @@ for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
                 --mask_rate 0.5 --replace_rate 0.05 --sce_gamma 2 --target all \
                 --steps_per_epoch 20 --val_steps 10 \
                 --epochs "${BASE_EPOCHS:-100}" --lr 1e-3 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          bgrl)
+            # STATIC negative-free control: one snapshot per step, reference
+            # WikiCS config (p_e 0.2/0.3, p_f 0.2/0.1, EMA 0.99 -> 1 cosine,
+            # AdamW 5e-4 with warm-up + cosine decay). Val-loss selection like
+            # every other arm; pass --select last via BASELINE_HP_bgrl for the
+            # paper's fixed-budget rule.
+            srun --export=ALL python -m src.baselines.bgrl.train_bgrl $DATA_ARG \
+                $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+                --p_e1 0.2 --p_e2 0.3 --p_f1 0.2 --p_f2 0.1 --ema_momentum 0.99 $ANNEAL_ARG \
+                --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 5e-4 \
                 --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
           grace)
             # STATIC control: one snapshot per step, two augmented views of
@@ -374,6 +520,30 @@ for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
                 --steps_per_epoch 20 --val_steps 10 \
                 --epochs "${BASE_EPOCHS:-100}" --lr 1e-4 \
                 --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          dygwm)
+            # Own encoder kind (shared GCN + trajectory GRUs; the `--encoder_kind`
+            # after $ENCODER_ARG wins). SSL-only core of DyG-WM: no link / rank
+            # loss, so this row is its frozen-encoder protocol, NOT the paper's
+            # supervised link numbers. Paper defaults otherwise (EMA 0.999 for
+            # links, B=32, decay 0.8, AdamW 3e-4 / wd 1e-5).
+            srun --export=ALL python -m src.baselines.dygwm.train_dygwm $DATA_ARG \
+                $ENCODER_ARG --encoder_kind dygwm $WINDOW_ARG $EARLY_STOP_ARG \
+                --ema_momentum 0.999 --n_ctx 32 --decay 0.8 --cn_bonus 1.0 \
+                --lam_node 1 --lam_rel 1 --lam_var 0.25 --lam_cov 0.025 \
+                --node_batch_size 256 --pair_batch_size 256 \
+                --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 3e-4 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
+          sgjepa)
+            # Shared per-snapshot GCN as the stop-gradient target encoder;
+            # spiking context encoder on its latents; tau 0.1, AdamW 1e-3
+            # (the paper gives neither).
+            srun --export=ALL python -m src.baselines.sgjepa.train_sgjepa $DATA_ARG \
+                $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
+                --snn_layers 1 --tau 0.1 --init_tau 2.0 --v_th 1.0 \
+                --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 \
+                --epochs "${BASE_EPOCHS:-100}" --lr 1e-3 \
+                --device cuda --seed "$SEED" --out_dir "$D" $HP ;;
         esac
         [[ -f "$D/encoder.ckpt" ]] || fail "${M^^} pretrain failed" 13
     else
@@ -383,16 +553,18 @@ for M in grace graphmae cldg ddgcl idol maskdgnn dysubc dyg2vec; do
                  "(the trainer does not save the edge head). Frozen-probe row still runs."
         fi
     fi
-    echo; echo "=== link probe: frozen $M encoder -> $D ==="
+    echo; echo "=== link probe: frozen $M encoder -> $(lp_dir "$D") ==="
     srun --export=ALL python -m src.train.analyze_jepa --link_sources encoder \
-        $LINK_COMMON --encoder_ckpt "$D/encoder.ckpt" --out_dir "$D" \
+        $LINK_COMMON --encoder_ckpt "$D/encoder.ckpt" --out_dir "$(lp_dir "$D")" \
         || echo "[warn] link probe failed for $D"
 done
 
 # =============================================================================
 # 4. controls: random + supervised, both free link sources
 # =============================================================================
-if want controls; then
+if want controls && [[ "$PROBE_ONLY" == "1" && ! -f "$ENC_CKPT" ]]; then
+    echo "[warn] PROBE_ONLY: controls skipped (no shared encoder)"
+elif want controls; then
     CTRL_DIR="$(d controls)"
     mkdir -p "$CTRL_DIR"
     echo; echo "=== link controls (random + supervised) -> $CTRL_DIR ==="

@@ -14,7 +14,7 @@ Layout it expects (produced by that launcher):
       supervised_s<seed>/test_metrics.json   supervised end-to-end
       jepa_{frozen,naive,ema,vicreg}_s<seed>/test_metrics.json
       jepa_enc_s<seed>/test_metrics.json     encoder + head, no predictor
-      {grace,graphmae,cldg,ddgcl,idol,maskdgnn,dysubc,dyg2vec}_s<seed>/test_metrics.json
+      {grace,graphmae,bgrl,cldg,ddgcl,idol,maskdgnn,dysubc,dyg2vec,dygwm,sgjepa}_s<seed>/test_metrics.json
       step_s<seed>/test_metrics.json         STEP (TSFormer pre-training + a
                                              learned graph + its own Graph
                                              WaveNet backend)
@@ -48,12 +48,15 @@ METHODS = [
     ("Supervised (end-to-end)", "supervised"),
     ("GRACE (static)",          "grace"),
     ("GraphMAE (static)",       "graphmae"),
+    ("BGRL (static)",           "bgrl"),
     ("CLDG",                    "cldg"),
     ("DDGCL",                   "ddgcl"),
     ("IDOL",                    "idol"),
     ("MaskDGNN",                "maskdgnn"),
     ("DySubC",                  "dysubc"),
     ("DyG2Vec",                 "dyg2vec"),
+    ("DyG-WM (SSL)",            "dygwm"),
+    ("SG-JEPA",                 "sgjepa"),
     ("STEP",                    "step"),
     ("STD-MAE",                 "stdmae"),
     ("DyG-JEPA (enc. only)",    "jepa_enc"),

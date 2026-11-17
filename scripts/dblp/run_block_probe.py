@@ -35,10 +35,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import build_predictor
+from src.cjepa_graph_predictor import build_predictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import build_dynamic_dataset
 from src.train.analyze_jepa import (
     compute_block_labels,
+    ndcg_at_k,
     train_node_probe,
     _train_test_split_by_window,
 )
@@ -77,6 +78,13 @@ def _make_args_namespace(saved_args: dict) -> types.SimpleNamespace:
         ("normalize_edge_features", True),
         ("with_state_labels", False),
         ("jodie_state_label_mode", "ever"),
+        ("cldg_data_dir", "dataset/cldg"),
+        ("cldg_num_bins", 30),
+        ("cldg_binning", "equal_freq"),
+        ("cldg_top_k", 0),
+        ("cldg_file_features", True),
+        ("tgbn_data_dir", "dataset/tgb/tgbn-trade"),
+        ("tgbn_weight_features", True),
     ]:
         if not hasattr(ns, k):
             setattr(ns, k, default)
@@ -109,6 +117,7 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
     beat THIS, not just the static degree, to show learned dynamics.
     """
     enc_rows, last_rows, pred_rows, win_rows, node_rows = [], [], [], [], []
+    prev_rows = []                        # latent at the second-to-last history step
     deg_rows, dhist_rows, bin_rows, hor_rows = [], [], [], []
     encoder.eval(); predictor.eval()
     for wid, batch in enumerate(loader):
@@ -122,7 +131,12 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
         x_full = torch.cat([x_hist, x_fut], dim=1)
         z_enc_full = encoder(x_full, adj_norm)
         z_hist = encoder(x_hist, adj_norm[:, :history_size])
-        z_pred_fut = predictor.inference(z_hist, adj, active)
+        # Two-level runs (--hier_ckpt): the frozen coarse model inside the
+        # predictor turns the raw history into the top-down hint.
+        make_cond = getattr(predictor, "make_cond", None)
+        cond = make_cond(x_hist, adj, active, x_fut=x_fut) if make_cond else None
+        z_pred_fut = predictor.inference(
+            z_hist, adj, active, **({"cond": cond} if cond is not None else {}))
 
         B, T_total, N = active.shape
         T_pred = z_pred_fut.shape[1]
@@ -139,6 +153,7 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
                 dhist_b = adj[b, :history_size].float().sum(dim=-1)[:, idx].T.cpu()
                 enc_rows.append(z_enc_full[b, t_global, idx].cpu())
                 last_rows.append(z_hist[b, -1, idx].cpu())
+                prev_rows.append(z_hist[b, -2 if z_hist.shape[1] > 1 else -1, idx].cpu())
                 pred_rows.append(z_pred_fut[b, tp, idx].cpu())
                 dhist_rows.append(dhist_b)
                 win_rows.append(torch.full((idx.numel(),), wid * 1000 + b))
@@ -152,6 +167,7 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
 
     Z_enc = torch.cat(enc_rows, dim=0).numpy().astype(np.float64)
     Z_last = torch.cat(last_rows, dim=0).numpy().astype(np.float64)
+    Z_prev = torch.cat(prev_rows, dim=0).numpy().astype(np.float64)
     Z_pred = torch.cat(pred_rows, dim=0).numpy().astype(np.float64)
     window = torch.cat(win_rows, dim=0).numpy()
     node_id = torch.cat(node_rows, dim=0).numpy()
@@ -160,7 +176,7 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
     abs_bin = torch.cat(bin_rows, dim=0).numpy()
     horizon = torch.cat(hor_rows, dim=0).numpy()
     return (Z_enc, Z_last, Z_pred, window, node_id, degree, deg_hist,
-            abs_bin, horizon)
+            abs_bin, horizon, Z_prev)
 
 
 @torch.no_grad()
@@ -175,6 +191,7 @@ def collect_encoder_latents(encoder, loader, history_size, device):
     no-future baseline).
     """
     enc_rows, last_rows, win_rows, node_rows = [], [], [], []
+    prev_rows = []                        # latent at the second-to-last history step
     deg_rows, dhist_rows, bin_rows, hor_rows = [], [], [], []
     encoder.eval()
     for wid, batch in enumerate(loader):
@@ -202,6 +219,7 @@ def collect_encoder_latents(encoder, loader, history_size, device):
                 dhist_b = adj[b, :history_size].float().sum(dim=-1)[:, idx].T.cpu()
                 enc_rows.append(z_enc_full[b, t_global, idx].cpu())
                 last_rows.append(z_hist[b, -1, idx].cpu())
+                prev_rows.append(z_hist[b, -2 if z_hist.shape[1] > 1 else -1, idx].cpu())
                 dhist_rows.append(dhist_b)
                 win_rows.append(torch.full((idx.numel(),), wid * 1000 + b))
                 node_rows.append(idx.cpu().long())
@@ -212,18 +230,103 @@ def collect_encoder_latents(encoder, loader, history_size, device):
 
     Z_enc = torch.cat(enc_rows, dim=0).numpy().astype(np.float64)
     Z_last = torch.cat(last_rows, dim=0).numpy().astype(np.float64)
+    Z_prev = torch.cat(prev_rows, dim=0).numpy().astype(np.float64)
     window = torch.cat(win_rows, dim=0).numpy()
     node_id = torch.cat(node_rows, dim=0).numpy()
     degree = torch.cat(deg_rows, dim=0).numpy().astype(np.float64)
     deg_hist = torch.cat(dhist_rows, dim=0).numpy().astype(np.float64)
     abs_bin = torch.cat(bin_rows, dim=0).numpy()
     horizon = torch.cat(hor_rows, dim=0).numpy()
-    return Z_enc, Z_last, window, node_id, degree, deg_hist, abs_bin, horizon
+    return Z_enc, Z_last, window, node_id, degree, deg_hist, abs_bin, horizon, Z_prev
+
+
+def _true_velocity(ds, node_id, last_bin):
+    """Hidden velocity at each row's LAST OBSERVED bin, from the generator's own
+    recursion z(t) = z(t-1) + v(t) + theta * (a_{c(t)} - z(t-1)):
+    v(t) = z(t) - z(t-1) - theta * (a_{c(t)} - z(t-1)). Position and the
+    mean-reversion pull are functions of the current snapshot; v is the part of
+    the dynamics only the trajectory reveals, so R^2 to it measures how much
+    HIDDEN STATE a representation carries, independent of horizon. Returns
+    (v, valid) with valid False where t-1 < 0."""
+    lat = getattr(ds, "latents", None)
+    anchors = getattr(ds, "anchors", None)
+    comm = getattr(ds, "communities", None)
+    if lat is None or anchors is None or comm is None:
+        return None, None
+    theta = float(getattr(ds, "ou_theta", 0.0))
+    t = np.clip(last_bin, 1, lat.shape[0] - 1)
+    z_t, z_p = lat[t, node_id].astype(np.float64), lat[t - 1, node_id].astype(np.float64)
+    a = anchors[comm[t, node_id]].astype(np.float64)
+    return z_t - z_p - theta * (a - z_p), last_bin >= 1
+
+
+def _fit_per_horizon(columns: dict, y, train_v, test_v, horizon, task: str, *,
+                     per_row_prev=None, z_tgt=None, z_delta=None, z_vel=None,
+                     vel_ok=None):
+    """One probe PER FORECAST HORIZON for every column, written into each
+    column's dict as ``subset_h<k>`` (k = 0 is one step past the last observed
+    bin). Only for multi-horizon runs (num_preds > 1); a no-op otherwise.
+
+    Why fit rather than score: a single probe pooled over all horizons is fed
+    the SAME copy-last latent for every k and cannot even tell which horizon it
+    is answering -- a handicap for the encoder-only baselines, whose only way
+    to forecast k steps ahead is a head trained for k steps ahead ("direct"
+    multi-step forecasting). Fitting per horizon gives every column, forecast
+    and copy-last alike, a head trained on exactly the rows it is scored on,
+    so the horizon curve compares representations, not head budgets.
+
+    Per horizon and column: the task's headline metrics on that horizon's test
+    rows, the switch / stay (multiclass) or onset (binary) subsets defined
+    against the LAST OBSERVED label, the change alarm (multiclass) and, when
+    the true latent is available, the ridge R^2 to it and to its change.
+    """
+    if horizon is None or len(np.unique(horizon)) < 2:
+        return
+    kw = dict(device=torch.device("cpu"))
+    has_prev = None if per_row_prev is None else per_row_prev >= 0
+    for k in np.unique(horizon):
+        rows = horizon == k
+        tr, te = train_v & rows, test_v & rows
+        subs = {}
+        if has_prev is not None:
+            if task == "multiclass":
+                subs = {"switch": has_prev & (per_row_prev != y) & rows,
+                        "stay": has_prev & (per_row_prev == y) & rows}
+            else:
+                subs = {"onset": (per_row_prev == 0) & rows}
+        for name, (probe, Z) in columns.items():
+            r = train_node_probe(Z, y, tr, te, task, test_subsets=subs or None, **kw)
+            flat = {"n": int(te.sum())}
+            if task == "ranking":
+                flat["ndcg10_test"] = r["ndcg10_test"]
+            elif task == "multiclass":
+                flat.update({"acc_test": r["acc_test"], "macro_f1_test": r["macro_f1_test"]})
+                for sub in ("switch", "stay"):
+                    if f"subset_{sub}" in r:
+                        flat[f"{sub}_acc_test"] = r[f"subset_{sub}"]["acc_test"]
+                        flat[f"n_{sub}"] = r[f"subset_{sub}"]["n"]
+                if per_row_prev is not None:
+                    flat.update(_change_alarm(r, y, per_row_prev))
+                r.pop("_test_rows", None); r.pop("_pred_test", None)
+            else:
+                flat.update({"auroc_test": r["auroc_test"], "auprc_test": r["auprc_test"],
+                             "n_pos": r["n_pos_test"]})
+                if "subset_onset" in r:
+                    flat["onset_auroc_test"] = r["subset_onset"]["auroc_test"]
+                    flat["onset_auprc_test"] = r["subset_onset"]["auprc_test"]
+                    flat["n_onset"] = r["subset_onset"]["n"]
+            if z_tgt is not None and te.sum() > 1:
+                flat["latent_r2_test"] = _ridge_r2(Z, z_tgt, tr, te)
+                flat["delta_r2_test"] = _ridge_r2(Z, z_delta, tr, te)
+            if z_vel is not None and (te & vel_ok).sum() > 1:
+                flat["vel_r2_test"] = _ridge_r2(Z, z_vel, tr & vel_ok, te & vel_ok)
+            probe[f"subset_h{int(k)}"] = flat
 
 
 def _binary_state_result(Z_enc, Z_last, degree, per_row_block, train, test,
                          node_id, label_source, device, Z_pred=None,
-                         per_row_prev=None, deg_hist=None, horizon=None):
+                         per_row_prev=None, deg_hist=None, horizon=None,
+                         Z_prev=None):
     """Fit the binary state-label (ban prediction) probe on each latent
     column and the degree-only baseline. Shared by the full-ckpt (run_one)
     and bare-encoder (run_one_encoder) paths so both report identical fields.
@@ -257,13 +360,8 @@ def _binary_state_result(Z_enc, Z_last, degree, per_row_block, train, test,
     subsets = {}
     if per_row_prev is not None:
         subsets["onset"] = (per_row_prev == 0) & valid_rows
-    # Per-horizon subsets (only meaningful for multi-horizon runs): each
-    # column — including the static copy-last — is scored at every forecast
-    # distance, giving the horizon curve. Copy-last should decay with k; a
-    # real dynamics model should decay slower.
-    if horizon is not None and len(np.unique(horizon)) > 1:
-        for tp in np.unique(horizon):
-            subsets[f"h{int(tp)}"] = (horizon == tp) & valid_rows
+    # Per-horizon results (multi-horizon runs only) are FITTED per horizon by
+    # _fit_per_horizon below, not scored from this pooled probe -- see there.
     # Fit every probe on CPU: GPU AdamW kernels are nondeterministic, so on
     # cuda the SAME frozen-encoder latents gave a different encoder_last per
     # run (~0.005 AUROC jitter — the size of the effect we measure). On CPU the
@@ -294,6 +392,18 @@ def _binary_state_result(Z_enc, Z_last, degree, per_row_block, train, test,
     if Z_pred is not None:
         result["jepa"] = train_node_probe(Z_pred, y, train_v, test_v,
                                           "binary", **kw)
+    columns = {"encoder_oracle": (enc_probe, Z_enc), "encoder_last": (last_probe, Z_last),
+               "degree_baseline": (deg_baseline, degree.reshape(-1, 1))}
+    if Z_prev is not None:
+        Z_diff = _velocity_feature(Z_last, Z_prev)
+        result["encoder_diff"] = train_node_probe(Z_diff, y, train_v, test_v, "binary", **kw)
+        columns["encoder_diff"] = (result["encoder_diff"], Z_diff)
+    if deg_hist is not None:
+        columns["degree_history_baseline"] = (result["degree_history_baseline"], deg_hist)
+    if Z_pred is not None:
+        columns["jepa"] = (result["jepa"], Z_pred)
+    _fit_per_horizon(columns, y, train_v, test_v, horizon, "binary",
+                     per_row_prev=per_row_prev)
     return result
 
 
@@ -335,9 +445,19 @@ def _change_alarm(probe: dict, y: np.ndarray, prev: np.ndarray) -> dict:
             "true_change_rate": float(truth.mean()) if len(truth) else float("nan")}
 
 
+def _velocity_feature(Z_last, Z_prev):
+    """Hand-built velocity feature from the SAME encoder: [z_last, z_last - z_prev].
+    The `encoder_diff` column. If a linear head on this recovers the hidden
+    velocity (vel_r2_test) far better than z_last alone, the information IS in
+    the encoder's latents and a predictor that fails to use it is the
+    bottleneck; if not, the encoder is."""
+    return np.concatenate([Z_last, Z_last - Z_prev], axis=1)
+
+
 def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
                              node_id, label_source, Z_pred=None, deg_hist=None,
-                             horizon=None, latents=None, abs_bin=None):
+                             horizon=None, latents=None, abs_bin=None, ds=None,
+                             Z_prev=None):
     """Dense multiclass node-STATE probe (synthetic_dyn --synth_state_target
     community). Same columns as the binary path so the classification
     aggregator and slurm scripts work unchanged, plus:
@@ -356,6 +476,9 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
                          ridge from the column's representation to the TRUE
                          causal latent z at the target step. How much of the
                          cause the representation carries.
+      vel_r2_test       synthetic only: R^2 to the HIDDEN velocity at the last
+                        observed step (see _true_velocity) -- the part of the
+                        dynamics no single snapshot can read.
       delta_r2_test      same, for z(target) - z(last observed step): the
                          CHANGE of the latent. Position alone predicts some of
                          it (mean reversion); the momentum part needs velocity,
@@ -373,9 +496,8 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
     has_prev = per_row_prev >= 0
     subsets = {"switch": has_prev & (per_row_prev != y) & valid,
                "stay": has_prev & (per_row_prev == y) & valid}
-    if horizon is not None and len(np.unique(horizon)) > 1:
-        for tp in np.unique(horizon):
-            subsets[f"h{int(tp)}"] = (horizon == tp) & valid
+    # Per-horizon results are FITTED per horizon (_fit_per_horizon), not
+    # scored from this pooled probe.
     # CPU fit for byte-reproducibility (see _binary_state_result).
     kw = dict(device=torch.device("cpu"), test_subsets=subsets)
     enc_probe = train_node_probe(Z_enc, y, train_v, test_v, "multiclass", **kw)
@@ -392,14 +514,29 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
     persist.update({"change_precision": float("nan"), "change_recall": 0.0,
                     "change_f1": 0.0, "alarm_rate": 0.0})
     columns = {"encoder_oracle": (enc_probe, Z_enc), "encoder_last": (last_probe, Z_last)}
+    if Z_prev is not None:
+        Z_diff = _velocity_feature(Z_last, Z_prev)
+        columns["encoder_diff"] = (
+            train_node_probe(Z_diff, y, train_v, test_v, "multiclass", **kw), Z_diff)
     if deg_hist is not None:
         columns["degree_history_baseline"] = (
             train_node_probe(deg_hist, y, train_v, test_v, "multiclass", **kw), deg_hist)
     if Z_pred is not None:
         columns["jepa"] = (train_node_probe(Z_pred, y, train_v, test_v, "multiclass", **kw), Z_pred)
+        if Z_prev is not None:
+            # jepa_plus_diff (2026-10-05): the rollout latent READ TOGETHER with the
+            # same encoder's [z_last, z_last - z_prev]. The Δlatent control beats the
+            # rollout at long horizons on the synthetic task even when the rollout
+            # embeds the same linear forecast (ridge-initialised skip), i.e. an
+            # MSE-optimal latent forecast loses label information that a head on the
+            # raw history keeps. This column asks whether the rollout adds anything
+            # BEYOND that linear information: jepa_plus_diff > encoder_diff = yes.
+            Z_pd = np.concatenate([Z_pred, _velocity_feature(Z_last, Z_prev)], axis=1)
+            columns["jepa_plus_diff"] = (
+                train_node_probe(Z_pd, y, train_v, test_v, "multiclass", **kw), Z_pd)
 
     # Ground-truth latent targets (synthetic generator only).
-    z_tgt = z_delta = None
+    z_tgt = z_delta = z_vel = vel_ok = None
     if latents is not None and abs_bin is not None:
         T = latents.shape[0]
         tgt_bin = np.clip(abs_bin, 0, T - 1)
@@ -407,12 +544,37 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
         last_bin = np.clip(abs_bin - hor - 1, 0, T - 1)
         z_tgt = latents[tgt_bin, node_id].astype(np.float64)
         z_delta = z_tgt - latents[last_bin, node_id].astype(np.float64)
+        if ds is not None:
+            z_vel, vel_ok = _true_velocity(ds, node_id, abs_bin - hor - 1)
 
     for name, (probe, Z) in columns.items():
         probe.update(_change_alarm(probe, y, per_row_prev))
         if z_tgt is not None:
             probe["latent_r2_test"] = _ridge_r2(Z, z_tgt, train_v, test_v)
             probe["delta_r2_test"] = _ridge_r2(Z, z_delta, train_v, test_v)
+        if z_vel is not None:
+            # vel_r2_test: R^2 to the HIDDEN velocity at the last observed
+            # step -- horizon-independent, the sharpest "carries the
+            # dynamics" measure (delta_r2 grows with h through mean reversion,
+            # which position alone predicts).
+            probe["vel_r2_test"] = _ridge_r2(Z, z_vel, train_v & vel_ok, test_v & vel_ok)
+
+    # Horizon curve (num_preds > 1): a head per horizon on every column, and
+    # the persistence floor at each horizon = "the label at the last observed
+    # bin still holds" (0 on switch rows, 1 on stay rows by construction).
+    _fit_per_horizon(columns, y, train_v, test_v, horizon, "multiclass",
+                     per_row_prev=per_row_prev, z_tgt=z_tgt, z_delta=z_delta,
+                     z_vel=z_vel, vel_ok=vel_ok)
+    if horizon is not None and len(np.unique(horizon)) > 1:
+        for k in np.unique(horizon):
+            rows = (horizon == k) & te_prev
+            n_sw = int((subsets["switch"] & test_v & rows).sum())
+            persist[f"subset_h{int(k)}"] = {
+                "acc_test": float((per_row_prev[rows] == y[rows]).mean()) if rows.any() else float("nan"),
+                "switch_acc_test": 0.0, "stay_acc_test": 1.0,
+                "n": int(rows.sum()), "n_switch": n_sw,
+                "switch_rate": n_sw / max(int(rows.sum()), 1),
+            }
 
     result = {
         "task": "multiclass_state",
@@ -429,6 +591,196 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
     return result
 
 
+def _train_test_split_by_node(node_id: np.ndarray, seed: int = 0,
+                              test_frac: float = 0.3):
+    """Hold out whole NODES. For a static per-node label the window split is
+    wrong: the same node carries the same label in every window it appears
+    in, so a probe fitted on its train-window rows would simply memorise it
+    and score it again on its test-window rows. Holding nodes out makes the
+    test rows nodes the head has never seen -- transductive node
+    classification, the CLDG / DDGCL protocol."""
+    rng = np.random.RandomState(seed)
+    uniq = np.unique(node_id)
+    rng.shuffle(uniq)
+    n_test = max(1, int(round(len(uniq) * test_frac)))
+    test_mask = np.isin(node_id, uniq[:n_test])
+    return ~test_mask, test_mask
+
+
+def _multiclass_static_result(Z_enc, Z_last, per_row, node_id, label_source,
+                              Z_pred=None, deg_hist=None, horizon=None,
+                              Z_prev=None):
+    """STATIC multiclass node-classification probe (CLDG-format dblp / patent:
+    one class per node for the whole timeline). Same column names as the
+    state probes so the classification launcher / aggregator / checkpoint
+    selection read it unchanged:
+
+      encoder_oracle  encoder at the target step, full window visible
+      encoder_last    encoder at the last history step (copy-last)
+      jepa            the predictor's forecast latent (full ckpts only)
+      degree_history_baseline  degree at every history bin (trend control)
+
+    There is no label_persistence floor and no switch / stay subset: a static
+    label never changes, so those would be 1.0 / empty by construction. The
+    train/test split is over NODES (see _train_test_split_by_node); every
+    window of the probe split contributes rows, and a node's rows all fall on
+    one side.
+    """
+    valid = per_row >= 0
+    if valid.sum() == 0:
+        raise ValueError("No valid static multiclass labels in the probe rows "
+                         "-- does the dataset expose ds.node_labels?")
+    train, test = _train_test_split_by_node(node_id, seed=0)
+    train_v, test_v = train & valid, test & valid
+    y = per_row.astype(np.int64)
+    kw = dict(device=torch.device("cpu"))       # CPU fit: byte-reproducible
+    enc_probe = train_node_probe(Z_enc, y, train_v, test_v, "multiclass", **kw)
+    last_probe = train_node_probe(Z_last, y, train_v, test_v, "multiclass", **kw)
+    columns = {"encoder_oracle": (enc_probe, Z_enc), "encoder_last": (last_probe, Z_last)}
+    if Z_prev is not None:
+        Z_diff = _velocity_feature(Z_last, Z_prev)
+        columns["encoder_diff"] = (
+            train_node_probe(Z_diff, y, train_v, test_v, "multiclass", **kw), Z_diff)
+    if deg_hist is not None:
+        columns["degree_history_baseline"] = (
+            train_node_probe(deg_hist, y, train_v, test_v, "multiclass", **kw), deg_hist)
+    if Z_pred is not None:
+        columns["jepa"] = (train_node_probe(Z_pred, y, train_v, test_v, "multiclass", **kw), Z_pred)
+    for probe, _ in columns.values():           # private per-row keys
+        probe.pop("_test_rows", None); probe.pop("_pred_test", None)
+    _fit_per_horizon(columns, y, train_v, test_v, horizon, "multiclass")
+    return {
+        "task": "multiclass_static",
+        "label_source": label_source,
+        "split": "node",
+        "n_rows": int(len(node_id)),
+        "n_valid_rows": int(valid.sum()),
+        "n_nodes_train": int(len(np.unique(node_id[train_v]))),
+        "n_nodes_test": int(len(np.unique(node_id[test_v]))),
+        "n_classes_seen": int(enc_probe["n_classes"]),
+        "encoder": enc_probe,
+        **{k: v[0] for k, v in columns.items()},
+    }
+
+
+def _per_row_label_vectors(ds, node_id, abs_bin, horizon=None, history_size=None):
+    """Ranking labels (tgbn_*): each row's label DISTRIBUTION at its own
+    snapshot, ``ds.node_label_dist[abs_bin, node]`` (rows, C), with ``valid``
+    where the row has a label, plus two label-only floors defined against
+    what a forecaster could see, as for the state tasks:
+
+      Yprev / prev_valid  the distribution at the LAST OBSERVED bin
+                          (``abs_bin - 1 - horizon``): TGB's persistence.
+      Yavg / avg_valid    the MEAN of the valid label vectors over the
+                          ``history_size`` observed bins ending there: TGB's
+                          moving average, the stronger floor on the weekly
+                          interaction datasets (genre / reddit / token), and
+                          what a window encoder's copy-last can represent.
+    """
+    dist = getattr(ds, "node_label_dist", None)
+    if dist is None:
+        raise ValueError("--task ranking needs a dataset exposing "
+                         "ds.node_label_dist (tgbn_trade / tgbn_genre / "
+                         "tgbn_reddit / tgbn_token).")
+    T = dist.shape[0]
+    tgt = np.clip(abs_bin, 0, T - 1)
+    Y = dist[tgt, node_id]
+    valid = ds.label_valid[tgt, node_id]
+    hor = np.zeros_like(tgt) if horizon is None else np.asarray(horizon)
+    prev_bin = tgt - 1 - hor
+    prev_ok = prev_bin >= 0
+    Yprev = dist[np.clip(prev_bin, 0, None), node_id]
+    prev_valid = prev_ok & ds.label_valid[np.clip(prev_bin, 0, None), node_id]
+    Yprev = Yprev * prev_valid[:, None]
+    H = int(history_size or getattr(ds, "history_size", 1) or 1)
+    Yavg = np.zeros_like(Y, dtype=np.float64)
+    n_avg = np.zeros(len(tgt), dtype=np.float64)
+    for j in range(H):
+        b = prev_bin - j
+        ok = b >= 0
+        v = ok & ds.label_valid[np.clip(b, 0, None), node_id]
+        Yavg += dist[np.clip(b, 0, None), node_id] * v[:, None]
+        n_avg += v
+    avg_valid = n_avg > 0
+    Yavg = np.divide(Yavg, n_avg[:, None], out=np.zeros_like(Yavg), where=n_avg[:, None] > 0)
+    return Y, valid, Yprev, prev_valid, Yavg.astype(Y.dtype), avg_valid
+
+
+def _ranking_state_result(Z_enc, Z_last, Y, valid, Yprev, prev_valid, train,
+                          test, node_id, label_source, Z_pred=None,
+                          deg_hist=None, horizon=None, Yavg=None, avg_valid=None,
+                          **_ignored):
+    """Per-step RANKING probe (tgbn-trade: predict each nation's next export
+    share vector, scored with NDCG@10 as in TGB). Same columns as the state
+    probes so the classification tooling reads it unchanged:
+
+      encoder_oracle / encoder_last / jepa / degree_history_baseline
+                         linear head from the latent to C scores, trained
+                         with the soft-target cross-entropy on the train
+                         windows' rows, NDCG@10 on the test windows' rows.
+      label_persistence  not a probe: the LAST OBSERVED label vector used as
+                         the scores -- TGB's persistence baseline. Rows
+                         without a previous label are skipped for it.
+      label_moving_average
+                         not a probe: the mean of the label vectors over the
+                         history window -- TGB's moving-average baseline,
+                         which beats persistence and every learned model on
+                         the weekly interaction datasets; the floor to beat.
+
+    The label changes every step, so the window split of the dynamic tasks
+    applies (a node's rows at different years are different questions).
+    """
+    if valid.sum() == 0:
+        raise ValueError("No labelled rows for the ranking probe.")
+    train_v, test_v = train & valid, test & valid
+    kw = dict(device=torch.device("cpu"))
+    enc_probe = train_node_probe(Z_enc, Y, train_v, test_v, "ranking", **kw)
+    last_probe = train_node_probe(Z_last, Y, train_v, test_v, "ranking", **kw)
+    columns = {"encoder_oracle": (enc_probe, Z_enc), "encoder_last": (last_probe, Z_last)}
+    if deg_hist is not None:
+        columns["degree_history_baseline"] = (
+            train_node_probe(deg_hist, Y, train_v, test_v, "ranking", **kw), deg_hist)
+    if Z_pred is not None:
+        columns["jepa"] = (train_node_probe(Z_pred, Y, train_v, test_v, "ranking", **kw), Z_pred)
+
+    te_prev = test_v & prev_valid
+    persist = {"ndcg10_test": float(ndcg_at_k(Y[te_prev], Yprev[te_prev], 10).mean())
+               if te_prev.any() else float("nan"),
+               "n": int(te_prev.sum())}
+    movavg = None
+    if Yavg is not None and avg_valid is not None:
+        te_avg = test_v & avg_valid
+        movavg = {"ndcg10_test": float(ndcg_at_k(Y[te_avg], Yavg[te_avg], 10).mean())
+                  if te_avg.any() else float("nan"),
+                  "n": int(te_avg.sum())}
+    _fit_per_horizon(columns, Y, train_v, test_v, horizon, "ranking")
+    if horizon is not None and len(np.unique(horizon)) > 1:
+        for k in np.unique(horizon):
+            rows = (horizon == k) & te_prev
+            persist[f"subset_h{int(k)}"] = {
+                "ndcg10_test": float(ndcg_at_k(Y[rows], Yprev[rows], 10).mean()) if rows.any() else float("nan"),
+                "n": int(rows.sum())}
+            if movavg is not None:
+                rows = (horizon == k) & te_avg
+                movavg[f"subset_h{int(k)}"] = {
+                    "ndcg10_test": float(ndcg_at_k(Y[rows], Yavg[rows], 10).mean()) if rows.any() else float("nan"),
+                    "n": int(rows.sum())}
+    out = {
+        "task": "ranking",
+        "label_source": label_source,
+        "metric": "ndcg@10",
+        "n_rows": int(len(node_id)),
+        "n_valid_rows": int(valid.sum()),
+        "n_classes": int(Y.shape[1]),
+        "encoder": enc_probe,
+        "label_persistence": persist,
+        **{k: v[0] for k, v in columns.items()},
+    }
+    if movavg is not None:
+        out["label_moving_average"] = movavg
+    return out
+
+
 def _state_probe_name(eff_source: str, split: str) -> str:
     """state_probe.json, or switch_probe.json when the binary target was DERIVED
     from a multiclass-state dataset -- so re-probing a state checkpoint for the
@@ -437,7 +789,7 @@ def _state_probe_name(eff_source: str, split: str) -> str:
     return f"{stem}{_SPLIT_SUFFIX[split]}.json"
 
 
-def _per_row_labels(ds, node_id, abs_bin, label_source, task):
+def _per_row_labels(ds, node_id, abs_bin, label_source, task, horizon=None):
     """Resolve the per-row label vector for the probe.
 
     When the dataset exposes a DYNAMIC per-(bin, node) matrix (JODIE
@@ -447,9 +799,16 @@ def _per_row_labels(ds, node_id, abs_bin, label_source, task):
     compute_block_labels. Returns (per_row, block_labels_or_None, eff_source);
     block_labels is None in the dynamic case (multiclass never uses it there).
 
-    Also returns per_row_prev — each row's label at the previous snapshot
-    (dynamic modes only, else None). Rows at bin 0 get -1 (no previous bin),
-    which excludes them from the onset subset downstream.
+    Also returns per_row_prev — each row's label at the LAST OBSERVED snapshot
+    (dynamic modes only, else None): abs_bin - 1 - horizon, i.e. the final
+    history bin of the row's window. For a single-horizon probe (horizon 0)
+    that is the previous bin, as before. For multi-horizon runs it is what a
+    forecaster can actually see, so label persistence, the onset / switch /
+    stay subsets and the change alarm are all defined against the same
+    observable state at every horizon. (Using abs_bin - 1 there would hand the
+    persistence floor the label ONE step before the target -- a future value
+    at any horizon beyond the first.) Rows whose last observed bin is < 0 get
+    -1, which excludes them from those subsets downstream.
     """
     dyn = getattr(ds, "node_labels_dyn", None)
     mode = str(getattr(ds, "state_label_mode", ""))
@@ -460,12 +819,16 @@ def _per_row_labels(ds, node_id, abs_bin, label_source, task):
     if task == "binary" and mode.startswith("community") and getattr(ds, "switch_labels", None) is not None:
         dyn = ds.switch_labels
         mode = f"switch:derived_from_{mode}"
-    dyn_multiclass = dyn is not None and mode.startswith("community")
+    # Dynamic multiclass state: the synthetic community target, or a real
+    # dataset that declares it (CHASE music, 5 genres per month).
+    dyn_multiclass = dyn is not None and (
+        mode.startswith("community") or getattr(ds, "dyn_label_task", None) == "multiclass")
     if dyn is not None and (task == "binary" or (task == "multiclass" and dyn_multiclass)):
         n_bins = dyn.shape[0]
         clipped = np.clip(abs_bin, 0, n_bins - 1)
         per_row = dyn[clipped, node_id]
-        prev_bin = clipped - 1
+        hor = np.zeros_like(clipped) if horizon is None else np.asarray(horizon)
+        prev_bin = clipped - 1 - hor
         per_row_prev = np.where(prev_bin >= 0,
                                 dyn[np.clip(prev_bin, 0, None), node_id], -1)
         return per_row, None, f"dataset_dynamic:{mode}", per_row_prev
@@ -521,20 +884,32 @@ def run_one_encoder(encoder_ckpt: Path, device: str = "cuda",
     ).to(device)
     encoder.load_state_dict(ckpt["encoder"])
 
-    Z_enc, Z_last, window, node_id, degree, deg_hist, abs_bin, horizon = \
+    Z_enc, Z_last, window, node_id, degree, deg_hist, abs_bin, horizon, Z_prev = \
         collect_encoder_latents(
             encoder, loader,
             history_size=saved_args.get("history_size", 3), device=device,
         )
-    per_row_block, block_labels, eff_source, per_row_prev = _per_row_labels(
-        ds, node_id, abs_bin, label_source, task)
     train, test = _train_test_split_by_window(window, seed=0)
+    if task == "ranking":
+        Y, valid, Yprev, prev_valid, Yavg, avg_valid = _per_row_label_vectors(
+            ds, node_id, abs_bin, horizon, history_size=saved_args.get("history_size", 3))
+        result = _ranking_state_result(Z_enc, Z_last, Y, valid, Yprev, prev_valid,
+                                       train, test, node_id, "dataset",
+                                       deg_hist=deg_hist, horizon=horizon,
+                                       Yavg=Yavg, avg_valid=avg_valid)
+        out_path = Path(encoder_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
+        with open(out_path, "w") as f:
+            json.dump(result, f, indent=2)
+        return result, out_path
+    per_row_block, block_labels, eff_source, per_row_prev = _per_row_labels(
+        ds, node_id, abs_bin, label_source, task, horizon=horizon)
 
     if task == "binary":
         result = _binary_state_result(Z_enc, Z_last, degree, per_row_block,
                                       train, test, node_id, eff_source,
                                       device, per_row_prev=per_row_prev,
-                                      deg_hist=deg_hist, horizon=horizon)
+                                      deg_hist=deg_hist, horizon=horizon,
+                                      Z_prev=Z_prev)
         out_path = Path(encoder_ckpt).parent / _state_probe_name(eff_source, split)
     elif block_labels is None:
         result = _multiclass_state_result(Z_enc, Z_last, per_row_block,
@@ -542,11 +917,19 @@ def run_one_encoder(encoder_ckpt: Path, device: str = "cuda",
                                           eff_source, deg_hist=deg_hist,
                                           horizon=horizon,
                                           latents=getattr(ds, "latents", None),
-                                          abs_bin=abs_bin)
+                                          abs_bin=abs_bin, ds=ds, Z_prev=Z_prev)
+        out_path = Path(encoder_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
+    elif eff_source == "dataset":
+        # Static per-node classes (cldg_dblp / cldg_patent): node-level split,
+        # same file and columns as the state probes.
+        result = _multiclass_static_result(Z_enc, Z_last, per_row_block, node_id,
+                                           eff_source, deg_hist=deg_hist,
+                                           horizon=horizon, Z_prev=Z_prev)
         out_path = Path(encoder_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
     else:
         enc_probe = train_node_probe(Z_enc, per_row_block, train, test,
                                      "multiclass", device=torch.device("cpu"))
+        enc_probe.pop("_test_rows", None); enc_probe.pop("_pred_test", None)
         result = {
             "task": "multiclass",
             "label_source": eff_source,
@@ -626,7 +1009,7 @@ def run_one_jodie(jodie_ckpt: Path, device: str = "cuda",
                         num_workers=num_workers, pin_memory=False)
     history_size = saved_args.get("history_size", 3)
 
-    or_rows, last_rows, pred_rows = [], [], []
+    or_rows, last_rows, pred_rows, prev_rows = [], [], [], []
     win_rows, node_rows, deg_rows, dhist_rows, bin_rows, hor_rows = \
         [], [], [], [], [], []
     for wid, batch in enumerate(loader):
@@ -646,6 +1029,7 @@ def run_one_jodie(jodie_ckpt: Path, device: str = "cuda",
                 last_abs = min(int(year[b]) + history_size - 1, T - 1)
 
                 Z_last_np = emb_bins[last_abs, idx]
+                Z_prev_np = emb_bins[max(last_abs - 1, 0), idx]   # second-to-last history bin
                 Z_or_np = emb_bins[abs_bin, idx]
                 Z_pred_np = Z_last_np.copy()
                 um = idx < n_users
@@ -660,6 +1044,7 @@ def run_one_jodie(jodie_ckpt: Path, device: str = "cuda",
 
                 or_rows.append(Z_or_np)
                 last_rows.append(Z_last_np)
+                prev_rows.append(Z_prev_np)
                 pred_rows.append(Z_pred_np)
                 deg_rows.append(
                     adj[b, t_global].float().sum(dim=-1)[idx].numpy())
@@ -672,6 +1057,7 @@ def run_one_jodie(jodie_ckpt: Path, device: str = "cuda",
 
     Z_enc = np.concatenate(or_rows).astype(np.float64)
     Z_last = np.concatenate(last_rows).astype(np.float64)
+    Z_prev = np.concatenate(prev_rows).astype(np.float64)
     Z_pred = np.concatenate(pred_rows).astype(np.float64)
     window = np.concatenate(win_rows)
     node_id = np.concatenate(node_rows)
@@ -681,13 +1067,14 @@ def run_one_jodie(jodie_ckpt: Path, device: str = "cuda",
     horizon = np.concatenate(hor_rows)
 
     per_row_block, _, eff_source, per_row_prev = _per_row_labels(
-        ds, node_id, abs_bin, "dataset", task)
+        ds, node_id, abs_bin, "dataset", task, horizon=horizon)
     train, test = _train_test_split_by_window(window, seed=0)
     result = _binary_state_result(Z_enc, Z_last, degree, per_row_block,
                                   train, test, node_id, eff_source,
                                   torch.device("cpu"), Z_pred=Z_pred,
                                   per_row_prev=per_row_prev,
-                                  deg_hist=deg_hist, horizon=horizon)
+                                  deg_hist=deg_hist, horizon=horizon,
+                                      Z_prev=Z_prev)
     out_path = Path(jodie_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
@@ -765,24 +1152,37 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
         mlp_dim=saved_args.get("mlp_dim", 512),
         dropout=saved_args.get("dropout", 0.1),
         use_attention_mask=not saved_args.get("no_attention_mask", True),
-        # mask_scheme, residual_head etc. have no parameters, so
-        # load_state_dict can't catch a mismatch — restore them from args.
-        residual_head=saved_args.get("residual_head", False),
+        # residual_head / latent_norm have no parameters, so load_state_dict
+        # can't catch a mismatch, and the edge head must exist for its weights
+        # to load — restore all of them from the training args.
+        **predictor_flags_from_args(saved_args),
     ).to(device)
     predictor.load_state_dict(ckpt["predictor"])
 
     # Latents (+ per-row degree for the baseline probe, + absolute bin for
     # dynamic labels).
     (Z_enc, Z_last, Z_pred, window, node_id, degree, deg_hist,
-     abs_bin, horizon) = collect_test_latents(
+     abs_bin, horizon, Z_prev) = collect_test_latents(
         encoder, predictor, loader,
         history_size=saved_args.get("history_size", 3),
         device=device,
     )
+    train, test = _train_test_split_by_window(window, seed=0)
+    if task == "ranking":
+        # Per-step label distribution (tgbn_*), NDCG@10 per row.
+        Y, valid, Yprev, prev_valid, Yavg, avg_valid = _per_row_label_vectors(
+            ds, node_id, abs_bin, horizon, history_size=saved_args.get("history_size", 3))
+        result = _ranking_state_result(Z_enc, Z_last, Y, valid, Yprev, prev_valid,
+                                       train, test, node_id, "dataset",
+                                       Z_pred=Z_pred, deg_hist=deg_hist,
+                                       horizon=horizon, Yavg=Yavg, avg_valid=avg_valid)
+        out_path = Path(jepa_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
+        with open(out_path, "w") as f:
+            json.dump(result, f, indent=2)
+        return result, out_path
     # Labels: dynamic per-(bin, node) when available, else static per-node.
     per_row_block, block_labels, eff_source, per_row_prev = _per_row_labels(
-        ds, node_id, abs_bin, label_source, task)
-    train, test = _train_test_split_by_window(window, seed=0)
+        ds, node_id, abs_bin, label_source, task, horizon=horizon)
 
     if task == "binary":
         # State-label probe: per-user binary (ban / no ban). Use AUROC +
@@ -794,7 +1194,8 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
                                       train, test, node_id, eff_source,
                                       device, Z_pred=Z_pred,
                                       per_row_prev=per_row_prev,
-                                      deg_hist=deg_hist, horizon=horizon)
+                                      deg_hist=deg_hist, horizon=horizon,
+                                      Z_prev=Z_prev)
         out_path = Path(jepa_ckpt).parent / _state_probe_name(eff_source, split)
     elif block_labels is None:
         # Dynamic multiclass state (synthetic_dyn community labels): every row
@@ -805,7 +1206,16 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
                                           eff_source, Z_pred=Z_pred,
                                           deg_hist=deg_hist, horizon=horizon,
                                           latents=getattr(ds, "latents", None),
-                                          abs_bin=abs_bin)
+                                          abs_bin=abs_bin, ds=ds, Z_prev=Z_prev)
+        out_path = Path(jepa_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
+    elif eff_source == "dataset":
+        # Static per-node classes (cldg_dblp / cldg_patent): node-level split,
+        # same file and columns as the state probes, so the forecast column
+        # is compared with copy-last exactly as on the dynamic tasks.
+        result = _multiclass_static_result(Z_enc, Z_last, per_row_block, node_id,
+                                           eff_source, Z_pred=Z_pred,
+                                           deg_hist=deg_hist, horizon=horizon,
+                                           Z_prev=Z_prev)
         out_path = Path(jepa_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
     else:
         n_classes = int(block_labels.max() + 1) if (block_labels >= 0).any() else 0
@@ -813,6 +1223,8 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
                                      "multiclass", device=torch.device("cpu"))
         jep_probe = train_node_probe(Z_pred, per_row_block, train, test,
                                      "multiclass", device=torch.device("cpu"))
+        for pr in (enc_probe, jep_probe):
+            pr.pop("_test_rows", None); pr.pop("_pred_test", None)
         result = {
             "task": "multiclass",
             "label_source": label_source,
@@ -867,10 +1279,19 @@ def main():
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--num_workers", type=int, default=2)
     p.add_argument("--label_source", choices=["louvain", "dataset"],
-                   default="louvain")
-    p.add_argument("--task", choices=["multiclass", "binary"],
+                   default="louvain",
+                   help="Where multiclass labels come from: Louvain "
+                        "communities (default, diagnostic) or the dataset's "
+                        "own per-node classes (cldg_dblp / cldg_patent: static "
+                        "node classification with a NODE-level split, written "
+                        "to state_probe.json).")
+    p.add_argument("--task", choices=["multiclass", "binary", "ranking"],
                    default="multiclass",
-                   help="'multiclass' uses Louvain communities by default and "
+                   help="'ranking' (tgbn_trade): each row's label is a share "
+                        "vector over the nations, a linear head to C scores is "
+                        "fitted and scored with NDCG@10 (TGB's metric); "
+                        "label_persistence = last observed vector. "
+                        "'multiclass' uses Louvain communities by default and "
                         "reports accuracy + macro-F1; on a dataset exposing "
                         "DYNAMIC multiclass labels (synthetic_dyn "
                         "--synth_state_target community) it becomes the "
@@ -959,6 +1380,28 @@ def main():
         print(f"  [{tag}] {line}(switch rows={result['n_switch_test']}, "
               f"{100*result['switch_rate_test']:.2f}%)  -> {out}")
 
+    def _print_ranking(tag, result, out, has_jepa):
+        def _col(name):
+            r = result.get(name)
+            return "" if r is None else f"{name} ndcg@10={r['ndcg10_test']:.4f}  "
+        line = (_col("label_persistence") + _col("label_moving_average")
+                + _col("encoder_oracle") + _col("encoder_last")
+                + (_col("jepa") if has_jepa else "") + _col("degree_history_baseline"))
+        print(f"  [{tag}] {line}(rows={result['n_valid_rows']})  -> {out}")
+
+    def _print_static(tag, result, out, has_jepa):
+        def _col(name):
+            r = result.get(name)
+            if r is None:
+                return ""
+            return f"{name} acc={r['acc_test']:.4f}/f1={r['macro_f1_test']:.4f}  "
+        line = (_col("encoder_oracle") + _col("encoder_last")
+                + (_col("jepa") if has_jepa else "")
+                + _col("degree_history_baseline"))
+        print(f"  [{tag}] {line}(classes={result['n_classes_seen']}, "
+              f"test nodes={result['n_nodes_test']}, rows={result['n_valid_rows']})"
+              f"  -> {out}")
+
     def _print_binary(tag, result, out, has_jepa):
         def _col(name):
             r = result.get(name)
@@ -990,6 +1433,10 @@ def main():
                 _print_binary(tag, result, out, has_jepa=True)
             elif result.get("task") == "multiclass_state":
                 _print_state(tag, result, out, has_jepa=True)
+            elif result.get("task") == "multiclass_static":
+                _print_static(tag, result, out, has_jepa=True)
+            elif result.get("task") == "ranking":
+                _print_ranking(tag, result, out, has_jepa=True)
             else:
                 print(f"  [{tag}] enc acc={result['encoder']['acc_test']:.4f}  "
                       f"jepa acc={result['jepa']['acc_test']:.4f}  "
@@ -1027,6 +1474,10 @@ def main():
                 _print_binary(tag, result, out, has_jepa=False)
             elif result.get("task") == "multiclass_state":
                 _print_state(tag, result, out, has_jepa=False)
+            elif result.get("task") == "multiclass_static":
+                _print_static(tag, result, out, has_jepa=False)
+            elif result.get("task") == "ranking":
+                _print_ranking(tag, result, out, has_jepa=False)
             else:
                 print(f"  [{tag}] enc acc={result['encoder']['acc_test']:.4f}  "
                       f"(n_classes={result['n_classes_seen']}, "

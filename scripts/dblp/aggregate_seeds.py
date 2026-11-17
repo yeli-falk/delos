@@ -16,7 +16,6 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import mean, stdev
 
-import re
 
 
 METRICS = ("MRR", "Hits@1", "Hits@3", "Hits@10")

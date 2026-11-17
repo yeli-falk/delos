@@ -8,14 +8,26 @@
 #SBATCH --time=12:00:00
 #SBATCH --partition=gpu
 #
-# DyG-JEPA ABLATION on the MOOC node-state task: one component removed per
+# DyG-JEPA ABLATION on a node-state task (DATASET=mooc by default; any dataset
+# with a dynamic BINARY state works -- reddit, wikipedia, nyc_taxi, bts_flights,
+# synthetic_dyn -- since the probe below is --task binary): one component removed per
 # row, everything else held at the final recipe (cosine-EMA target, trained
 # encoder, node masking, residual head, change-weighted loss, pretrained
 # encoder, no structural attention mask).
 #
+# Base model (BASE env, default ema_cos): which main-table DyG-JEPA row every
+# arm is a removal from.
+#   BASE=ema_cos   --train_encoder --ema_target --ema_schedule cosine   (= jepa_ema_cos)
+#   BASE=ema       --train_encoder --ema_target                         (= jepa_ema)
+# The EMA-schedule row flips with the base: `const_ema` (w/o cosine anneal)
+# exists only under ema_cos, `cos_ema` (+ cosine anneal) only under ema. Cells
+# of the two bases never collide: ema_cos writes abl_<arm>_s<seed>/, ema writes
+# abl_ema_<arm>_s<seed>/, and the table is built per base.
+#
 # Arms (row label in the table -> what changes vs `full`):
-#   full           the final model: --train_encoder --ema_target --ema_schedule cosine
-#   const_ema      w/o cosine anneal          (--ema_schedule const)
+#   full           the base model (see BASE above)
+#   const_ema      w/o cosine anneal          (--ema_schedule const)   [BASE=ema_cos only]
+#   cos_ema        + cosine anneal            (--ema_schedule cosine)  [BASE=ema only]
 #   no_target_net  w/o EMA target             (--train_encoder alone; same-encoder targets)
 #   frozen_enc     w/o encoder training       (predictor only, pretrained encoder frozen)
 #   no_node_mask   w/o node masking           (--mask_scheme future_forecast)
@@ -36,8 +48,9 @@
 # off) are not comparable -- use a fresh ROOT.
 #
 # Reuse: four arms are byte-identical to arms of slurm_all_methods.sh
-# (full=jepa_ema_cos, const_ema=jepa_ema, no_target_net=jepa_naive,
-# frozen_enc=jepa_frozen). If that run's state_probe.json exists under $ROOT it
+# (full=jepa_ema_cos or jepa_ema, const_ema/cos_ema=the other one,
+# no_target_net=jepa_naive, frozen_enc=jepa_frozen). If that run's
+# state_probe.json exists under $ROOT it
 # is used as-is and nothing is retrained. Every other arm writes to
 # $ROOT/abl_<arm>_s<seed>/. Every stage skips when its output exists, so the
 # job is resumable and the table can be regenerated at any time.
@@ -47,8 +60,14 @@
 #   sbatch --array=0-29%4 scripts/classification/slurm_ablation_mooc.sh
 #   bash scripts/classification/slurm_ablation_mooc.sh table         # LaTeX table (no GPU)
 #
+# Constant-EMA base:   BASE=ema sbatch --array=0-32%4 scripts/classification/slurm_ablation_mooc.sh
+#                      BASE=ema bash scripts/classification/slurm_ablation_mooc.sh table
 # One arm, one seed:   ARMS=no_pretrain SEEDS=42 sbatch --array=0 scripts/classification/slurm_ablation_mooc.sh
 # Without SLURM:       ARMS="full no_node_mask" SEEDS="42" bash scripts/classification/slurm_ablation_mooc.sh
+#
+# Per-arm encoder flags: ENC_HP_<arm> overrides ENC_HP for that arm, e.g.
+#   ENC_HP="--encoder_lr 1e-4 --ema_momentum 0.996" \
+#   ENC_HP_const_ema="--encoder_lr 1e-4 --ema_momentum 0.999" sbatch ...
 #
 # Tuned flags: pass the SAME ones the main table used, or the `full` row will
 # not match it:
@@ -63,8 +82,26 @@ cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-# --- grid -------------------------------------------------------------------
-DEFAULT_ARMS="full const_ema no_target_net frozen_enc no_node_mask input_space no_change_w no_residual no_pretrain mlp_pred no_attn_mask"
+# --- base model + grid -------------------------------------------------------
+# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
+# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# trainers' default spans the whole --epochs budget, which early stopping
+# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
+# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
+# was the constant arm. 50 epochs is below every observed run length, so the
+# schedule finishes while the predictor still trains. 0 = whole run (legacy).
+# Same value for every arm and method so no row gets its own schedule.
+EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
+ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
+BASE="${BASE:-ema_cos}"
+case "$BASE" in
+    ema_cos) FULL="--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG"
+             FULL_STEM="jepa_ema_cos"; ABL_PREFIX="abl"; SCHED_ARM="const_ema" ;;
+    ema)     FULL="--train_encoder --ema_target"
+             FULL_STEM="jepa_ema";     ABL_PREFIX="abl_ema"; SCHED_ARM="cos_ema" ;;
+    *)       echo "[FATAL] BASE must be ema_cos or ema, got '$BASE'" >&2; exit 2 ;;
+esac
+DEFAULT_ARMS="full $SCHED_ARM no_target_net frozen_enc no_node_mask input_space no_change_w no_residual no_pretrain mlp_pred no_attn_mask"
 ARMS="${ARMS:-$DEFAULT_ARMS}"
 SEEDS="${SEEDS:-42 43 44}"
 DATASET="${DATASET:-mooc}"
@@ -83,7 +120,7 @@ if [[ "${1:-}" == "--list" ]]; then
 fi
 if [[ "${1:-}" == "table" ]]; then
     exec python scripts/classification/aggregate_ablation.py \
-        --dataset "$SHORT" --root "$ROOT" --seeds $SEEDS --arms $ARMS --latex "${@:2}"
+        --dataset "$SHORT" --root "$ROOT" --base "$BASE" --seeds $SEEDS --arms $ARMS --latex "${@:2}"
 fi
 
 # --- interpreter (same resolution as slurm_all_methods.sh) --------------------
@@ -106,13 +143,35 @@ else
 fi
 echo "[env] python=$(command -v "$PY")"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
+# Every cell trains on CUDA. Running this with `bash` on a login node therefore
+# dies inside torch.load with a device error after loading the dataset; say so
+# up front instead. `--list` and `table` never reach here. ALLOW_CPU=1 overrides
+# (the trainer still asks for CUDA, so this is for debugging the shell only).
+if [[ "${ALLOW_CPU:-0}" != "1" ]] \
+   && ! "$PY" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+    echo "[FATAL] no CUDA device visible, and every cell trains with --device cuda." >&2
+    echo "        Submit the job instead of running it here:" >&2
+    echo "          sbatch --array=0-<N-1>%4 $0   (N from '$0 --list')" >&2
+    echo "        (--list and 'table' run fine on a login node.)" >&2
+    exit 6
+fi
 
 # --- shared config (identical to the main classification table) -------------
-case "$DATASET" in mooc|reddit|wikipedia|jodie_mooc|jodie_reddit|jodie_wikipedia) ;;
-    *) echo "[FATAL] DATASET must be a JODIE dataset, got '$DATASET'" >&2; exit 2 ;;
+# Every dataset whose node label is a DYNAMIC BINARY state, which is what the
+# probe below scores (--task binary). The ranking (tgbn_*) and static-class
+# (cldg_*) datasets need a different probe task and are rejected here rather
+# than silently probed as binary.
+case "$DATASET" in
+    mooc|reddit|wikipedia|jodie_mooc|jodie_reddit|jodie_wikipedia) ;;
+    nyc_taxi|bts_flights|synthetic_dyn) ;;
+    *) echo "[FATAL] DATASET must have a dynamic binary node state: mooc, reddit, " \
+            "wikipedia, nyc_taxi, bts_flights or synthetic_dyn; got '$DATASET'" >&2; exit 2 ;;
 esac
-CSV="dataset/jodie/${SHORT}.csv"
-[[ -f "$CSV" ]] || { echo "[FATAL] $CSV missing (wget http://snap.stanford.edu/jodie/${SHORT}.csv -O $CSV on the login node)" >&2; exit 10; }
+case "$DATASET" in
+    mooc|reddit|wikipedia|jodie_mooc|jodie_reddit|jodie_wikipedia)
+        CSV="dataset/jodie/${SHORT#jodie_}.csv"
+        [[ -f "$CSV" ]] || { echo "[FATAL] $CSV missing (wget http://snap.stanford.edu/jodie/${SHORT#jodie_}.csv -O $CSV on the login node)" >&2; exit 10; } ;;
+esac
 
 NW="${SLURM_CPUS_PER_TASK:-8}"
 PROBE_SPLIT="${PROBE_SPLIT:-test}"
@@ -131,13 +190,16 @@ JEPA_COMMON="$DATA_ARG $WINDOW_ARG $EARLY_STOP_ARG $ENCODER_ARG \
     --lr ${LR:-5e-4} --probe_epochs ${JEPA_PROBE_EPOCHS:-3} --num_workers $NW --device cuda"
 PROBE_COMMON="--task binary --state_label_mode $STATE_MODE \
     --probe_split $PROBE_SPLIT --device cuda --batch_size $PROBE_BATCH --num_workers $NW"
-FULL="--train_encoder --ema_target --ema_schedule cosine"
+# $FULL / $FULL_STEM / $SCHED_ARM are set from $BASE in the grid section above.
 
 # arm -> "<flags>|<residual 0/1>|<change_w>|<use_ckpt 0/1>|<no_attn_mask 0/1>|<legacy stem or ->"
 arm_spec() {
     case "$1" in
-        full)          echo "$FULL|1|2.0|1|0|jepa_ema_cos" ;;
-        const_ema)     echo "--train_encoder --ema_target|1|2.0|1|0|jepa_ema" ;;
+        full)          echo "$FULL|1|2.0|1|0|$FULL_STEM" ;;
+        const_ema)     [[ "$BASE" == "ema_cos" ]] || { echo "__UNKNOWN__"; return; }
+                       echo "--train_encoder --ema_target|1|2.0|1|0|jepa_ema" ;;
+        cos_ema)       [[ "$BASE" == "ema" ]] || { echo "__UNKNOWN__"; return; }
+                       echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG|1|2.0|1|0|jepa_ema_cos" ;;
         no_target_net) echo "--train_encoder|1|2.0|1|0|jepa_naive" ;;
         frozen_enc)    echo "|1|2.0|1|0|jepa_frozen" ;;
         no_node_mask)  echo "$FULL --mask_scheme future_forecast|1|2.0|1|0|-" ;;
@@ -188,7 +250,7 @@ ensure_encoder() {   # $1 = seed
 run_cell() {         # $1 = arm, $2 = seed
     local arm="$1" seed="$2"
     local spec; spec="$(arm_spec "$arm")"
-    [[ "$spec" == "__UNKNOWN__" ]] && fail "unknown arm '$arm'" 12
+    [[ "$spec" == "__UNKNOWN__" ]] && fail "unknown arm '$arm' for BASE=$BASE (const_ema needs BASE=ema_cos, cos_ema needs BASE=ema)" 12
     IFS='|' read -r vflags residual change_w use_ckpt attn legacy <<< "$spec"
     local probe_file="state_probe$([[ "$PROBE_SPLIT" == "val" ]] && echo _val).json"
 
@@ -197,7 +259,7 @@ run_cell() {         # $1 = arm, $2 = seed
         echo "[reuse] $arm s$seed <- $ROOT/${legacy}_s${seed}/$probe_file"
         return 0
     fi
-    local out="$ROOT/abl_${arm}_s${seed}"
+    local out="$ROOT/${ABL_PREFIX}_${arm}_s${seed}"
     if [[ -f "$out/$probe_file" ]]; then
         echo "[skip] $arm s$seed complete: $out/$probe_file"
         return 0
@@ -210,7 +272,16 @@ run_cell() {         # $1 = arm, $2 = seed
     [[ "$change_w" != "0" ]] && base="$base --change_weight $change_w"
     local ckpt_arg="" enc_hp=""
     if [[ "$use_ckpt" == "1" ]]; then ensure_encoder "$seed"; ckpt_arg="--encoder_ckpt $ENC_CKPT"; fi
-    [[ "$vflags" == *"--train_encoder"* ]] && enc_hp="$ENC_HP"
+    # ENC_HP_<arm> overrides ENC_HP for one arm, as VARIANT_HP_<arm> does in the
+    # main table. Needed when an arm's tuned value is not comparable to the full
+    # model's: under `cosine`, --ema_momentum is the START of an anneal to 1.0,
+    # under `const` it is the fixed momentum, so the two were tuned separately
+    # (ENC_HP_const_ema="--encoder_lr 1e-4 --ema_momentum 0.999"). Say so in the
+    # caption: that row then varies the schedule AND its momentum, which is the
+    # fair comparison between schedules rather than a one-flag ablation.
+    local arm_enc=""
+    eval "arm_enc=\${ENC_HP_${arm}:-}"
+    [[ "$vflags" == *"--train_encoder"* ]] && enc_hp="${arm_enc:-$ENC_HP}"
     local attn_arg=""
     [[ "$attn" == "1" ]] && attn_arg="--no_attention_mask"
 
@@ -245,7 +316,7 @@ run_cell() {         # $1 = arm, $2 = seed
     fi
 }
 
-echo "[config] DATASET=$DATASET ROOT=$ROOT ARMS='$ARMS' SEEDS='$SEEDS' BASE_HP='$BASE_HP' ENC_HP='$ENC_HP'"
+echo "[config] DATASET=$DATASET ROOT=$ROOT BASE=$BASE ARMS='$ARMS' SEEDS='$SEEDS' BASE_HP='$BASE_HP' ENC_HP='$ENC_HP'"
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
     cell="${GRID[$SLURM_ARRAY_TASK_ID]:-}"
     [[ -n "$cell" ]] || fail "array index $SLURM_ARRAY_TASK_ID outside grid of ${#GRID[@]}" 2
@@ -255,4 +326,4 @@ else
 fi
 
 echo; echo "[done] regenerate the table with:"
-echo "  bash scripts/classification/slurm_ablation_mooc.sh table"
+echo "  BASE=$BASE bash scripts/classification/slurm_ablation_mooc.sh table"

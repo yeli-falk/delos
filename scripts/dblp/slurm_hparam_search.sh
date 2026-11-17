@@ -53,7 +53,8 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 # -----------------------------------------------------------------------------
 # Grid definition -- edit these, then update --array=0-N above accordingly.
 # -----------------------------------------------------------------------------
-LRS=(5e-4 1e-3 2e-3)
+# Same shared --lr grid as scripts/{classification,linkpred,regression}/slurm_hparam_search.sh.
+LRS=(1e-4 1e-3 1e-2)
 MASKS=(20 30 50)
 DEPTHS=(2 4)
 DROPOUTS=(0.1 0.2)
