@@ -10,10 +10,10 @@
 #SBATCH --partition=gpu
 #SBATCH --array=0-35
 #
-# Hyperparameter search for DyG-JEPA (src/train/train_dyg_jepa.py).
+# Hyperparameter search for DELOS (src/train/train_delos.py).
 #
 # A SLURM array job that sweeps a Cartesian grid over the four most impactful
-# DyG-JEPA knobs. The array task id is decoded into one grid cell, each cell
+# DELOS knobs. The array task id is decoded into one grid cell, each cell
 # lands in its own outputs/ directory, and a companion aggregator ranks them.
 #
 #   LRS      : optimiser learning rate          (--lr)
@@ -126,7 +126,7 @@ fi
 # attention-mask behaviour (see scripts/dblp/slurm_train.sh and the refactor
 # note in memory).
 # -----------------------------------------------------------------------------
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG $ENC_ARG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG $ENC_ARG \
     --history_size 3 --num_preds 1 \
     --encoder_kind tgcn --encoder_hidden "$ENCODER_HIDDEN" --node_dim "$NODE_DIM" \
     --num_masked_nodes "$MASK" --depth "$DEPTH" --heads "$HEADS" --mlp_dim "$MLP_DIM" \

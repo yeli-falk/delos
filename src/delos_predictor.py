@@ -269,8 +269,8 @@ class ContinuousTimeEmbedding(nn.Module):
         return self.proj(torch.cat([x.sin(), x.cos()], dim=-1))
 
 
-class DyGJEPAPredictor(nn.Module):
-    """DyG-JEPA spatio-temporal predictor over (timestep, node) tokens.
+class DELOSPredictor(nn.Module):
+    """DELOS spatio-temporal predictor over (timestep, node) tokens.
 
     Configurable masking scheme:
       - ``node_mask`` (default): hide ``num_masked_nodes`` whole nodes across
@@ -316,7 +316,7 @@ class DyGJEPAPredictor(nn.Module):
         self.attn_impl = attn_impl
         if mask_scheme not in ("node_mask", "future_forecast"):
             raise ValueError(
-                f"DyGJEPAPredictor mask_scheme must be 'node_mask' or "
+                f"DELOSPredictor mask_scheme must be 'node_mask' or "
                 f"'future_forecast', got {mask_scheme!r}. For "
                 f"'trajectory_block' use TrajectoryJEPAPredictor / build_predictor.")
         self.mask_scheme = mask_scheme
@@ -821,7 +821,8 @@ class TrajectoryJEPAPredictor(nn.Module):
 
 
 # Backward-compatible alias: the predictor used to be named MaskedNodePredictor.
-MaskedNodePredictor = DyGJEPAPredictor
+MaskedNodePredictor = DELOSPredictor
+DyGJEPAPredictor = DELOSPredictor
 
 
 class PlainForecaster(nn.Module):
@@ -841,10 +842,10 @@ class PlainForecaster(nn.Module):
     Capacity is set by ``mlp_dim`` (hidden width) and ``depth`` (layers),
     reusing the SAME CLI flags as the transformer so param counts can be
     matched for a fair ablation. Supports ``residual_head`` so, exactly like
-    DyGJEPAPredictor, the forecast starts at copy-last -- keeping the two
+    DELOSPredictor, the forecast starts at copy-last -- keeping the two
     predictors' training floor identical.
 
-    Drop-in for DyGJEPAPredictor: same ``forward`` / ``inference`` signatures,
+    Drop-in for DELOSPredictor: same ``forward`` / ``inference`` signatures,
     returns ``(pred, empty_masked_idx, None)``. ``adj`` / ``active`` are
     accepted for interface parity and DELIBERATELY IGNORED, so future graph
     structure can never leak regardless of any attention-mask flag.
@@ -880,7 +881,7 @@ class PlainForecaster(nn.Module):
             self.body = nn.Sequential(*layers)
         self.to_out = nn.Linear(mlp_dim, P * D)
 
-        # Residual parameterisation parity with DyGJEPAPredictor: zero-init the
+        # Residual parameterisation parity with DELOSPredictor: zero-init the
         # head so the forecast STARTS at copy-last (anchor = last history
         # latent) and can only add dynamics on top. 
         if residual_head:
@@ -936,7 +937,7 @@ def predictor_flags_from_args(saved: "dict | None") -> dict:
       validation loss and the masked analyses do.
 
     ``latent_norm`` follows ``--target_norm`` exactly as the trainer sets it
-    (``train_dyg_jepa.build_jepa_predictor``). PlainForecaster ignores the keys
+    (``train_delos.build_jepa_predictor``). PlainForecaster ignores the keys
     it does not use, so the result is safe for every ``mask_scheme``.
     """
     saved = saved or {}
@@ -959,9 +960,9 @@ def predictor_flags_from_args(saved: "dict | None") -> dict:
 
 
 def build_predictor(mask_scheme: str, **cfg):
-    """Construct the DyG-JEPA predictor for a masking scheme.
+    """Construct the DELOS predictor for a masking scheme.
 
-    - ``node_mask`` / ``future_forecast`` -> :class:`DyGJEPAPredictor`
+    - ``node_mask`` / ``future_forecast`` -> :class:`DELOSPredictor`
       (expects cfg: num_nodes, node_dim, history_frames, pred_frames, ...).
     - ``mlp_forecast`` / ``gru_forecast``  -> :class:`PlainForecaster`
       (the graph-free Tier-2 ablation control; transformer-only cfg keys such
@@ -970,7 +971,7 @@ def build_predictor(mask_scheme: str, **cfg):
       (expects cfg: num_windows, num_nodes, node_dim, ...).
     """
     if mask_scheme in ("node_mask", "future_forecast"):
-        return DyGJEPAPredictor(mask_scheme=mask_scheme, **cfg)
+        return DELOSPredictor(mask_scheme=mask_scheme, **cfg)
     if mask_scheme in ("mlp_forecast", "gru_forecast"):
         kind = "mlp" if mask_scheme == "mlp_forecast" else "gru"
         return PlainForecaster(kind=kind, **cfg)

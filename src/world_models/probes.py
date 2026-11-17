@@ -1,4 +1,4 @@
-"""Task-adjustable linear probes for DyG-JEPA (Block 4).
+"""Task-adjustable linear probes for DELOS (Block 4).
 
 One interface, three downstream tasks. ``build_probe(task, in_dim, ...)``
 returns the right readout head; ``fit_probe`` / ``evaluate_probe`` dispatch to
@@ -25,9 +25,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Probe heads + ranking metrics still live in graph_jepa_encoder (imported by
+# Probe heads + ranking metrics still live in delos_encoder (imported by
 # many scripts); reuse them here rather than duplicating.
-from src.world_models.graph_jepa_encoder import (
+from src.world_models.delos_encoder import (
     LinearProbe,
     LinkPredictionProbe,
     link_ranking_metrics,
@@ -725,7 +725,7 @@ class RegressionForecastHead(nn.Module):
     predictor: one embedding of the observed history, num_preds horizon-
     specific readouts. Gives each baseline a fair learned forecast from its
     frozen representation, evaluated with the same persistence/inflection
-    protocol as the DyG-JEPA predictor rollout.
+    protocol as the DELOS predictor rollout.
     """
 
     def __init__(self, in_dim: int, num_preds: int, hidden_dim: int = 0):
@@ -874,7 +874,7 @@ def evaluate_regression_encoder_only(encoder, head, loader, history_size,
     Mirrors evaluate_regression_dynamic exactly (same accounting helpers,
     same ``valid_mode`` and ``signal_obs`` handling) but the forecast comes
     from head(z_hist[:, -1]) instead of a predictor rollout, so baseline
-    encoders sit in the same table as DyG-JEPA.
+    encoders sit in the same table as DELOS.
     """
     if horizons is None:
         horizons = tuple(range(num_preds))

@@ -3,7 +3,7 @@ import torch
 
 from src.baselines.bgrl.bgrl import BGRL, bgrl_loss, ema_momentum
 from src.baselines.bgrl.train_bgrl import lr_at
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def _ring(n=8):

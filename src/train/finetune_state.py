@@ -13,7 +13,7 @@ starting weights differ (``--init``):
   random    encoder and predictor from scratch      (the supervised floor)
   encoder   encoder from --encoder_ckpt, predictor from scratch
             (edge-mask pretraining alone, or a CLDG / DDGCL / IDOL encoder)
-  jepa      encoder AND predictor from --jepa_ckpt   (the full DyG-JEPA init)
+  jepa      encoder AND predictor from --jepa_ckpt   (the full DELOS init)
 
 ``--jepa_ckpt`` is read for the predictor ARCHITECTURE under every init, so the
 rows share depth / heads / masking / residual head exactly; its weights are
@@ -54,7 +54,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.cjepa_graph_predictor import build_predictor, compute_graph_jepa_loss
+from src.delos_predictor import build_predictor, compute_graph_jepa_loss
 from src.custom_codes.dataset_factory import (
     add_dataset_cli_flags,
     build_dynamic_dataset,
@@ -68,7 +68,7 @@ from src.train.engine import (
     setup_output_dir,
 )
 from src.train.jepa import EMAEncoder
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 from src.world_models.probes import graph_inputs, hist_adj
 
 
@@ -418,7 +418,7 @@ def main():
     # initialisation
     p.add_argument("--init", choices=["random", "encoder", "jepa"], required=True)
     p.add_argument("--jepa_ckpt", default=None,
-                   help="DyG-JEPA best.ckpt. Supplies the predictor ARCHITECTURE "
+                   help="DELOS best.ckpt. Supplies the predictor ARCHITECTURE "
                         "under every --init; its weights only under --init jepa.")
     p.add_argument("--encoder_ckpt", default=None,
                    help="Encoder checkpoint for --init encoder (pretrain_encoder "

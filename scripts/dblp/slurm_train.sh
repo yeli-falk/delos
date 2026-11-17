@@ -9,13 +9,13 @@
 #SBATCH --time=08:00:00
 #SBATCH --partition=gpu
 #
-# DyG-JEPA training, parameterised over --data_source. Auto-detects a matching
+# DELOS training, parameterised over --data_source. Auto-detects a matching
 # pretrained encoder under outputs/encoders/<dataset>_encoder/ (from
 # slurm_pretrain_encoder.sh); trains from scratch if none is found.
 #
 # Pick the dataset with the DATASET env var (default: dblp), e.g.
 #   sbatch --export=ALL,DATASET=metr_la scripts/dblp/slurm_train.sh
-# Extra args are forwarded to train_dyg_jepa.py and override the defaults below.
+# Extra args are forwarded to train_delos.py and override the defaults below.
 
 set -euo pipefail
 
@@ -87,7 +87,7 @@ else
     echo "[encoder] not found in $ENC_DIR; training encoder from scratch"
 fi
 
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG $ENC_ARG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG $ENC_ARG \
     --downstream_task "$DOWNSTREAM" $SHAPE \
     --encoder_kind "$ENC_KIND" \
     --encoder_hidden 128 \

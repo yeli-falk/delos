@@ -1,4 +1,4 @@
-"""Universal discrete-time dynamic-graph (DTDG) data pipeline for DyG-JEPA.
+"""Universal discrete-time dynamic-graph (DTDG) data pipeline for DELOS.
 
 This subpackage holds the shared machinery that every dynamic-graph dataset in
 the project reuses, so the per-dataset files in ``src/custom_codes`` shrink to

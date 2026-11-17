@@ -37,7 +37,7 @@ head is ``fc1 -> ELU -> fc2``, ``semi_loss`` has the inter + intra
 denominator, Cora defaults ``tau=0.4, p_e=(0.2, 0.4), p_f=(0.3, 0.4)``. It
 is reimplemented on this project's dense-adjacency snapshots so it needs no
 PyG and consumes the pipeline's node features, so the encoder input matches
-DyG-JEPA exactly.
+DELOS exactly.
 
 The *dynamic-graph protocol* is the standard one for a static method on a
 snapshot sequence (the per-snapshot GCN rows of EvolveGCN / ROLAND): every
@@ -55,7 +55,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 
 def drop_edges(adj: torch.Tensor, p: float,

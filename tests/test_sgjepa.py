@@ -10,7 +10,7 @@ from src.baselines.sgjepa.sgjepa import (
     sinusoidal_time_encoding,
     spike,
 )
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def test_spike_forward_binary_and_surrogate_grad():

@@ -13,7 +13,7 @@ event stream, with three mechanisms (all kept here, matching the reference):
   2. The temporal PROJECTION operator that forecasts an embedding forward in
      time without observing new events:
          u_hat(t + dt) = (1 + w(dt)) * u(t)
-     This is JODIE's forecasting mechanism -- the analogue of DyG-JEPA's
+     This is JODIE's forecasting mechanism -- the analogue of DELOS's
      predictor -- and provides the `jepa` column in our state probe.
   3. Self-supervised next-item-embedding prediction, statics included exactly
      as in the reference:

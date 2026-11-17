@@ -4,18 +4,18 @@ DyG2Vec).
 
 These baselines differ ONLY in their self-supervised objective. Everything that
 could otherwise make their numbers incomparable lives here, so it is written
-once and matches DyG-JEPA:
+once and matches DELOS:
 
   * :func:`split_snapshots` — chronological train / val snapshot ranges derived
     from the dataset's own ``SPLITS``. The train range is exactly the span
-    ``global_window_starts`` hands DyG-JEPA's train windows, and the val range
+    ``global_window_starts`` hands DELOS's train windows, and the val range
     is exactly its val targets — no split arithmetic is duplicated per baseline.
   * :class:`BestValTracker` — best-val-loss checkpoint selection plus the same
-    early-stopping rule as ``train_dyg_jepa._update_best`` (an improvement must
+    early-stopping rule as ``train_delos._update_best`` (an improvement must
     beat the running best by more than ``min_delta``).
 
 Without these the baselines selected on *train* loss (or simply kept the final
-epoch) while DyG-JEPA selected on val — an asymmetry that flatters the JEPA
+epoch) while DELOS selected on val — an asymmetry that flatters the JEPA
 independently of representation quality.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ class ConstantAdjacency:
     (``.shape``, ``len``, integer and slice indexing, ``.any(axis=0)``) and
     answers each in O(1) by returning the single underlying matrix. That is
     what lets the contrastive baselines run at METR-LA's native 5-minute
-    resolution -- the same snapshots DyG-JEPA sees -- rather than a subsampled
+    resolution -- the same snapshots DELOS sees -- rather than a subsampled
     timeline that would make their columns incomparable.
     """
 
@@ -117,12 +117,12 @@ def split_snapshots(ds, method: str, args=None) -> Tuple[Snapshots, Snapshots]:
       holds the whole timeline in ``ds._ds``, so both ranges are sliced out of
       it here. Train is ``[0, train_end)`` and val is ``[train_end, val_end)``
       — the same chronological boundaries ``global_window_starts`` uses, so no
-      baseline ever trains on a snapshot DyG-JEPA holds out (or vice versa).
+      baseline ever trains on a snapshot DELOS holds out (or vice versa).
     * **fixed topology** (metr_la) -- the wrapper is already per-split and
       carries no global view, so the val range comes from building the val
       split through ``args``. Passing ``args`` is therefore required for those
       datasets; without it there is no way to reach the same val snapshots
-      DyG-JEPA selects on, and silently re-splitting the *train* range instead
+      DELOS selects on, and silently re-splitting the *train* range instead
       would give the baselines a different selection signal than the JEPA arms.
     """
     inner = getattr(ds, "_ds", None)
@@ -164,7 +164,7 @@ def split_snapshots(ds, method: str, args=None) -> Tuple[Snapshots, Snapshots]:
 class BestValTracker:
     """Best-val-loss model selection with optional early stopping.
 
-    Mirrors ``train_dyg_jepa._update_best`` exactly: an epoch counts as an
+    Mirrors ``train_delos._update_best`` exactly: an epoch counts as an
     improvement only if its val loss drops more than ``min_delta`` below the
     running best; ``patience`` non-improving epochs in a row stop training
     (``patience <= 0`` disables stopping but still tracks the best state).

@@ -10,14 +10,14 @@
 #SBATCH --partition=gpu
 #
 # Node classification (JODIE-Reddit ban prediction, the `state_label` task)
-# for DyG-JEPA AND every learned baseline, on a matched encoder architecture.
+# for DELOS AND every learned baseline, on a matched encoder architecture.
 #
-#   methods : dyg-jepa, cldg, ddgcl, idol   (all --encoder_kind gcn)
+#   methods : delos, cldg, ddgcl, idol   (all --encoder_kind gcn)
 #   task    : per-user binary state_label (ever banned).  ~3% positive rate,
 #             so the headline metric is AUROC, NOT accuracy.
 #   probe   : frozen encoder latents -> linear probe (the encoder column is
 #             the common denominator; baselines have no JEPA predictor).
-#             DyG-JEPA additionally reports its JEPA-predictor latent column.
+#             DELOS additionally reports its JEPA-predictor latent column.
 #             A degree-only probe is fit alongside as the trivial baseline
 #             (banned users are simply more active).
 #
@@ -69,7 +69,7 @@ NW=${SLURM_CPUS_PER_TASK:-8}
 # (dynamic cumulative — denser, the practical default), 'event' (dynamic
 # instantaneous — faithful but very sparse on this subset).
 STATE_MODE=${STATE_MODE:-state}
-# Predictor-objective fixes (see train_dyg_jepa.py --help): RESIDUAL=1 turns
+# Predictor-objective fixes (see train_delos.py --help): RESIDUAL=1 turns
 # on the residual head (copy-last as the training floor); CHANGE_W>0 weights
 # the latent MSE toward transition-carrying nodes.
 RESIDUAL=${RESIDUAL:-0}
@@ -83,7 +83,7 @@ MASK_SCHEME=${MASK_SCHEME:-node_mask}
 # oracle: the frozen encoder's latents cap what the predictor can express.
 TRAIN_ENC=${TRAIN_ENC:-0}
 # BASELINES=0 skips the CLDG/DDGCL/IDOL stages entirely (pretrain + probe).
-# Use for DyG-JEPA-only ablations (predictor flags don't affect the
+# Use for DELOS-only ablations (predictor flags don't affect the
 # baselines, so retraining them per variant just duplicates rows).
 BASELINES=${BASELINES:-1}
 # Per-method hyperparameter overrides, appended verbatim to that method's
@@ -140,35 +140,35 @@ DDGCL_DIR="outputs/ddgcl_${TAG}"
 IDOL_DIR="outputs/idol_${TAG}"
 
 # =============================================================================
-# DyG-JEPA: edge-mask encoder pretrain -> C-JEPA train (encoder + predictor)
+# DELOS: edge-mask encoder pretrain -> DELOS train (encoder + predictor)
 # =============================================================================
 # pretrain_encoder.py writes encoder_<src>_<kind>_<pretext>.ckpt (templated,
 # NOT encoder.ckpt) — reference that exact name in stages 2/3. --pretext is
 # pinned to edge_mask (jodie is dynamic-topology) so the filename is stable.
 JEPA_ENC_CKPT="$JEPA_ENC_DIR/encoder_${DATASET}_${ENC_KIND}_edge_mask.ckpt"
 if [[ ! -f "$JEPA_ENC_CKPT" ]]; then
-    echo; echo "=== DyG-JEPA stage 1/2: encoder pretrain -> $JEPA_ENC_DIR ==="
+    echo; echo "=== DELOS stage 1/2: encoder pretrain -> $JEPA_ENC_DIR ==="
     srun --export=ALL python src/train/pretrain_encoder.py $DATA_ARG \
         $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
         --decoder_hidden 64 --mask_rate 0.25 --pretext edge_mask \
         --batch_size "$BATCH" --num_workers "$NW" --device cuda \
         --epochs "$ENC_EPOCHS" --lr 1e-3 \
         --seed "$SEED" --out_dir "$JEPA_ENC_DIR"
-    [[ -f "$JEPA_ENC_CKPT" ]] || { echo "[FATAL] DyG-JEPA pretrain failed" >&2; exit 11; }
+    [[ -f "$JEPA_ENC_CKPT" ]] || { echo "[FATAL] DELOS pretrain failed" >&2; exit 11; }
 else
     echo "[skip] $JEPA_ENC_CKPT exists"
 fi
 
 if [[ ! -f "$JEPA_DIR/best.ckpt" ]]; then
-    echo; echo "=== DyG-JEPA stage 2/2: C-JEPA train -> $JEPA_DIR ==="
-    srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG $JEPA_EXTRA \
+    echo; echo "=== DELOS stage 2/2: DELOS train -> $JEPA_DIR ==="
+    srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG $JEPA_EXTRA \
         $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
         --encoder_ckpt "$JEPA_ENC_CKPT" \
         --num_masked_nodes 30 --depth 4 --heads 4 --mlp_dim 512 \
         --batch_size "$BATCH" --num_workers "$NW" --device cuda \
         --epochs "$JEPA_EPOCHS" --lr 5e-4 --probe_epochs "$JEPA_PROBE_EPOCHS" \
         --seed "$SEED" --out_dir "$JEPA_DIR" $JEPA_HP
-    [[ -f "$JEPA_DIR/best.ckpt" ]] || { echo "[FATAL] DyG-JEPA C-JEPA train failed" >&2; exit 12; }
+    [[ -f "$JEPA_DIR/best.ckpt" ]] || { echo "[FATAL] DELOS train failed" >&2; exit 12; }
 else
     echo "[skip] $JEPA_DIR/best.ckpt exists"
 fi
@@ -225,7 +225,7 @@ fi
 # =============================================================================
 # State probe (node classification) on every checkpoint
 # =============================================================================
-echo; echo "=== state probe: DyG-JEPA (encoder + JEPA columns)  mode=$STATE_MODE ==="
+echo; echo "=== state probe: DELOS (encoder + JEPA columns)  mode=$STATE_MODE ==="
 srun --export=ALL python scripts/dblp/run_block_probe.py \
     --jepa_ckpt "$JEPA_DIR/best.ckpt" \
     --task binary --state_label_mode "$STATE_MODE" \
@@ -253,7 +253,7 @@ srun --export=ALL python - "$JEPA_DIR" "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" <<'P
 import json, sys
 from pathlib import Path
 
-rows = [("dyg-jepa", sys.argv[1]),
+rows = [("delos", sys.argv[1]),
         ("cldg",     sys.argv[2]),
         ("ddgcl",    sys.argv[3]),
         ("idol",     sys.argv[4])]

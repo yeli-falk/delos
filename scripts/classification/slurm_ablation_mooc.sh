@@ -8,14 +8,14 @@
 #SBATCH --time=12:00:00
 #SBATCH --partition=gpu
 #
-# DyG-JEPA ABLATION on a node-state task (DATASET=mooc by default; any dataset
+# DELOS ABLATION on a node-state task (DATASET=mooc by default; any dataset
 # with a dynamic BINARY state works -- reddit, wikipedia, nyc_taxi, bts_flights,
 # synthetic_dyn -- since the probe below is --task binary): one component removed per
 # row, everything else held at the final recipe (cosine-EMA target, trained
 # encoder, node masking, residual head, change-weighted loss, pretrained
 # encoder, no structural attention mask).
 #
-# Base model (BASE env, default ema_cos): which main-table DyG-JEPA row every
+# Base model (BASE env, default ema_cos): which main-table DELOS row every
 # arm is a removal from.
 #   BASE=ema_cos   --train_encoder --ema_target --ema_schedule cosine   (= jepa_ema_cos)
 #   BASE=ema       --train_encoder --ema_target                         (= jepa_ema)
@@ -84,7 +84,7 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 
 # --- base model + grid -------------------------------------------------------
 # Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
 # trainers' default spans the whole --epochs budget, which early stopping
 # (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
 # 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
@@ -295,7 +295,7 @@ run_cell() {         # $1 = arm, $2 = seed
     else
         [[ -f "$out/best.ckpt" ]] && { echo "[resume] interrupted run -> restart"; rm -f "$out/best.ckpt" "$out/history.json"; }
         # Order: recipe, tuned HP, variant flags (argparse keeps the last occurrence).
-        $RUN src/train/train_dyg_jepa.py $JEPA_COMMON $attn_arg $ckpt_arg \
+        $RUN src/train/train_delos.py $JEPA_COMMON $attn_arg $ckpt_arg \
             $base $BASE_HP $vflags $enc_hp --seed "$seed" --out_dir "$out" \
             || { echo "[warn] $arm s$seed training failed"; return 1; }
         [[ -f "$out/best.ckpt" && -f "$out/test_metrics.json" ]] \

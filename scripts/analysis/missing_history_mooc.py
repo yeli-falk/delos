@@ -32,10 +32,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import MaskedNodePredictor, predictor_flags_from_args
+from src.delos_predictor import MaskedNodePredictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import build_dynamic_dataset
 from src.train.analyze_jepa import train_node_probe
-from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
+from src.world_models.delos_encoder import build_encoder, normalize_adjacency
 from src.world_models.probes import corrupt_history_bn, sample_masked_per_example
 
 # reuse the dynamic-label resolver from the block-probe script

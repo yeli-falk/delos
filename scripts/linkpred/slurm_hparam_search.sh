@@ -62,7 +62,7 @@ STAGE="${STAGE:-predictor}"
 SEED="${SEED:-42}"
 BASE_HP="${BASE_HP:-}"
 # ONE learning-rate grid shared by every arm that sweeps --lr: all baselines and
-# DyG-JEPA's own predictor / ema_pred stages. Per-method grids centred on each
+# DELOS's own predictor / ema_pred stages. Per-method grids centred on each
 # paper's default put several winners on a grid EDGE (CLDG lowest, DDGCL / IDOL
 # highest on MOOC) and made "who was tuned harder" depend on the method. A decade
 # ladder spans every reference default (1e-4 DyG2Vec ... 5e-3 STEP / STD-MAE).
@@ -77,7 +77,7 @@ ENC_HP="${ENC_HP:---encoder_lr 5e-4 --ema_momentum 0.999}"
 # per arm keep their indices; "0 10 30" appends the two frozen-start variants).
 EMA_FREEZE="${EMA_FREEZE:-0}"
 # Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
 # trainers' default spans the whole --epochs budget, which early stopping
 # (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
 # 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
@@ -301,7 +301,7 @@ arm_flags() {
         vicreg)      echo "--train_encoder --vicreg_cov 1.0" ;;
         input)       echo "--predict_space input" ;;
         # --- JEPA-recipe variants (2026-09): each flag is opt-in in
-        # train_dyg_jepa.py, so the five arms above are byte-for-byte the old ones.
+        # train_delos.py, so the five arms above are byte-for-byte the old ones.
         ctx)         echo "--mask_encoder_input" ;;
         tnorm)       echo "--target_norm" ;;
         ema_cos)     echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG" ;;
@@ -477,7 +477,7 @@ fi
 flock -u 9; exec 9>&-
 
 # --- train + probe THE VAL SPLIT --------------------------------------------
-srun --export=ALL python src/train/train_dyg_jepa.py \
+srun --export=ALL python src/train/train_delos.py \
     $DATA_ARG $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
     --encoder_ckpt "$ENC_CKPT" --mask_scheme "${MASK_SCHEME:-node_mask}" \
     --downstream_task link_pred --residual_head \

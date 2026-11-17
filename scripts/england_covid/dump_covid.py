@@ -1,7 +1,7 @@
 """Aggregate England COVID forecast metrics across seeds into one table.
 
 Reads every ``test_metrics.json`` written by the all-methods run
-(scripts/england_covid/slurm_all_methods.sh) — DyG-JEPA (full + encoder-only
+(scripts/england_covid/slurm_all_methods.sh) — DELOS (full + encoder-only
 control) and the CLDG/DDGCL/IDOL baselines — groups directories that share a
 base name (stripping the trailing ``_s<seed>``), and reports mean ± std per
 method, per horizon, for both the overall forecast and the inflection subset

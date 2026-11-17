@@ -1,7 +1,7 @@
 """Encoder-side regression arms for the node-signal forecasting table.
 
 Fits a forecast head on an encoder's last-history embedding and evaluates it
-with the SAME persistence + inflection protocol as the DyG-JEPA predictor
+with the SAME persistence + inflection protocol as the DELOS predictor
 (``src/train/probe.py::probe_regression_dynamic``). Works on any regression
 ``--data_source`` — England COVID (dynamic topology) and METR-LA (fixed) both
 resolve through ``probes.graph_inputs``.
@@ -9,7 +9,7 @@ resolve through ``probes.graph_inputs``.
 Two arms, selected by ``--train_encoder``:
 
   frozen (default)     encoder weights fixed, only the head is fit. This is how
-                       CLDG / DDGCL / IDOL and the DyG-JEPA-encoder control are
+                       CLDG / DDGCL / IDOL and the DELOS-encoder control are
                        scored: what does the representation already contain?
   supervised end-to-end
                        ``--train_encoder``: encoder + head optimised jointly on
@@ -21,7 +21,7 @@ Two arms, selected by ``--train_encoder``:
 Both arms share one fit loop (``probes.fit_regression_probe_encoder_only``), so
 their gap is attributable to the encoder, not to a divergent training recipe.
 
-Writes test_metrics.json in the schema DyG-JEPA writes, so the aggregator reads
+Writes test_metrics.json in the schema DELOS writes, so the aggregator reads
 every arm uniformly.
 
 Usage:
@@ -60,7 +60,7 @@ from src.custom_codes.dataset_factory import (
     add_dataset_cli_flags,
     build_dynamic_dataset,
 )
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 from src.world_models.probes import (
     evaluate_regression_encoder_only,
     fit_regression_probe_encoder_only,

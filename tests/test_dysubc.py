@@ -8,7 +8,7 @@ from src.baselines.dysubc.dysubc import (
     build_temporal_graph,
     sample_temporal_subgraphs,
 )
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def _star_plus_chain():

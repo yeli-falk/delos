@@ -10,13 +10,13 @@
 #
 # England COVID final comparison table, ONE seed per job:
 #   parameter-free (persistence / window_mean / historical_mean)
-#   DyG-JEPA        (encoder pretrain -> JEPA predictor + recipe, forecast rollout)
-#   DyG-JEPA-enc    (its encoder + a forecast head, NO predictor — "does the predictor help?")
+#   DELOS        (encoder pretrain -> JEPA predictor + recipe, forecast rollout)
+#   DELOS-enc    (its encoder + a forecast head, NO predictor — "does the predictor help?")
 #   CLDG / DDGCL / IDOL (contrastive encoder + the same forecast head)
 #
 # Every learned method uses the SAME encoder-only forecast head + the same
 # persistence/inflection eval (scripts/regression/probe_encoder_regression.py),
-# so the columns are directly comparable; DyG-JEPA additionally has its
+# so the columns are directly comparable; DELOS additionally has its
 # predictor-rollout row (the full method).
 #
 # Multi-seed sweep:
@@ -46,7 +46,7 @@ NW="${SLURM_CPUS_PER_TASK:-4}"
 TAG="${TAG:-}"
 SUF="${TAG:+_$TAG}_s${SEED}"
 
-# --- DyG-JEPA predictor recipe (the validated fix, ported to regression) ---
+# --- DELOS predictor recipe (the validated fix, ported to regression) ---
 RESIDUAL="${RESIDUAL:-1}"
 CHANGE_W="${CHANGE_W:-2.0}"
 PERSIST_RES="${PERSIST_RES:-1}"
@@ -97,10 +97,10 @@ srun --export=ALL python scripts/regression/run_baselines.py \
     --out_dir outputs/england_covid_baselines || echo "[warn] baselines failed"
 
 # =============================================================================
-# 1. DyG-JEPA: encoder pretrain (masked_signal) -> JEPA predictor (recipe)
+# 1. DELOS: encoder pretrain (masked_signal) -> JEPA predictor (recipe)
 # =============================================================================
 if [[ ! -f "$JEPA_ENC_CKPT" ]]; then
-    echo; echo "=== DyG-JEPA 1/2: encoder pretrain -> $JEPA_ENC_DIR ==="
+    echo; echo "=== DELOS 1/2: encoder pretrain -> $JEPA_ENC_DIR ==="
     srun --export=ALL python src/train/pretrain_encoder.py $DATA_ARG \
         --pretext masked_signal $ENC_ARGS --mask_rate 0.25 \
         $WINDOW_ARG $EARLY_STOP_ARG \
@@ -111,8 +111,8 @@ else
     echo "[skip] $JEPA_ENC_CKPT exists"
 fi
 
-echo; echo "=== DyG-JEPA 2/2: predictor train -> $JEPA_DIR ==="
-srun --export=ALL python src/train/train_dyg_jepa.py $DATA_ARG \
+echo; echo "=== DELOS 2/2: predictor train -> $JEPA_DIR ==="
+srun --export=ALL python src/train/train_delos.py $DATA_ARG \
     --downstream_task regression --mask_scheme node_mask $JEPA_EXTRA \
     $WINDOW_ARG $EARLY_STOP_ARG $ENC_ARGS \
     --encoder_ckpt "$JEPA_ENC_CKPT" \
@@ -121,8 +121,8 @@ srun --export=ALL python src/train/train_dyg_jepa.py $DATA_ARG \
     --probe_epochs 10 --probe_hidden 64 \
     --seed "$SEED" --num_workers "$NW" --device cuda --out_dir "$JEPA_DIR"
 
-# DyG-JEPA-enc control: its OWN encoder + a forecast head, no predictor.
-echo; echo "=== DyG-JEPA-enc control (encoder-only, no predictor) ==="
+# DELOS-enc control: its OWN encoder + a forecast head, no predictor.
+echo; echo "=== DELOS-enc control (encoder-only, no predictor) ==="
 srun --export=ALL python scripts/regression/probe_encoder_regression.py \
     --encoder_ckpt "$JEPA_ENC_CKPT" $PROBE_ARGS || echo "[warn] jepa-enc probe failed"
 
@@ -181,8 +181,8 @@ srun --export=ALL python - "$JEPA_DIR" "$JEPA_ENC_DIR" "$CLDG_DIR" "$DDGCL_DIR" 
 import json, sys
 from pathlib import Path
 
-methods = [("dyg-jepa(full)", sys.argv[1]),
-           ("dyg-jepa(enc)",  sys.argv[2]),
+methods = [("delos(full)", sys.argv[1]),
+           ("delos(enc)",  sys.argv[2]),
            ("cldg",           sys.argv[3]),
            ("ddgcl",          sys.argv[4]),
            ("idol",           sys.argv[5])]
@@ -216,7 +216,7 @@ for name, d in methods:
 print()
 print("Lower is better. Compare each method's h*_MAE to persist_MAE (overall)")
 print("and h*_infl to persist_infl (turning points — where forecasting must win).")
-print("dyg-jepa(full)=predictor rollout; (enc)=same encoder, forecast head only.")
+print("delos(full)=predictor rollout; (enc)=same encoder, forecast head only.")
 PY
 
 echo; echo "[done] seed $SEED. Aggregate later across seeds from the test_metrics.json files."

@@ -6,7 +6,7 @@ Faithful reimplementation of the paper (cross-checked against the released
 code, https://github.com/1221045504/DySubC) on this project's dense
 per-snapshot adjacency. The method contrasts a node against its *temporal
 subgraph*; every ingredient is reproduced here and only the node encoder is
-swapped for the pipeline's shared GNN so the encoder input matches DyG-JEPA
+swapped for the pipeline's shared GNN so the encoder input matches DELOS
 exactly (the reference uses a 1-layer GCN + PReLU on one-hot features):
 
   1. **Temporal graph.** The reference trains on one static graph whose edge
@@ -53,7 +53,7 @@ The "dynamic" regime is realised by sampling, per step, an anchor snapshot
 ``t`` from the TRAIN range and building the temporal graph from the window
 ending at ``t``; the encoder therefore sees the time structure of exactly the
 history the downstream probe hands it. Only ``E1`` is kept and probed with the
-SAME link-prediction / node-classification probe as DyG-JEPA
+SAME link-prediction / node-classification probe as DELOS
 (``src.train.analyze_jepa --skip_diagnostic --link_sources encoder``).
 """
 from __future__ import annotations
@@ -65,7 +65,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 # Reference normalises timestamps to [0, 10] before using them as edge weights
 # and importance scores (``load_data_as_graph``: ``(t - t_min) / (t_max -

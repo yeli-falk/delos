@@ -6,7 +6,7 @@ reduced to ``H + P`` coarse steps by :func:`coarsen_window`. Stage 2 trains
 the ordinary fine DELOS with that coarse model frozen inside the predictor
 (``--hier_ckpt``): its forecast for the coarse window containing fine step
 ``t`` is added to the future query token of step ``t`` (see
-``DyGJEPAPredictor.prepare_input``).
+``DELOSPredictor.prepare_input``).
 
 Both stages coarsen with the SAME function over the SAME fine windows, so the
 coarse model meets at stage 2 exactly the input distribution it was trained
@@ -150,9 +150,9 @@ class CoarseHint(nn.Module):
         super().__init__()
         if hint not in HINT_KINDS:
             raise ValueError(f"hier hint must be one of {HINT_KINDS}, got {hint!r}")
-        # Imported here: cjepa_graph_predictor builds this class lazily.
-        from src.cjepa_graph_predictor import build_predictor, predictor_flags_from_args
-        from src.world_models.graph_jepa_encoder import build_encoder
+        # Imported here: delos_predictor builds this class lazily.
+        from src.delos_predictor import build_predictor, predictor_flags_from_args
+        from src.world_models.delos_encoder import build_encoder
 
         self.kind = hint
         self.w = int(cfg["coarse_window"])
@@ -203,7 +203,7 @@ class CoarseHint(nn.Module):
         fine window (only the history part is read unless kind == 'true').
         ``masked_idx``: the fine predictor's hidden nodes; the coarse
         predictor hides the same ones past its first step."""
-        from src.world_models.graph_jepa_encoder import normalize_adjacency
+        from src.world_models.delos_encoder import normalize_adjacency
         H = self.hist * self.w
         if x_hist.shape[1] != H:
             raise ValueError(f"coarse hint expects {H} fine history steps, "

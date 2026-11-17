@@ -8,7 +8,7 @@ Checks, in float64 and eval mode (no dropout):
   1. build_spacetime_edge_index enumerates exactly the True entries of
      build_spacetime_mask (same pair set, no duplicates) across the
      hidden-edge / temporal-neighbour / inactive-node combinations.
-  2. DyGJEPAPredictor forward outputs (and edge-head logits) match between
+  2. DELOSPredictor forward outputs (and edge-head logits) match between
      attn_impl='dense' and 'sparse' with shared weights.
   3. Gradients w.r.t. the input latents match.
 """
@@ -16,8 +16,8 @@ import itertools
 
 import torch
 
-from src.cjepa_graph_predictor import (
-    DyGJEPAPredictor, build_spacetime_edge_index, build_spacetime_mask,
+from src.delos_predictor import (
+    DELOSPredictor, build_spacetime_edge_index, build_spacetime_mask,
 )
 
 
@@ -52,7 +52,7 @@ def test_edge_index_matches_dense_mask():
 
 def _pair(attn_impl, **kw):
     torch.manual_seed(0)
-    return DyGJEPAPredictor(
+    return DELOSPredictor(
         num_nodes=kw["N"], node_dim=16, history_frames=kw["T"] - 1, pred_frames=1,
         num_masked_nodes=2, depth=2, heads=2, dim_head=8, mlp_dim=32, dropout=0.1,
         allow_temporal_neighbors=kw["tn"], use_edge_head=True,

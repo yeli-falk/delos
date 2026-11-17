@@ -18,7 +18,7 @@ reads the encoder at the LAST history snapshot ("static SSL, last frame"):
         --tau 0.4 --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
         --epochs 100 --device cuda --out_dir outputs/grace_dblp
 
-    # 2. evaluate with the SAME link-prediction probe as DyG-JEPA
+    # 2. evaluate with the SAME link-prediction probe as DELOS
     python -m src.train.analyze_jepa --skip_diagnostic --link_sources encoder \
         --data_source dblp --data_path dataset/dblp/edges.csv \
         --encoder_ckpt outputs/grace_dblp/encoder.ckpt
@@ -27,7 +27,7 @@ Supports the global dynamic-graph datasets (dblp / jodie / reddit /
 england_covid) and fixed-topology signal datasets (metr_la: one shared
 graph, so the edge-dropping view differs per step only through its random
 mask while the feature view carries that step's readings). The encoder
-consumes the pipeline's node features, so its input matches DyG-JEPA exactly
+consumes the pipeline's node features, so its input matches DELOS exactly
 -- only the SSL objective differs.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ from src.custom_codes.dataset_factory import (
 )
 from src.train import cli
 from src.train.engine import save_encoder_ckpt, set_deterministic, setup_output_dir
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def run_epoch(model, snaps, args, device, rng, n_steps, train: bool, opt=None):

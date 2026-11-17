@@ -13,7 +13,7 @@
 # The DDGCL-style protocol: self-supervised weights are an INITIALISATION, the
 # whole network (encoder + predictor + head) is then trained on labels. One
 # SLURM array cell = one (init, aux, label fraction). Every cell shares the
-# predictor architecture of the table's DyG-JEPA checkpoint and the same
+# predictor architecture of the table's DELOS checkpoint and the same
 # chronological split / schedule / head; only the starting weights differ.
 #
 # Inits (INITS, default "random encoder jepa ddgcl"):

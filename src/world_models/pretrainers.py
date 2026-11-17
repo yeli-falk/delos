@@ -1,4 +1,4 @@
-"""Self-supervised pretext heads for DyG-JEPA encoder pretraining.
+"""Self-supervised pretext heads for DELOS encoder pretraining.
 
 Encoders + the encoder registry. These wrap a (trainable) encoder with a small decoder/head
 that drives a pretext objective; after pretraining only ``encoder.state_dict()``
@@ -12,8 +12,8 @@ Three pretexts, selected by ``--pretext`` in ``pretrain_encoder.py``:
   - ``edge_mask``      -> :class:`EdgePretrainer`        (hide edges, predict
         their existence vs sampled negatives; the canonical DTDG pretext).
 
-``graph_jepa_encoder`` re-exports every public name here for backward
-compatibility, so existing ``from ...graph_jepa_encoder import EdgePretrainer``
+``delos_encoder`` re-exports every public name here for backward
+compatibility, so existing ``from ...delos_encoder import EdgePretrainer``
 imports keep working.
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ class EncoderPretrainer(nn.Module):
     decoder to reconstruct the masked speeds from the encoder's latents.
 
     Once trained, you save `encoder.state_dict()` and load it into the frozen
-    encoder slot of the C-JEPA training loop. The decoder + mask token are
+    encoder slot of the DELOS training loop. The decoder + mask token are
     discarded -- they were only there to drive the encoder.
     """
 

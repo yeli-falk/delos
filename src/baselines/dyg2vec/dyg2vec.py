@@ -8,7 +8,7 @@ and a figure, so there is no reference code to follow. Two parts:
 
   1. **Encoder** — the window-based temporal attention encoder of Sec. 4.1
      lives in the encoder registry as ``--encoder_kind dyg2vec``
-     (:class:`~src.world_models.graph_jepa_encoder.DyG2VecEncoder`), because
+     (:class:`~src.world_models.delos_encoder.DyG2VecEncoder`), because
      it IS the method's representation learner and has to be what the probe
      sees, exactly as for MaskDGNN. It encodes a history window once, with no
      node memory, and is what ``encoder.ckpt`` stores.
@@ -35,7 +35,7 @@ The paper's default results are end-to-end supervised; its SSL results
 ("SSL-init", Table 9) freeze the pre-trained encoder and train a downstream
 decoder on top, which is precisely this pipeline's frozen-probe protocol. Only
 the encoder is kept and probed with the SAME link-prediction /
-node-classification probe as DyG-JEPA.
+node-classification probe as DELOS.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 
 def symmetric_edge_mask(adj: torch.Tensor, p: float,

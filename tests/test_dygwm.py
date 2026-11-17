@@ -11,7 +11,7 @@ from src.baselines.dygwm.dygwm import (
     pair_descriptors,
     signature2,
 )
-from src.world_models.graph_jepa_encoder import (
+from src.world_models.delos_encoder import (
     ENCODER_REGISTRY,
     DyGWMEncoder,
     build_encoder,

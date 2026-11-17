@@ -10,8 +10,8 @@ _collapse/) plus each run's state_probe.json and history.json, and writes to
                               pairwise cosine, within-node-over-time variance
                               share, forecast-latent RankMe, forecast error vs
                               copy-last, downstream probe score
-  fig_spectrum.pdf            singular-value spectra (log scale): DyG-JEPA and
-                              its controls | DyG-JEPA vs the SSL baselines
+  fig_spectrum.pdf            singular-value spectra (log scale): DELOS and
+                              its controls | DELOS vs the SSL baselines
   fig_dynamics.pdf            val loss, RankMe and spread over training for
                               the arms that kept snapshots
   fig_temporal.pdf            within-node-over-time variance share per method
@@ -24,7 +24,7 @@ _collapse/) plus each run's state_probe.json and history.json, and writes to
   collapse_summary.json       every aggregated number
 
 Roles:
-  --main        the DyG-JEPA arm the paper reports (blue). Default: the first
+  --main        the DELOS arm the paper reports (blue). Default: the first
                 of jepa_ema_cos / jepa_ema / jepa_frozen that has results.
   --collapsed   the positive control(s) expected to collapse (dark grey).
                 Default: every jepa_naive* stem found.
@@ -62,7 +62,7 @@ BLUE = COLORS["jepa_ema"]
 # (resolved once in _resolve_colors): the controls and the collapsed arms were
 # drawn in grey before, and text / spines / the grid used a charcoal palette.
 CTRL = None
-# Other DyG-JEPA arms share the JEPA hue and differ by line style + marker
+# Other DELOS arms share the JEPA hue and differ by line style + marker
 # (fixed order, as in plot_horizon.py).
 JEPA_ALT = [("--", "s"), ("-.", "^"), (":", "D"), ((0, (5, 1)), "v"),
             ((0, (3, 1, 1, 1)), "P"), ((0, (1, 1)), "X"), ((0, (7, 2)), "<")]
@@ -120,12 +120,12 @@ def label_of(stem: str, collapsed, main=None) -> str:
     else:
         base = max((s for s in LABEL if stem.startswith(s + "_")), key=len, default=None)
         lab = f"{LABEL[base]} [{stem[len(base) + 1:]}]" if base else stem
-    lab = lab.replace("DyG-JEPA", FAMILY)
+    lab = lab.replace("DELOS", FAMILY)
     return lab + (" [control]" if stem in collapsed else "")
 
 
 def ordered(runs, collapsed):
-    """refs, baselines, DyG-JEPA arms (METHODS order; tagged variants after
+    """refs, baselines, DELOS arms (METHODS order; tagged variants after
     their base arm)."""
     def key(stem):
         base = max((s for s in ORDER if stem == s or stem.startswith(s + "_")), key=len, default=None)
@@ -508,7 +508,7 @@ def fig_scatter(plt, runs, order, sty, names, main, collapsed, probe_name, out: 
                 arms="main", legend_cols=0):
     """Standalone rank-vs-probe scatter and the combined spectrum | scatter
     figure. arms='main' keeps the final model and the SSL baselines (the other
-    DyG-JEPA arms and the controls are dropped); 'all' keeps every run."""
+    DELOS arms and the controls are dropped); 'all' keeps every run."""
     if arms == "main":
         stems = [s for s in order if s == main or (not s.startswith(("jepa_", "ref_")) and s not in collapsed)]
     else:
@@ -548,7 +548,7 @@ def main():
     p.add_argument("--out", default=None, help="output directory (default: <root>/collapse_report)")
     p.add_argument("--seeds", nargs="*", default=None)
     p.add_argument("--split", choices=["test", "val"], default="test")
-    p.add_argument("--main", default=None, help="stem of the reported DyG-JEPA arm")
+    p.add_argument("--main", default=None, help="stem of the reported DELOS arm")
     p.add_argument("--collapsed", nargs="*", default=None, help="stems of the collapse controls")
     p.add_argument("--stems", nargs="*", default=None, help="only these stems (references are always kept)")
     p.add_argument("--dyn_arms", nargs="*", default=None,
@@ -571,7 +571,7 @@ def main():
                    help="base font size in points; ticks and legend are one less")
     p.add_argument("--latex", action="store_true")
     p.add_argument("--family_label", default="DELOS",
-                   help="model-family name used in every DyG-JEPA label (default DELOS)")
+                   help="model-family name used in every DELOS label (default DELOS)")
     p.add_argument("--main_label", default=None,
                    help="label of the main arm on its own (default: the family name)")
     p.add_argument("--scatter", choices=["main", "all"], default="main",

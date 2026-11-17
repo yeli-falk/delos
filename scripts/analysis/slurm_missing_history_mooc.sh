@@ -10,7 +10,7 @@
 #
 # MOOC node-state missing-history sweep, ONE seed per job. Hides a fraction of
 # students' interaction history and scores state (dropout) AUROC on those hidden
-# nodes for the DyG-JEPA forecast (jepa) vs the last-history embedding
+# nodes for the DELOS forecast (jepa) vs the last-history embedding
 # (enc-last) of the SAME frozen encoder. The claim: jepa (trained with node
 # masking) degrades least as the hidden fraction grows. Post-hoc, no retraining.
 #
@@ -28,13 +28,13 @@ SEED="${SEED:-42}"
 STATE_MODE="${STATE_MODE:-state}"
 FRACS="${FRACS:-0 0.25 0.5 0.75}"
 NW="${SLURM_CPUS_PER_TASK:-8}"
-# Tag of the trained MOOC C-JEPA run (matches the run_block_probe checkpoints).
+# Tag of the trained MOOC DELOS run (matches the run_block_probe checkpoints).
 TAG="${TAG:-jodie_mooc_tgcn_ef_res_cw2_u3000i97_s${SEED}}"
 CKPT="outputs/${TAG}_cjepa/best.ckpt"
 echo "[config] SEED=$SEED STATE_MODE=$STATE_MODE FRACS='$FRACS' CKPT=$CKPT"
 
 if [[ ! -f "$CKPT" ]]; then
-    echo "[FATAL] no checkpoint at $CKPT — train the MOOC C-JEPA run first" >&2
+    echo "[FATAL] no checkpoint at $CKPT — train the MOOC DELOS run first" >&2
     exit 10
 fi
 srun --export=ALL python scripts/analysis/missing_history_mooc.py \

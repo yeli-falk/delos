@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DyG-JEPA on England COVID (dynamic-topology node regression). Run from repo root.
+# DELOS on England COVID (dynamic-topology node regression). Run from repo root.
 #
 # England COVID is a time-varying mobility graph (129 NUTS3 regions, a different
 # edge set every day) with a per-node daily case-count signal. Unlike METR-LA
@@ -12,7 +12,7 @@
 set -e
 export PYTHONPATH=$(pwd)
 
-python src/train/train_dyg_jepa.py --data_source england_covid \
+python src/train/train_delos.py --data_source england_covid \
     --downstream_task regression \
     --mask_scheme node_mask \
     --history_size 8 \

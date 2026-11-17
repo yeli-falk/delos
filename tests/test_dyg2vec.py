@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 from src.baselines.dyg2vec.dyg2vec import DyG2VecSSL, symmetric_edge_mask, vicreg_loss
-from src.world_models.graph_jepa_encoder import (
+from src.world_models.delos_encoder import (
     DyG2VecEncoder,
     build_encoder,
     normalize_adjacency,

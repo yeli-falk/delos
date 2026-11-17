@@ -2,7 +2,7 @@
 import torch
 
 from src.baselines.graphmae.graphmae import GraphMAE, sample_mask, sce_loss
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def _ring(n=8):

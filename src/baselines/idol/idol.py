@@ -7,7 +7,7 @@ Two pillars of the reference (https://github.com/ZulunZhu/dynamic-contrastive-le
      personalised-PageRank propagation that is incrementally maintained as the
      graph evolves. On this project's dense per-snapshot adjacency the converged
      result is the APPNP propagation realised by the ``ppr_gcn`` encoder
-     (see ``graph_jepa_encoder.PPRGCNEncoder``) — so the propagation is part of
+     (see ``delos_encoder.PPRGCNEncoder``) — so the propagation is part of
      the encoder and applies identically at pretrain and probe time.
 
   2. **GGD group discrimination** (Graph Group Discrimination, Zheng et al.,
@@ -20,12 +20,12 @@ Two pillars of the reference (https://github.com/ZulunZhu/dynamic-contrastive-le
      matrix) and is the objective the reference trains with.
 
 Only the encoder is kept; it is probed with the SAME link-prediction /
-node-classification probe as DyG-JEPA for an apples-to-apples comparison
+node-classification probe as DELOS for an apples-to-apples comparison
 (``src.train.analyze_jepa --skip_diagnostic --link_sources encoder``). Faithful to the
 reference in *method* — PPR-propagated features + GGD group discrimination with
 feature-permutation corruption — but reimplemented on this project's dense
 snapshots so it needs no Cython/C++ build and consumes the pipeline's node
-features (so the encoder input matches DyG-JEPA exactly).
+features (so the encoder input matches DELOS exactly).
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 
 class ProjectionMLP(nn.Module):

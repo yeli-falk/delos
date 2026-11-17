@@ -63,7 +63,7 @@ Every stage's `--time` has to be checked against that, and the probe runs
 *after* training, so a walltime kill loses the entire cell and writes no
 `test_metrics.json`. Use `ARMS=` to put one JEPA arm per job (see step 3);
 that is what makes the wall time the per-arm column, not the sum.
-Only the DyG-JEPA arms are expensive — they are the only ones running the
+Only the DELOS arms are expensive — they are the only ones running the
 `T*N`-token predictor. The supervised, contrastive and encoder-only arms have
 no predictor and are far cheaper.
 

@@ -50,7 +50,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.baselines.grace.grace import drop_edges, drop_features
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 
 def bgrl_loss(q1: torch.Tensor, y2: torch.Tensor,

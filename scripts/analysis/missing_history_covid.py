@@ -12,7 +12,7 @@ PERSISTENCE: predict a hidden node's future = mean of its active neighbours'
 last observed value. A method beats it only by using the graph beyond a
 one-hop average.
 
-Works on a full DyG-JEPA checkpoint (encoder + predictor rollout) or a bare
+Works on a full DELOS checkpoint (encoder + predictor rollout) or a bare
 encoder checkpoint (CLDG/DDGCL/IDOL; encoder + forecast head). Heads are fit on
 CLEAN train data with absolute prediction (persist_residual is meaningless here
 since the node's own last value is the thing being hidden).
@@ -35,9 +35,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import MaskedNodePredictor, predictor_flags_from_args
+from src.delos_predictor import MaskedNodePredictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import build_dynamic_dataset
-from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
+from src.world_models.delos_encoder import build_encoder, normalize_adjacency
 from src.world_models.probes import (
     RegressionForecastHead,
     corrupt_history_bn,

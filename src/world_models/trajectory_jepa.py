@@ -1,6 +1,6 @@
 """Trajectory-window tokenisation for V-JEPA-style dynamic-graph SSL.
 
-Replaces the per-(timestep, node) tokens used by the current C-JEPA-DG
+Replaces the per-(timestep, node) tokens used by the current DELOS
 predictor with per-(window, node) tokens, where a window is W contiguous
 timesteps. This yields K = T // W tokens per node along the time axis
 (instead of T) -- each token summarises a node's evolution over W
@@ -22,7 +22,7 @@ Two pieces here:
                                        (K, N) grid.
 
 A third piece (the trajectory-aware predictor) will live in
-src/cjepa_graph_predictor.py as a variant of MaskedNodePredictor, in step 2.
+src/delos_predictor.py as a variant of MaskedNodePredictor, in step 2.
 """
 from __future__ import annotations
 

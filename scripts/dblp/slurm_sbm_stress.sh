@@ -11,7 +11,7 @@
 #
 # Architecture-vs-data ceiling stress test.
 #
-# Trains the full C-JEPA pipeline on a synthetic stochastic block model
+# Trains the full DELOS pipeline on a synthetic stochastic block model
 # (default: 8 blocks, 1000 nodes, 30 years) and reports effective rank +
 # probe metrics. The SBM has structural rank ~ log2(num_blocks) by
 # construction; if the model recovers an effective rank close to that, the
@@ -21,7 +21,7 @@
 #
 # Stages:
 #   1) edge-masking encoder pretraining on SBM
-#   2) C-JEPA training (baseline configuration)
+#   2) DELOS training (baseline configuration)
 #   3) diagnostic
 #
 # Submit:    sbatch scripts/dblp/slurm_sbm_stress.sh
@@ -60,7 +60,7 @@ echo "[config] SEED=$SEED  NODES=$NODES  YEARS=$YEARS  BLOCKS=$BLOCKS  COMMUNITY
 DATA_ARG="--synthetic --synthetic_kind sbm --synthetic_nodes $NODES --synthetic_years $YEARS --synthetic_blocks $BLOCKS"
 
 ENC_DIR="outputs/${TAG}_encoder"
-CJEPA_DIR="outputs/${TAG}_cjepa"
+DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
 # -----------------------------------------------------------------------------
@@ -87,24 +87,24 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Stage 2: C-JEPA training (baseline configuration — no EMA/VICReg to keep
+# Stage 2: DELOS training (baseline configuration — no EMA/VICReg to keep
 # the comparison clean against the baseline DBLP cell).
 # -----------------------------------------------------------------------------
 echo
 echo "================================================================="
-echo "  Stage 2/3: C-JEPA train ($TAG) -> $CJEPA_DIR"
+echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
 echo "================================================================="
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG $COMMUNITY_FLAG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG $COMMUNITY_FLAG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
     --history_size 3 --num_preds 1 \
     --encoder_kind tgcn --encoder_hidden 128 --node_dim 128 \
     --num_masked_nodes 30 --depth 4 --heads 4 --mlp_dim 512 \
     --batch_size 8 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda --epochs 50 --lr 5e-4 --probe_epochs 3 \
-    --seed "$SEED" --out_dir "$CJEPA_DIR"
-cjepa_rc=$?
-if [[ $cjepa_rc -ne 0 || ! -f "$CJEPA_DIR/best.ckpt" ]]; then
-    echo "[FATAL] Stage 2 failed (rc=$cjepa_rc, best.ckpt exists=$( [[ -f "$CJEPA_DIR/best.ckpt" ]] && echo y || echo n ))" >&2
+    --seed "$SEED" --out_dir "$DELOS_DIR"
+delos_rc=$?
+if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
+    echo "[FATAL] Stage 2 failed (rc=$delos_rc, best.ckpt exists=$( [[ -f "$DELOS_DIR/best.ckpt" ]] && echo y || echo n ))" >&2
     exit 12
 fi
 
@@ -117,7 +117,7 @@ echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"
 echo "================================================================="
 srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
-    --jepa_ckpt "$CJEPA_DIR/best.ckpt" \
+    --jepa_ckpt "$DELOS_DIR/best.ckpt" \
     --split test \
     --batch_size 4 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda \
@@ -125,7 +125,7 @@ srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
 
 echo
 echo "[done] SBM stress test ($TAG) complete."
-echo "  link prediction (all / new):  cat $CJEPA_DIR/test_metrics.json"
+echo "  link prediction (all / new):  cat $DELOS_DIR/test_metrics.json"
 echo "  representation:               cat $DIAG_DIR/diagnostic.json"
 echo
 echo "Expected if architecture is capable: eff_rank well above 1 (target"

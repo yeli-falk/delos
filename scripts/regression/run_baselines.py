@@ -5,7 +5,7 @@ learned methods are evaluated on, through the SAME accounting helpers in
 ``src/world_models/probes.py`` (``_accum_reg`` / ``_finalize_reg``), so the
 output JSON has an identical schema — MAE / RMSE / MAPE, the persistence
 reference, and the inflection subset — and drops straight into the comparison
-table next to DyG-JEPA, CLDG, DDGCL and IDOL.
+table next to DELOS, CLDG, DDGCL and IDOL.
 
 Reusing those helpers rather than re-deriving the sums is deliberate. The
 earlier England-COVID-only version computed its own MAE and had no inflection

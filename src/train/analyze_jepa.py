@@ -1,4 +1,4 @@
-"""Unified analysis of a DyG-JEPA encoder + predictor on any dynamic-graph dataset.
+"""Unified analysis of a DELOS encoder + predictor on any dynamic-graph dataset.
 
 This script replaces the two former tools (`diagnose_jepa_dblp.py` and
 `ablations_dblp.py`) with a single entry point that runs **both** analyses and
@@ -67,12 +67,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import MaskedNodePredictor, predictor_flags_from_args
+from src.delos_predictor import MaskedNodePredictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import (
     add_dataset_cli_flags,
     build_dynamic_dataset,
 )
-from src.world_models.graph_jepa_encoder import (
+from src.world_models.delos_encoder import (
     ENCODER_REGISTRY,
     LinearProbe,
     LinkPredictionProbe,
@@ -1043,7 +1043,7 @@ def main():
                    help="Encoder pretraining ckpt. If absent (and no jepa_ckpt "
                         "encoder), the encoder is randomly initialised.")
     p.add_argument("--jepa_ckpt", default=None,
-                   help="C-JEPA best.ckpt. If absent, the predictor is random "
+                   help="DELOS best.ckpt. If absent, the predictor is random "
                         "(null baseline).")
     # Encoder / predictor arch (overridden by ckpt args when present).
     p.add_argument("--encoder_kind", default="tgcn",

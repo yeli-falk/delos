@@ -16,7 +16,7 @@ whether the runs agree:
      classification runs are never compared against link-prediction runs.
 
 Runs are split by KIND, because only like is compared with like:
-  jepa      DyG-JEPA trainer            (args has ``mask_scheme``)
+  jepa      DELOS trainer            (args has ``mask_scheme``)
   pretrain  shared-encoder pretraining  (args has ``pretext``)
   finetune  supervised fine-tuning      (args has ``label_fraction``)
   baseline  everything else (CLDG / DDGCL / IDOL / MaskDGNN / ...)

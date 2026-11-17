@@ -11,13 +11,13 @@
 #
 # GraphMAE baseline (Self-Supervised Masked Graph Autoencoders, Hou et al.,
 # KDD'22) -- the STATIC generative self-supervised control, two-stage so it is
-# directly comparable to the DyG-JEPA pipeline:
+# directly comparable to the DELOS pipeline:
 #   1) train the GraphMAE encoder: each step draws ONE training snapshot,
 #      masks a fraction of its nodes with a learnable token, re-masks their
 #      latents and reconstructs their features with a GCN decoder under the
 #      scaled cosine error. No history is aggregated and no two snapshots are
 #      compared: the objective is static.
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses, which
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses, which
 #      reads the encoder at the last history snapshot ("static SSL, last
 #      frame").
 #
@@ -104,4 +104,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] GraphMAE baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

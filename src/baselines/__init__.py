@@ -1,4 +1,4 @@
-"""Baseline methods for comparison against DyG-JEPA.
+"""Baseline methods for comparison against DELOS.
 
 Each baseline is self-contained and reuses the project's universal DTDG loader
 (Block 1), encoder registry, and probe/eval harness (Block 4) so comparisons are

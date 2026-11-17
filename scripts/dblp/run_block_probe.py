@@ -35,7 +35,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import build_predictor, predictor_flags_from_args
+from src.delos_predictor import build_predictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import build_dynamic_dataset
 from src.train.analyze_jepa import (
     compute_block_labels,
@@ -43,7 +43,7 @@ from src.train.analyze_jepa import (
     train_node_probe,
     _train_test_split_by_window,
 )
-from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
+from src.world_models.delos_encoder import build_encoder, normalize_adjacency
 
 
 # Probing the VAL split writes to its own file so a hyperparameter search can
@@ -184,7 +184,7 @@ def collect_encoder_latents(encoder, loader, history_size, device):
     """Encoder-only variant of collect_test_latents for BARE encoder
     checkpoints (baselines CLDG / DDGCL / IDOL, or any save_encoder_ckpt
     output) that have no JEPA predictor. Extracts exactly the `encoder`
-    latents at the target (future) timesteps that DyG-JEPA's `encoder`
+    latents at the target (future) timesteps that DELOS's `encoder`
     column uses, so the state probe compares the same representation across
     every method. Also returns per-row degree for the degree-only baseline
     and the copy-last column Z_last (last-history-step latent, the fair
@@ -847,7 +847,7 @@ def run_one_encoder(encoder_ckpt: Path, device: str = "cuda",
 
     Handles the baseline encoders (CLDG / DDGCL / IDOL) and any other
     save_encoder_ckpt output, so node classification can be compared against
-    DyG-JEPA on the same footing. Only the encoder-latent column is probed
+    DELOS on the same footing. Only the encoder-latent column is probed
     (plus the degree-only baseline). Writes <ckpt_dir>/state_probe.json
     (binary) or <ckpt_dir>/block_probe.json (multiclass)."""
     ckpt = torch.load(encoder_ckpt, map_location="cpu", weights_only=False)
@@ -962,7 +962,7 @@ def run_one_jodie(jodie_ckpt: Path, device: str = "cuda",
                        (persistence -- the copy-last baseline)
       jepa           : the PROJECTION of that embedding to the target bin's
                        midpoint -- JODIE's forecasting operator, i.e. its
-                       genuine analogue of the DyG-JEPA predictor column.
+                       genuine analogue of the DELOS predictor column.
 
     Rows (windows, active-node masks, degree controls, labels, split) are
     built from the SAME dataset object as every other method, so the metrics
@@ -1250,7 +1250,7 @@ def main():
                         "e.g. a baseline CLDG/DDGCL/IDOL encoder.ckpt). Probes "
                         "ONLY the encoder latents (no JEPA predictor) and writes "
                         "state_probe.json next to the ckpt, so baselines are "
-                        "directly comparable to DyG-JEPA's encoder column.")
+                        "directly comparable to DELOS's encoder column.")
     p.add_argument("--encoder_pattern", default=None,
                    help="Glob of directories each holding an encoder.ckpt; "
                         "bare-encoder-probes each one.")
@@ -1322,7 +1322,7 @@ def main():
         if args.label_source != "dataset":
             args.label_source = "dataset"
 
-    # Two kinds of target: full DyG-JEPA ckpts (encoder + predictor) go
+    # Two kinds of target: full DELOS ckpts (encoder + predictor) go
     # through run_one; bare encoder ckpts (baselines) through run_one_encoder.
     full_targets, enc_targets = [], []
     if args.jepa_ckpt:

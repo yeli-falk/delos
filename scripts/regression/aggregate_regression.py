@@ -40,7 +40,7 @@ from pathlib import Path
 
 # Display name -> directory stem under outputs/reg_<dataset>/.
 # Ordered as the table should read: parameter-free, supervised, contrastive SSL,
-# then the DyG-JEPA arms.
+# then the DELOS arms.
 METHODS = [
     ("Persistence",             "baseline:persistence"),
     ("Window mean",             "baseline:window_mean"),
@@ -59,11 +59,11 @@ METHODS = [
     ("SG-JEPA",                 "sgjepa"),
     ("STEP",                    "step"),
     ("STD-MAE",                 "stdmae"),
-    ("DyG-JEPA (enc. only)",    "jepa_enc"),
-    ("DyG-JEPA (frozen)",       "jepa_frozen"),
-    ("DyG-JEPA (naive)",        "jepa_naive"),
-    ("DyG-JEPA (EMA)",          "jepa_ema"),
-    ("DyG-JEPA (VICReg)",       "jepa_vicreg"),
+    ("DELOS (enc. only)",    "jepa_enc"),
+    ("DELOS (frozen)",       "jepa_frozen"),
+    ("DELOS (naive)",        "jepa_naive"),
+    ("DELOS (EMA)",          "jepa_ema"),
+    ("DELOS (VICReg)",       "jepa_vicreg"),
 ]
 
 # Horizons reported per dataset, as 0-indexed forecast steps.

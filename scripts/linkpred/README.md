@@ -78,7 +78,7 @@ sources, so one `ARMS=controls` pass produces both.
 
 | producer | file | who |
 |---|---|---|
-| `train_dyg_jepa.py --downstream_task link_pred` | `test_metrics.json` | the four JEPA arms |
+| `train_delos.py --downstream_task link_pred` | `test_metrics.json` | the four JEPA arms |
 | `analyze_jepa.py --link_sources ...` | `analysis.json` (`["link_pred"][source]`) | baselines + controls |
 | `train_maskdgnn.py --e2e_eval test` | `link_e2e.json` | the MaskDGNN end-to-end row |
 
@@ -162,7 +162,7 @@ python scripts/linkpred/aggregate_linkpred.py \
     --seeds 42 43 44 --exclude Random Supervised
 ```
 
-Nothing is retrained. `train_dyg_jepa.py` defaults `--downstream_task` to
+Nothing is retrained. `train_delos.py` defaults `--downstream_task` to
 `link_pred`, so every JEPA arm's classification run already wrote the link
 `test_metrics.json` (all/new, test split) and the launcher skips it as
 complete. Every baseline's `encoder.ckpt` is found, so only the frozen link

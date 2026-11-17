@@ -1,4 +1,4 @@
-"""Shared DyG-JEPA training/eval loops.
+"""Shared DELOS training/eval loops.
 
 :func:`train_jepa_epoch` / :func:`evaluate_jepa` handle EVERY data source —
 dynamic-graph (DBLP / JODIE / Reddit / EHRshot / England COVID) and
@@ -11,7 +11,7 @@ METR-LA-only loops. They are kept for the legacy per-dataset trainers, but they
 support NONE of the encoder-training variants (no EMA target, no VICReg, no
 ``--train_encoder``, no change-weighting), so METR-LA runs through them could
 only ever produce the frozen-encoder arm. New code should use the unified pair
-above; ``train_dyg_jepa.py`` does.
+above; ``train_delos.py`` does.
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ import time
 import numpy as np
 import torch
 
-from src.cjepa_graph_predictor import compute_graph_jepa_loss
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.delos_predictor import compute_graph_jepa_loss
+from src.world_models.delos_encoder import normalize_adjacency
 from src.world_models.probes import graph_inputs, hist_adj
 
 
@@ -44,7 +44,7 @@ class EMAEncoder:
     encoder moves fast, and frozen late, when the predictor should converge on
     a fixed target. ``total_steps`` must be a horizon the run actually
     reaches: under early stopping the whole-run horizon is rarely reached and
-    the momentum never leaves its start value (train_dyg_jepa's
+    the momentum never leaves its start value (train_delos's
     ``--ema_anneal_epochs``). Leaving both unset keeps the legacy constant
     momentum.
     """
@@ -186,7 +186,7 @@ def mask_encoder_context(x_hist, adj_hist, masked_idx):
     latents before the predictor ever sees a mask token -- the
     masked-history term is then largely readable from context. I-JEPA /
     V-JEPA give the context encoder only the visible tokens; this is the
-    graph analogue. Mirrors ``DyGJEPAPredictor.prepare_input``: t = 0 stays
+    graph analogue. Mirrors ``DELOSPredictor.prepare_input``: t = 0 stays
     visible (it is the anchor), t >= 1 is hidden -- features zeroed and all
     incident edges removed, so the node is an isolated self-loop the encoder
     cannot read or propagate. The TARGET encoder still sees everything.

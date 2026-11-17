@@ -9,7 +9,7 @@
 #SBATCH --time=06:00:00
 #SBATCH --partition=gpu
 #
-# Hyperparameter search for the MOOC state-prediction table — DyG-JEPA AND
+# Hyperparameter search for the MOOC state-prediction table — DELOS AND
 # every baseline, on ONE flat SLURM array so each method gets a comparable
 # tuning budget. Tuning only the proposed method and leaving baselines at their
 # defaults is the single most common way a comparison table flatters itself.
@@ -23,7 +23,7 @@
 # One seed (SEED, default 42) — a search is for picking a configuration, not
 # for measuring it. Re-run the winners across 3 seeds afterwards, on test.
 #
-# Cost: 58 cells. DyG-JEPA cells reuse ONE pretrained encoder per seed (the
+# Cost: 58 cells. DELOS cells reuse ONE pretrained encoder per seed (the
 # predictor knobs do not affect it), so only the predictor is retrained.
 # The contrastive baselines tune encoder knobs, so each cell retrains its own.
 #
@@ -43,7 +43,7 @@ set -uo pipefail
 # Keep the arrays here in sync with --array=0-N above: N = (number of lines) - 1.
 build_grid() {
     GRID=()
-    # --- DyG-JEPA predictor knobs (18) -------------------------------------
+    # --- DELOS predictor knobs (18) -------------------------------------
     # The encoder is fixed and shared; these are all predictor-side.
     for lr in 5e-4 1e-3; do
       for cw in 0 2.0 5.0; do
@@ -188,7 +188,7 @@ case "$METHOD" in
     fi
     flock -u 9
     exec 9>&-
-    srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask \
+    srun --export=ALL python src/train/train_delos.py --no_attention_mask \
         $DATA_ARG $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
         --encoder_ckpt "$ENC_CKPT" --mask_scheme node_mask --residual_head \
         --depth 4 --heads 4 --mlp_dim 512 \

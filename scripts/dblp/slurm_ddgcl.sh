@@ -10,9 +10,9 @@
 #SBATCH --partition=gpu
 #
 # DDGCL baseline (Debiased Dynamic Graph Contrastive Learning, Tian et al.,
-# CIKM'21), two-stage so it is directly comparable to the DyG-JEPA pipeline:
+# CIKM'21), two-stage so it is directly comparable to the DELOS pipeline:
 #   1) train the DDGCL encoder with time-aware debiased contrastive learning
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses
 #      (ablations_dblp --mode pretrained_probe)
 #
 # Outputs:
@@ -98,4 +98,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] DDGCL baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

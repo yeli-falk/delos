@@ -11,11 +11,11 @@
 #
 # DySubC baseline (Self-Supervised Dynamic Graph Representation Learning via
 # Temporal Subgraph Contrast, Chen et al., ACM TKDD'23), two-stage so it is
-# directly comparable to the DyG-JEPA pipeline:
+# directly comparable to the DELOS pipeline:
 #   1) train the DySubC encoder: temporal subgraph sampling (BFS ranked by
 #      recency + degree), a time-weighted and an unweighted subgraph encoder,
 #      margin losses against a shuffled and an unweighted subgraph summary
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses
 #
 # Outputs:
 #   outputs/dysubc_<TAG>/encoder.ckpt
@@ -104,4 +104,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] DySubC baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

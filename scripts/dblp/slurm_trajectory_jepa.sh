@@ -86,7 +86,7 @@ case "$DATASET" in
 esac
 
 ENC_DIR="outputs/${TAG}_encoder"
-CJEPA_DIR="outputs/${TAG}_cjepa"
+DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
 # -----------------------------------------------------------------------------
@@ -120,9 +120,9 @@ fi
 # -----------------------------------------------------------------------------
 echo
 echo "================================================================="
-echo "  Stage 2/3: trajectory-JEPA train ($TAG) -> $CJEPA_DIR"
+echo "  Stage 2/3: trajectory-JEPA train ($TAG) -> $DELOS_DIR"
 echo "================================================================="
-srun --export=ALL python src/train/train_dyg_jepa.py --mask_scheme trajectory_block --downstream_task none $DATA_ARG \
+srun --export=ALL python src/train/train_delos.py --mask_scheme trajectory_block --downstream_task none $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
     --history_size "$HIST" --num_preds "$NPRED" \
     --window_size "$WINDOW_SIZE" --pool mean \
@@ -132,10 +132,10 @@ srun --export=ALL python src/train/train_dyg_jepa.py --mask_scheme trajectory_bl
     --n_blocks 4 --block_k_range 1 3 --block_n_frac 0.1 0.3 \
     --batch_size 4 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda --epochs 50 --lr 5e-4 \
-    --seed "$SEED" --out_dir "$CJEPA_DIR"
-cjepa_rc=$?
-if [[ $cjepa_rc -ne 0 || ! -f "$CJEPA_DIR/best.ckpt" ]]; then
-    echo "[FATAL] Stage 2 failed (rc=$cjepa_rc)" >&2; exit 12
+    --seed "$SEED" --out_dir "$DELOS_DIR"
+delos_rc=$?
+if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
+    echo "[FATAL] Stage 2 failed (rc=$delos_rc)" >&2; exit 12
 fi
 
 # -----------------------------------------------------------------------------
@@ -146,7 +146,7 @@ echo "================================================================="
 echo "  Stage 3/3: trajectory diagnostic ($TAG) -> $DIAG_DIR"
 echo "================================================================="
 srun --export=ALL python src/train/diagnose_trajectory_jepa.py $DATA_ARG \
-    --jepa_ckpt "$CJEPA_DIR/best.ckpt" \
+    --jepa_ckpt "$DELOS_DIR/best.ckpt" \
     --history_size "$HIST" --num_preds "$NPRED" \
     --split test --device cuda \
     --batch_size 4 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
@@ -156,4 +156,4 @@ srun --export=ALL python src/train/diagnose_trajectory_jepa.py $DATA_ARG \
 echo
 echo "[done] $TAG complete."
 echo "  diagnostic:   cat $DIAG_DIR/diagnostic.json"
-echo "  best.ckpt:    $CJEPA_DIR/best.ckpt"
+echo "  best.ckpt:    $DELOS_DIR/best.ckpt"

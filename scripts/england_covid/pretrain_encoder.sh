@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pretrain a DyG-JEPA encoder on England COVID (self-supervised masked-signal).
+# Pretrain a DELOS encoder on England COVID (self-supervised masked-signal).
 # Run from the repo root. The england_covid.json is auto-downloaded + cached
 # under dataset/england_covid/ on first use.
 
@@ -25,4 +25,4 @@ python src/train/pretrain_encoder.py --data_source england_covid \
     "$@"
 
 # Produces outputs/england_covid_encoder/encoder_england_covid_tgcn_masked_signal.ckpt
-# Pass that to train_cjepa.sh via --encoder_ckpt for a pretrained run.
+# Pass that to train_delos.sh via --encoder_ckpt for a pretrained run.

@@ -90,12 +90,12 @@ for v in values:
         e = d.get(label, {}).get(key)
         return "--" if not e else f"{e['mean']:.3f}"
     # copy-last for the frozen arm = its forecast value minus its paired gap
-    fz = d.get("DyG-JEPA (frozen)", {})
+    fz = d.get("DELOS (frozen)", {})
     cl = (fz.get("subset_switch.acc_test") or {}).get("mean")
     gp = (fz.get("gap_subset_switch.acc_test") or {}).get("mean")
     last = "--" if cl is None or gp is None else f"{cl - gp:.3f}"
-    print(f"{v:>14} {g('DyG-JEPA (frozen)','gap_subset_switch.acc_test'):>16} "
-          f"{g('DyG-JEPA (EMA)','gap_subset_switch.acc_test'):>16} "
+    print(f"{v:>14} {g('DELOS (frozen)','gap_subset_switch.acc_test'):>16} "
+          f"{g('DELOS (EMA)','gap_subset_switch.acc_test'):>16} "
           f"{val('CLDG','subset_switch.acc_test'):>12} {last:>17}")
 EOF
     exit 0

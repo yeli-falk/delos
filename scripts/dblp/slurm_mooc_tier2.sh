@@ -234,8 +234,8 @@ for SEED in $SEEDS; do
         EXTRA="--mask_scheme $SCHEME --residual_head --change_weight $CHANGE_W"
 
         if [[ ! -f "$JD/best.ckpt" ]]; then
-            echo; echo "=== [seed $SEED / $SCHEME] C-JEPA train -> $JD ==="
-            srun --export=ALL $PY src/train/train_dyg_jepa.py --no_attention_mask \
+            echo; echo "=== [seed $SEED / $SCHEME] DELOS train -> $JD ==="
+            srun --export=ALL $PY src/train/train_delos.py --no_attention_mask \
                 $DATA_ARG $EXTRA --encoder_ckpt "$ENC_CKPT" \
                 $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
                 --num_masked_nodes 30 --depth 4 --heads 4 --mlp_dim 512 \

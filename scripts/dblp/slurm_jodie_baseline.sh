@@ -13,7 +13,7 @@
 # mean+-std report of the standard state-probe columns.
 #
 # JODIE has its OWN forecaster (the temporal projection operator), so it fills
-# the jepa column too -- comparable to DyG-JEPA head-to-head, not just at the
+# the jepa column too -- comparable to DELOS head-to-head, not just at the
 # persistence level like the contrastive encoders. All columns come from the
 # SAME dataset + SAME deterministic CPU probe as every other method.
 #
@@ -48,7 +48,7 @@ esac
 CSV="dataset/jodie/${DATASET}.csv"
 
 # Subset, binning, edge features, window geometry, seeds and early-stopping come
-# from the shared config — identical to the DyG-JEPA runs this table is compared
+# from the shared config — identical to the DELOS runs this table is compared
 # against (slurm_mooc_tier2.sh / slurm_state_probe_jodie_all.sh).
 TASK=state_probe
 EPOCHS=${EPOCHS:-30}

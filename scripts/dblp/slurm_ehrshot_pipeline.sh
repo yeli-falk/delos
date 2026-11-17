@@ -9,11 +9,11 @@
 #SBATCH --time=12:00:00
 #SBATCH --partition=gpu
 #
-# Full C-JEPA pipeline on the EHRshot per-patient temporal event graphs:
+# Full DELOS pipeline on the EHRshot per-patient temporal event graphs:
 #   0) (re-)preprocess the raw EHRshot CSV into a per-patient pickle if
 #      the pickle doesn't exist (or PREPROCESS_FORCE=1 is set)
 #   1) edge-masking encoder pretrain
-#   2) C-JEPA training (with new-edge probe split in the evaluator)
+#   2) DELOS training (with new-edge probe split in the evaluator)
 #   3) representation diagnostic (eff_rank, CKA, structural probes)
 #
 # Submit (defaults):
@@ -108,7 +108,7 @@ DATA_ARG="--data_source ehrshot --ehrshot_data_path $PKL \
 --ehrshot_max_visits $MAX_VISITS --ehrshot_max_windows $MAX_WINDOWS"
 
 ENC_DIR="outputs/${TAG}_encoder"
-CJEPA_DIR="outputs/${TAG}_cjepa"
+DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
 # -----------------------------------------------------------------------------
@@ -137,13 +137,13 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Stage 2: C-JEPA training
+# Stage 2: DELOS training
 # -----------------------------------------------------------------------------
 echo
 echo "================================================================="
-echo "  Stage 2/3: C-JEPA train ($TAG) -> $CJEPA_DIR"
+echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
 echo "================================================================="
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
     --history_size 3 --num_preds 1 \
     --encoder_kind tgcn --encoder_hidden 128 --node_dim 128 \
@@ -151,10 +151,10 @@ srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_A
     --batch_size 8 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda --epochs "$JEPA_EPOCHS" --lr "$JEPA_LR" --probe_epochs "$PROBE_EPOCHS" \
     --early_stop_patience "$PATIENCE" \
-    --seed "$SEED" --out_dir "$CJEPA_DIR"
-cjepa_rc=$?
-if [[ $cjepa_rc -ne 0 || ! -f "$CJEPA_DIR/best.ckpt" ]]; then
-    echo "[FATAL] Stage 2 failed (rc=$cjepa_rc, best.ckpt exists=$( [[ -f "$CJEPA_DIR/best.ckpt" ]] && echo y || echo n ))" >&2
+    --seed "$SEED" --out_dir "$DELOS_DIR"
+delos_rc=$?
+if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
+    echo "[FATAL] Stage 2 failed (rc=$delos_rc, best.ckpt exists=$( [[ -f "$DELOS_DIR/best.ckpt" ]] && echo y || echo n ))" >&2
     exit 13
 fi
 
@@ -167,7 +167,7 @@ echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"
 echo "================================================================="
 srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
-    --jepa_ckpt "$CJEPA_DIR/best.ckpt" \
+    --jepa_ckpt "$DELOS_DIR/best.ckpt" \
     --split test \
     --batch_size 4 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda \
@@ -175,5 +175,5 @@ srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
 
 echo
 echo "[done] EHRshot pipeline complete."
-echo "  link prediction (all / new):  cat $CJEPA_DIR/test_metrics.json"
+echo "  link prediction (all / new):  cat $DELOS_DIR/test_metrics.json"
 echo "  representation:               cat $DIAG_DIR/diagnostic.json"

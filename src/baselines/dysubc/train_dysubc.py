@@ -15,7 +15,7 @@ through the identical probe:
         --subgraph_size 20 --alpha 5 --beta 1 --epochs 100 --device cuda \
         --out_dir outputs/dysubc_dblp
 
-    # 2. evaluate with the SAME link-prediction probe as DyG-JEPA
+    # 2. evaluate with the SAME link-prediction probe as DELOS
     python -m src.train.analyze_jepa --skip_diagnostic --link_sources encoder \
         --data_source dblp --data_path dataset/dblp/edges.csv \
         --encoder_ckpt outputs/dysubc_dblp/encoder.ckpt
@@ -29,7 +29,7 @@ temporal subgraphs. Supports the global dynamic-graph datasets (dblp / jodie /
 reddit / england_covid) and fixed-topology signal datasets (metr_la; there
 every edge shares the latest time, so the sampling score reduces to degree and
 the readout weights to ``1 + beta / dist``). The encoder consumes the
-pipeline's node features, so its input matches DyG-JEPA exactly — only the
+pipeline's node features, so its input matches DELOS exactly — only the
 SSL objective differs.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ from src.custom_codes.dataset_factory import (
 )
 from src.train import cli
 from src.train.engine import save_encoder_ckpt, set_deterministic, setup_output_dir
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def run_epoch(model, snaps, args, device, rng, n_steps, train: bool, opt=None):

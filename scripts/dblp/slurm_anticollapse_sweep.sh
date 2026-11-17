@@ -56,10 +56,10 @@ case "$IDX" in
     *) echo "[error] unknown SLURM_ARRAY_TASK_ID=$IDX"; exit 2 ;;
 esac
 
-CJEPA_DIR="outputs/dblp_cjepa_${TAG}"
+DELOS_DIR="outputs/dblp_cjepa_${TAG}"
 DIAG_DIR="outputs/diagnostic_dblp_${TAG}"
 echo "[config] idx=$IDX  TAG=$TAG  EMA=[$EMA_FLAGS]  VICReg=[$VIC_FLAGS]"
-echo "[paths] cjepa_out=$CJEPA_DIR  diagnostic_out=$DIAG_DIR  encoder_in=$ENC_DIR"
+echo "[paths] delos_out=$DELOS_DIR  diagnostic_out=$DIAG_DIR  encoder_in=$ENC_DIR"
 
 DATA_ARG="--synthetic --synthetic_nodes 500 --synthetic_years 30"
 if [[ -f dataset/dblp/edges.csv ]]; then
@@ -67,13 +67,13 @@ if [[ -f dataset/dblp/edges.csv ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Stage 1: C-JEPA training under this cell's anti-collapse configuration.
+# Stage 1: DELOS training under this cell's anti-collapse configuration.
 # -----------------------------------------------------------------------------
 echo
 echo "================================================================="
-echo "  Stage 1/2: C-JEPA train ($TAG) -> $CJEPA_DIR"
+echo "  Stage 1/2: DELOS train ($TAG) -> $DELOS_DIR"
 echo "================================================================="
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
     --history_size 3 --num_preds 1 \
     --encoder_kind tgcn --encoder_hidden 128 --node_dim 128 \
@@ -81,7 +81,7 @@ srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_A
     $EMA_FLAGS $VIC_FLAGS \
     --batch_size 8 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda --epochs 50 --lr 5e-4 --probe_epochs 3 \
-    --seed "$SEED" --out_dir "$CJEPA_DIR"
+    --seed "$SEED" --out_dir "$DELOS_DIR"
 
 # -----------------------------------------------------------------------------
 # Stage 2: representation diagnostic on the resulting checkpoint.
@@ -92,7 +92,7 @@ echo "  Stage 2/2: diagnostic ($TAG) -> $DIAG_DIR"
 echo "================================================================="
 srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
-    --jepa_ckpt "$CJEPA_DIR/best.ckpt" \
+    --jepa_ckpt "$DELOS_DIR/best.ckpt" \
     --split test \
     --batch_size 4 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda \
@@ -100,5 +100,5 @@ srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
 
 echo
 echo "[done] $TAG complete."
-echo "  link prediction:   cat $CJEPA_DIR/test_metrics.json"
+echo "  link prediction:   cat $DELOS_DIR/test_metrics.json"
 echo "  representation:    cat $DIAG_DIR/diagnostic.json"

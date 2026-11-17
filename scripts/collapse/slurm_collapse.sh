@@ -8,7 +8,7 @@
 #SBATCH --time=06:00:00
 #SBATCH --partition=gpu
 #
-# REPRESENTATION-COLLAPSE STUDY: does DyG-JEPA collapse, and what prevents it?
+# REPRESENTATION-COLLAPSE STUDY: does DELOS collapse, and what prevents it?
 #
 # One command trains every arm, measures the latents and writes the paper's
 # table and figures:
@@ -17,7 +17,7 @@
 #
 # which submits, per seed (all through scripts/classification/slurm_all_methods.sh,
 # so data, encoder, window and early stopping are the main table's):
-#   1. the DyG-JEPA arms ($JEPA_ARMS) with checkpoint snapshots
+#   1. the DELOS arms ($JEPA_ARMS) with checkpoint snapshots
 #      (--snapshot_first $SNAP_FIRST --snapshot_every $SNAP_EVERY) for the
 #      training-dynamics curves
 #   2. the SSL baselines ($BASELINES)
@@ -202,7 +202,7 @@ submit() {   # $1 = job name, $2.. = VAR=value env for slurm_all_methods.sh
 # DOWNSTREAM=none / COLLAPSE_CHECK=0: the trainer's link probe and the link-MRR
 # collapse check are not part of this study (the state probe on best.ckpt and
 # collapse_metrics.py are); the snapshots ride on BASE_HP, which only the
-# DyG-JEPA arms read.
+# DELOS arms read.
 COMMON=(DATASET="$DATASET" ROOT="$ROOT" DOWNSTREAM="${DOWNSTREAM:-none}" COLLAPSE_CHECK=0)
 for S in $SEEDS; do
     [[ -n "$JEPA_ARMS" ]] && submit "col-jepa-s$S" "${COMMON[@]}" SEED="$S" ARMS="$JEPA_ARMS" \

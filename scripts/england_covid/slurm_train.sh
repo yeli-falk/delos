@@ -11,8 +11,8 @@
 # --account=<your-account>         # uncomment if accounting is required
 #
 # Full England COVID comparison in one job: parameter-free baselines ->
-# pretrain encoder (masked_signal) -> DyG-JEPA (random-init encoder) ->
-# DyG-JEPA (pretrained encoder). All stages share history_size=8 / num_preds=3
+# pretrain encoder (masked_signal) -> DELOS (random-init encoder) ->
+# DELOS (pretrained encoder). All stages share history_size=8 / num_preds=3
 # so the test windows (and the MAE/RMSE/MAPE numbers) line up across the table.
 #
 # England COVID is small (129 nodes, 61 daily snapshots, time-varying mobility
@@ -64,7 +64,7 @@ NP="${NP:-3}"
 NW="${SLURM_CPUS_PER_TASK:-4}"
 ENC_CKPT="$ENC_DIR/encoder_england_covid_tgcn_masked_signal.ckpt"
 
-# --- predictor-objective recipe (see train_dyg_jepa.py --help) ---------------
+# --- predictor-objective recipe (see train_delos.py --help) ---------------
 # The MOOC-validated fix, ported to regression. PERSIST_RES is the load-bearing
 # one here: it makes the probe predict the delta over the last observed value,
 # so persistence is the FLOOR (without it a latent->signal probe historically
@@ -108,8 +108,8 @@ if [[ ! -f "$ENC_CKPT" ]]; then
     ls -la "$ENC_DIR/" >&2 || true
 fi
 
-echo "================ 3/4  DyG-JEPA (random-init encoder) ================"
-srun --export=ALL python src/train/train_dyg_jepa.py --data_source england_covid \
+echo "================ 3/4  DELOS (random-init encoder) ================"
+srun --export=ALL python src/train/train_delos.py --data_source england_covid \
     --downstream_task regression --mask_scheme node_mask $JEPA_EXTRA \
     --history_size $HS --num_preds $NP \
     --encoder_kind tgcn --bidirectional false --node_dim 128 --encoder_hidden 128 \
@@ -119,9 +119,9 @@ srun --export=ALL python src/train/train_dyg_jepa.py --data_source england_covid
     --seed "$SEED" --num_workers "$NW" --device cuda \
     --out_dir "$RAND_DIR"
 
-echo "================ 4/4  DyG-JEPA (pretrained encoder) ================"
+echo "================ 4/4  DELOS (pretrained encoder) ================"
 if [[ -f "$ENC_CKPT" ]]; then
-    srun --export=ALL python src/train/train_dyg_jepa.py --data_source england_covid \
+    srun --export=ALL python src/train/train_delos.py --data_source england_covid \
         --downstream_task regression --mask_scheme node_mask $JEPA_EXTRA \
         --history_size $HS --num_preds $NP \
         --encoder_kind tgcn --bidirectional false --node_dim 128 --encoder_hidden 128 \
@@ -138,4 +138,4 @@ fi
 
 echo "================ done ================"
 echo "Baselines : outputs/england_covid_baselines/baseline_metrics.json"
-echo "DyG-JEPA  : outputs/england_covid_cjepa_{randenc,pretrained}/test_metrics.json"
+echo "DELOS  : outputs/england_covid_cjepa_{randenc,pretrained}/test_metrics.json"

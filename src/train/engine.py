@@ -1,9 +1,9 @@
-"""Shared training-engine utilities for the DyG-JEPA entry scripts.
+"""Shared training-engine utilities for the DELOS entry scripts.
 
 Collects the determinism / dataloader / LR-schedule / checkpoint boilerplate
 that was copy-pasted across pretrain_encoder_*, train_cjepa_*, and the
 trajectory/hetero trainers. The unified entry points
-(`pretrain_encoder.py`, `train_dyg_jepa.py`) import from here so a single edit
+(`pretrain_encoder.py`, `train_delos.py`) import from here so a single edit
 changes the run harness everywhere.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def set_deterministic(seed: int) -> None:
@@ -95,7 +95,7 @@ def check_encoder_ckpt_batch_size(ckpt: dict, args, ckpt_path: str) -> None:
     """Refuse to train on a pretrained encoder produced at a different batch size.
 
     ``save_encoder_ckpt`` stores the pretraining ``args``; a run that consumes
-    the encoder (DyG-JEPA with ``--encoder_ckpt``) must use the same
+    the encoder (DELOS with ``--encoder_ckpt``) must use the same
     ``--batch_size`` so the two stages sit on one optimisation budget and the
     table compares objectives, not batch sizes. A checkpoint whose trainer had
     no ``--batch_size`` flag (the baseline SSL encoders sample nodes per

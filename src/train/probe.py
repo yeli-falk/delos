@@ -1,4 +1,4 @@
-"""Downstream probe stage for DyG-JEPA (Block 4 orchestration).
+"""Downstream probe stage for DELOS (Block 4 orchestration).
 
 Once the JEPA predictor is trained (Block 3 / ``src/train/jepa.py``), a
 task-specific supervised probe is fit on the frozen predictor's rollouts and

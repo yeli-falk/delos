@@ -120,7 +120,7 @@
 #                             (copy-last / the persistence analogue)
 #   encoder_oracle            an encoder that SAW the target bin (upper bound)
 #   degree_history_baseline   degree-at-each-history-bin (activity-trend control)
-# That is why there is no `jepa_enc` arm here: the DyG-JEPA run's own
+# That is why there is no `jepa_enc` arm here: the DELOS run's own
 # `encoder_last` column IS the encoder-without-predictor control, measured on
 # the same rows in the same run -- a strictly tighter comparison than the
 # separate arm the forecasting pipeline needs.
@@ -179,7 +179,7 @@ case "$DATASET" in
 esac
 SEED="${SEED:-42}"
 # Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
 # trainers' default spans the whole --epochs budget, which early stopping
 # (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
 # 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
@@ -289,7 +289,7 @@ LINEAR_SKIP="${LINEAR_SKIP:-0}"
 # encoder); LINEAR_SKIP_FREEZE=1 keeps it fixed so the transformer learns the residual.
 LINEAR_SKIP_INIT="${LINEAR_SKIP_INIT:-zero}"
 LINEAR_SKIP_FREEZE="${LINEAR_SKIP_FREEZE:-0}"
-# JEPA_EXTRA: extra train_dyg_jepa.py flags appended LAST to every JEPA arm of
+# JEPA_EXTRA: extra train_delos.py flags appended LAST to every JEPA arm of
 # this job (e.g. the two-level flags "--coarse_window 3" / "--hier_ckpt ...",
 # see scripts/synthetic/hier_showcase.sh). Use with JEPA_TAG.
 JEPA_EXTRA="${JEPA_EXTRA:-}"
@@ -415,7 +415,7 @@ if need_encoder; then
 fi
 
 # =============================================================================
-# 2. DyG-JEPA encoder-training variants
+# 2. DELOS encoder-training variants
 # =============================================================================
 arm_flags() {
     case "$1" in
@@ -425,7 +425,7 @@ arm_flags() {
         vicreg)      echo "--train_encoder --vicreg_cov 1.0 --vicreg_var 5.0" ;;
         input)       echo "--predict_space input" ;;
         # --- JEPA-recipe variants (2026-09): each flag is opt-in in
-        # train_dyg_jepa.py, so the five arms above are byte-for-byte the old ones.
+        # train_delos.py, so the five arms above are byte-for-byte the old ones.
         ctx)         echo "--mask_encoder_input" ;;
         tnorm)       echo "--target_norm" ;;
         ema_cos)     echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG" ;;
@@ -452,7 +452,7 @@ for ARM in $JEPA_ARMS; do
     # untagged arm, sharing the root's baselines and shared encoder.
     OUT="$(d "jepa_${ARM}${JEPA_TAG:+_$JEPA_TAG}")"
     mkdir -p "$OUT"
-    echo; echo "=== DyG-JEPA [$ARM] -> $OUT ==="
+    echo; echo "=== DELOS [$ARM] -> $OUT ==="
     echo "    flags='$VFLAGS $HP_ARGS'"
     # An arm is COMPLETE only when the trainer reached its end: it writes
     # test_metrics.json after the last epoch and the link probe. best.ckpt on
@@ -469,7 +469,7 @@ for ARM in $JEPA_ARMS; do
         fi
         # Order matters: base recipe, tuned predictor HP, variant flags, then
         # the variant's own knobs -- argparse honours the last occurrence.
-        srun --export=ALL "$PY" src/train/train_dyg_jepa.py $JEPA_COMMON \
+        srun --export=ALL "$PY" src/train/train_delos.py $JEPA_COMMON \
             --encoder_ckpt "$ENC_CKPT" $JEPA_BASE $BASE_HP $VFLAGS $HP_ARGS \
             $JEPA_EXTRA $SNAP_ARG --out_dir "$OUT" || { echo "[warn] arm $ARM training failed"; continue; }
         [[ -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ]] \

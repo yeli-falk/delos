@@ -66,29 +66,29 @@ def fmt_row(label: str, agg: dict) -> str:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--cjepa_glob", default="outputs/dblp_cjepa_s*",
-                   help="Directory glob for C-JEPA seeded runs.")
+    p.add_argument("--delos_glob", default="outputs/dblp_cjepa_s*",
+                   help="Directory glob for DELOS seeded runs.")
     p.add_argument("--probe_glob", default="outputs/dblp_ablation_probe_s*",
                    help="Directory glob for pretrained-probe seeded runs.")
     args = p.parse_args()
 
-    cjepa_dirs = sorted(Path().glob(args.cjepa_glob))
+    delos_dirs = sorted(Path().glob(args.delos_glob))
     probe_dirs = sorted(Path().glob(args.probe_glob))
 
-    print(f"[found] {len(cjepa_dirs)} C-JEPA runs, {len(probe_dirs)} probe runs")
+    print(f"[found] {len(delos_dirs)} DELOS runs, {len(probe_dirs)} probe runs")
     print()
     print(f"  {'method':<35}  " + "  ".join(f"{m:>16}" for m in METRICS))
     print("  " + "-" * 105)
 
-    cjepa = aggregate_runs(cjepa_dirs)
+    cjepa = aggregate_runs(delos_dirs)
     probe = aggregate_runs(probe_dirs)
     print(fmt_row("Pretrained encoder + probe", probe))
-    print(fmt_row("C-JEPA (ours)", cjepa))
+    print(fmt_row("DELOS (ours)", cjepa))
     print()
 
     # Also dump as JSON for downstream use.
     out = {
-        "C-JEPA": {k: {"mean": v[0], "std": v[1], "n": v[2]} for k, v in cjepa.items()},
+        "DELOS": {k: {"mean": v[0], "std": v[1], "n": v[2]} for k, v in cjepa.items()},
         "pretrained_probe": {k: {"mean": v[0], "std": v[1], "n": v[2]} for k, v in probe.items()},
     }
     with open("outputs/seed_aggregate.json", "w") as f:
@@ -109,7 +109,7 @@ def main():
     if probe:
         print("Pretrained encoder $+$ probe   & " + "  & ".join(latex_cells(probe)) + " \\\\")
     if cjepa:
-        print("\\textbf{C-JEPA (ours)}        & " + "  & ".join(latex_cells(cjepa)) + " \\\\")
+        print("\\textbf{DELOS (ours)}        & " + "  & ".join(latex_cells(cjepa)) + " \\\\")
 
 
 if __name__ == "__main__":

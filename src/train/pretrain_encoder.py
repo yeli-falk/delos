@@ -1,4 +1,4 @@
-"""Unified DyG-JEPA encoder pretraining (Block 2).
+"""Unified DELOS encoder pretraining (Block 2).
 
 Pick the encoder (``--encoder_kind``, registry-backed), the dataset
 (``--data_source``), and the pretext task (``--pretext``):
@@ -48,7 +48,7 @@ from src.train.engine import (
     set_deterministic,
     setup_output_dir,
 )
-from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
+from src.world_models.delos_encoder import build_encoder, normalize_adjacency
 from src.world_models.pretrainers import (
     EdgePretrainer,
     EncoderPretrainer,

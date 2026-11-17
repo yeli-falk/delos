@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# C-JEPA on METR-LA. Run from the repo root.
+# DELOS on METR-LA. Run from the repo root.
 #
 # Expects dataset/metr_la/{metr-la.h5,adj_mx.pkl} (see download_metr_la.sh).
 # To smoke-test the pipeline without downloading anything, append --synthetic.
@@ -10,7 +10,7 @@ export PYTHONPATH=$(pwd)
 # Drop this once the run is stable; it costs ~10-20% throughput.
 export CUDA_LAUNCH_BLOCKING=1
 
-python src/train/train_dyg_jepa.py --data_source metr_la --downstream_task regression \
+python src/train/train_delos.py --data_source metr_la --downstream_task regression \
     --metr_la_data_dir dataset/metr_la \
     --history_size 12 \
     --num_preds 12 \

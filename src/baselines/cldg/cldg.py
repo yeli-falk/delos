@@ -12,13 +12,13 @@ pushed apart. Concretely:
   5. symmetric InfoNCE (NT-Xent, tau=0.07) with positives on the diagonal.
 
 Only the encoder is kept; it is probed with the same link-prediction /
-node-classification probe as DyG-JEPA for an apples-to-apples comparison.
+node-classification probe as DELOS for an apples-to-apples comparison.
 
 This is faithful to the reference (https://github.com/yimingxu24/CLDG) in
 *method* — symmetric NT-Xent over node-intersection positives, random /
 sequential temporal view sampling, tau=0.07 — but reimplemented on this
 project's dense-adjacency snapshots so it needs no DGL, and it consumes the
-pipeline's node features (so the encoder input matches DyG-JEPA exactly).
+pipeline's node features (so the encoder input matches DELOS exactly).
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 
 class ProjectionHead(nn.Module):

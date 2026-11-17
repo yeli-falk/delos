@@ -1,4 +1,4 @@
-"""England COVID dataset for DyG-JEPA (dynamic-topology node regression).
+"""England COVID dataset for DELOS (dynamic-topology node regression).
 
 England COVID is the time-varying-graph node-regression benchmark from
 PyTorch Geometric Temporal (`EnglandCovidDatasetLoader`). 129 NUTS3 regions
@@ -8,7 +8,7 @@ case count. The task is to forecast each region's future case count from the
 recent window of cases + the evolving mobility topology.
 
 Unlike METR-LA (fixed adjacency), the edge set here changes every snapshot, so
-this dataset feeds the *dynamic* DyG-JEPA path: each `__getitem__` returns the
+this dataset feeds the *dynamic* DELOS path: each `__getitem__` returns the
 per-snapshot `adj` / `active` tensors (like DBLP) **and** the raw regression
 signal (like METR-LA) so a regression probe can be fit and evaluated.
 
@@ -95,7 +95,7 @@ def _load_via_pyg() -> Tuple[np.ndarray, List[np.ndarray]]:
 def _edges_to_adjacency(edge_lists: List[np.ndarray], num_nodes: int) -> np.ndarray:
     """(T, N, N) bool symmetric adjacency, self-loops removed.
 
-    The mobility graph is directed and ~94% reverse-symmetric; the DyG-JEPA
+    The mobility graph is directed and ~94% reverse-symmetric; the DELOS
     spacetime attention consumes a boolean connectivity mask, so we symmetrise
     (an edge in either direction = spatial neighbour) and drop self-loops
     (the predictor adds temporal self-attention separately; `build_graph_features`

@@ -11,7 +11,7 @@ JODIE (Kumar et al., 2019) ships two of the most-benchmarked CTDG datasets:
               events — by far the densest state-label signal of the three
               (reddit has ~366 bans, wikipedia ~217).
 
-Both are CTDG (continuous-time event streams). DyG-JEPA expects DTDG
+Both are CTDG (continuous-time event streams). DELOS expects DTDG
 (per-snapshot adjacency + active mask + node features). We bridge the two by
 binning timestamps into `num_bins` equal-width windows (see
 :mod:`src.custom_codes.dtdg.binning`). Top-K most-active entities are kept to

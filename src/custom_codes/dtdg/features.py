@@ -1,4 +1,4 @@
-"""Per-(t, node) feature engineering for DyG-JEPA datasets.
+"""Per-(t, node) feature engineering for DELOS datasets.
 
 Single home for the feature builders that used to live in (and be imported
 across) the per-dataset files:

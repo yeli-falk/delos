@@ -1,5 +1,5 @@
 """Parameter-free link-prediction baselines on the same test setup as the
-C-JEPA evaluator. No training, no checkpoints required.
+DELOS evaluator. No training, no checkpoints required.
 
 Baselines implemented:
   - EdgeBank-inf  : memorise any pair seen at any prior history timestep
@@ -45,7 +45,7 @@ from src.custom_codes.dataset_factory import (
 )
 from src.train.engine import set_deterministic
 from src.world_models.probes import sample_neg_edges
-from src.world_models.graph_jepa_encoder import link_ranking_metrics
+from src.world_models.delos_encoder import link_ranking_metrics
 
 
 # ---------------------------------------------------------------------------

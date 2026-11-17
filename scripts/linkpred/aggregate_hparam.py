@@ -5,7 +5,7 @@ Third of the three sweep aggregators. Scans a root written by
 VALIDATION split, so ranking on it does not touch test.
 
 Reads either writer, as the final aggregator does:
-  JEPA cells   test_metrics.json   (train_dyg_jepa --probe_split val)
+  JEPA cells   test_metrics.json   (train_delos --probe_split val)
   baselines    analysis_val.json   (analyze_jepa --probe_split val)
 
 Ranked on MRR over the ``new`` subset by default. That choice matters: the

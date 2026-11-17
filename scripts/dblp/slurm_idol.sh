@@ -10,11 +10,11 @@
 #SBATCH --partition=gpu
 #
 # IDOL baseline (Topology-monitorable Contrastive Learning on Dynamic Graphs,
-# Zhu et al., KDD'24), two-stage so it is directly comparable to the DyG-JEPA
+# Zhu et al., KDD'24), two-stage so it is directly comparable to the DELOS
 # pipeline:
 #   1) train the IDOL encoder with GGD group discrimination over PPR-propagated
 #      features (the ppr_gcn encoder = dense analogue of InstantGNN's dynamic PPR)
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses
 #      (ablations_dblp --mode pretrained_probe)
 #
 # Outputs:
@@ -27,7 +27,7 @@
 #         reddit_title (or synthetic). Stage 1 + stage 2 share these flags.
 #
 # Note: IDOL's native encoder is ppr_gcn (personalised-PageRank propagation).
-# For an apples-to-apples comparison, run DyG-JEPA with the same --encoder_kind.
+# For an apples-to-apples comparison, run DELOS with the same --encoder_kind.
 
 set -uo pipefail
 mkdir -p logs outputs
@@ -98,4 +98,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] IDOL baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

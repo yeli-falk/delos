@@ -11,7 +11,7 @@ sequence, then saves ``encoder.ckpt`` in the same schema as
         --encoder_hidden 128 --node_dim 128 \
         --epochs 100 --device cuda --out_dir outputs/idol_dblp
 
-    # 2. evaluate with the SAME link-prediction probe as DyG-JEPA
+    # 2. evaluate with the SAME link-prediction probe as DELOS
     python -m src.train.analyze_jepa --skip_diagnostic --link_sources encoder \
         --data_path dataset/dblp/edges.csv \
         --encoder_ckpt outputs/idol_dblp/encoder.ckpt
@@ -21,7 +21,7 @@ sequence of TRAIN snapshots: each snapshot carries its own (incrementally
 evolving) adjacency, and the encoder re-runs PPR propagation per snapshot — the
 dense analogue of InstantGNN's incremental PPR maintenance. Supports the global
 dynamic-graph datasets (dblp / jodie / reddit). The encoder consumes the
-pipeline's node features, so its input matches DyG-JEPA exactly — only the SSL
+pipeline's node features, so its input matches DELOS exactly — only the SSL
 objective differs. The encoder is ALWAYS ``ppr_gcn``: any ``--encoder_kind``
 passed by a launcher is ignored (with a notice) so the shared ``$ENCODER_ARG``
 cannot silently swap IDOL onto another architecture.
@@ -43,7 +43,7 @@ from src.custom_codes.dataset_factory import (
 )
 from src.train import cli
 from src.train.engine import save_encoder_ckpt, set_deterministic, setup_output_dir
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 # IDOL is defined by PPR-propagated features + GGD; the encoder is not a knob.
 IDOL_ENCODER_KIND = "ppr_gcn"

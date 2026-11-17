@@ -11,11 +11,11 @@
 #
 # DyG2Vec baseline (Efficient Representation Learning for Dynamic Graphs,
 # Alomrani et al., TMLR'24), two-stage so it is directly comparable to the
-# DyG-JEPA pipeline:
+# DELOS pipeline:
 #   1) pre-train its window-based temporal attention encoder (--encoder_kind
 #      dyg2vec) with VICReg on two distorted views (edge dropout +
 #      structural-feature masking) of each history window
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses
 #      (the paper's own "SSL-init" protocol)
 #
 # Outputs:
@@ -100,4 +100,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] DyG2Vec baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

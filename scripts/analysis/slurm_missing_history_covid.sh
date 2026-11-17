@@ -11,7 +11,7 @@
 # England COVID missing-history / partial-observability sweep, ONE seed per job.
 # For each method's checkpoint, hides a fraction of nodes' history and scores the
 # forecast on those hidden nodes vs relational-persistence (neighbour-mean). The
-# claim: DyG-JEPA (trained with node masking) degrades least as the hidden
+# claim: DELOS (trained with node masking) degrades least as the hidden
 # fraction grows. Post-hoc — reuses the checkpoints from slurm_all_methods.sh,
 # no retraining.
 #
@@ -30,7 +30,7 @@ FRACS="${FRACS:-0 0.25 0.5 0.75 1.0}"
 NW="${SLURM_CPUS_PER_TASK:-4}"
 echo "[config] SEED=$SEED HS=$HS NP=$NP FRACS='$FRACS'"
 
-# (name, checkpoint path) — DyG-JEPA predictor + encoder control + baselines.
+# (name, checkpoint path) — DELOS predictor + encoder control + baselines.
 DECL=(
   "dygjepa       outputs/ec_dygjepa_s${SEED}/best.ckpt"
   "dygjepa_enc   outputs/ec_dygjepa_encoder_s${SEED}/encoder_england_covid_tgcn_masked_signal.ckpt"

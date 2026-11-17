@@ -1,4 +1,4 @@
-# Minimal deps for METR-LA C-JEPA training.
+# Minimal deps for METR-LA DELOS training.
 # Install with: pip install -r scripts/metr_la/requirements.txt
 #
 # torch: pin only the major version. On a cluster you often want to use

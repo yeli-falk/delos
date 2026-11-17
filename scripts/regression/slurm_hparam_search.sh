@@ -77,7 +77,7 @@ DATASET="${DATASET:-england_covid}"
 STAGE="${STAGE:-predictor}"
 SEED="${SEED:-42}"
 # Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
 # trainers' default spans the whole --epochs budget, which early stopping
 # (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
 # 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
@@ -90,7 +90,7 @@ ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epo
 # are far better spent on the 3-seed final table than on the sweep.
 BASE_HP="${BASE_HP:-}"
 # ONE learning-rate grid shared by every arm that sweeps --lr: all baselines and
-# DyG-JEPA's own predictor / ema_pred stages. Per-method grids centred on each
+# DELOS's own predictor / ema_pred stages. Per-method grids centred on each
 # paper's default put several winners on a grid EDGE (CLDG lowest, DDGCL / IDOL
 # highest on MOOC) and made "who was tuned harder" depend on the method. A decade
 # ladder spans every reference default (1e-4 DyG2Vec ... 5e-3 STEP / STD-MAE).
@@ -129,7 +129,7 @@ build_grid() {
         # LR plus each method's most load-bearing knob. The published defaults
         # were tuned on each paper's OWN datasets: CLDG ships lr=4e-3, which was
         # never tuned for METR-LA's 24k 5-minute snapshots, and we already know
-        # an LR that is fine elsewhere DIVERGES on this data. Tuning DyG-JEPA
+        # an LR that is fine elsewhere DIVERGES on this data. Tuning DELOS
         # while the baselines sit at transferred defaults inflates our margin
         # for a reason unrelated to the method.
         # These are cheap: no T*N-token predictor, so cells are minutes.
@@ -279,7 +279,7 @@ echo "[cell $IDX] flags='$VFLAGS $HP_ARGS' base='$BASE_HP' -> $OUT"
 
 # --- STAGE=baselines: one competing method per cell, probed on VAL -----------
 # Each baseline gets the SAME probe, metrics and val split as every other arm,
-# so aggregate_hparam.py ranks them on the identical basis it ranks DyG-JEPA.
+# so aggregate_hparam.py ranks them on the identical basis it ranks DELOS.
 if [[ "$STAGE" == "baselines" ]]; then
     # A cell is complete once its val metrics exist (test_metrics.json is the last
     # thing a cell writes), so resubmitting the array -- after a walltime kill or
@@ -527,7 +527,7 @@ fi
 flock -u 9; exec 9>&-
 
 # --- train + probe THE VAL SPLIT --------------------------------------------
-srun --export=ALL python src/train/train_dyg_jepa.py $DATA_ARG $WINDOW_ARG \
+srun --export=ALL python src/train/train_delos.py $DATA_ARG $WINDOW_ARG \
     $EARLY_STOP_ARG $ENC_ARGS $ATTN_FLAG $STRIDE_ARG \
     --downstream_task regression --mask_scheme node_mask \
     --encoder_ckpt "$ENC_CKPT" \

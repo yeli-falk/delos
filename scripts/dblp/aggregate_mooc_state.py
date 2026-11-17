@@ -6,7 +6,7 @@ the SAME rows, so the columns are directly comparable:
 
   oracle   encoder that SAW the target bin        (upper bound)
   last     encoder at the last history bin        (copy-last / persistence)
-  fcast    the forecast column -- DyG-JEPA's predictor latent, JODIE's temporal
+  fcast    the forecast column -- DELOS's predictor latent, JODIE's temporal
            projection. Absent for CLDG / DDGCL / IDOL: they are encoder-only
            SSL methods with no forecast operator, so `last` IS their prediction.
   gap      fcast - last, PAIRED within a seed. This is the claim: a forecast
@@ -33,14 +33,14 @@ from pathlib import Path
 # method -> (directory template, does it have a forecast column?)
 # {tag} = the shared-config TAG, {seed} = seed.
 LAYOUT = {
-    "DyG-JEPA": ("outputs/{tag}_s{seed}_cjepa",       True),
+    "DELOS": ("outputs/{tag}_s{seed}_cjepa",       True),
     "JODIE":    ("outputs/jodie_{dataset}_s{seed}",   True),
     "CLDG":     ("outputs/cldg_{tag}_s{seed}",        False),
     "DDGCL":    ("outputs/ddgcl_{tag}_s{seed}",       False),
     "IDOL":     ("outputs/idol_{tag}_s{seed}",        False),
 }
 
-# --layout variants: the DyG-JEPA encoder-training arms from
+# --layout variants: the DELOS encoder-training arms from
 # slurm_mooc_jepa_variants.sh. Same columns, same probe, same rows — the only
 # difference between arms is how the encoder was trained.
 VARIANT_LAYOUT = {
@@ -80,8 +80,8 @@ def main():
     p.add_argument("--dataset", default="mooc", help="JODIE dataset short name.")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     p.add_argument("--layout", choices=["methods", "variants"], default="methods",
-                   help="'methods' compares DyG-JEPA against the baselines; "
-                        "'variants' compares the DyG-JEPA encoder-training arms "
+                   help="'methods' compares DELOS against the baselines; "
+                        "'variants' compares the DELOS encoder-training arms "
                         "(frozen / ema / naive / vicreg).")
     p.add_argument("--split", choices=["test", "val"], default="test",
                    help="'test' reads state_probe.json (the reported number); "
@@ -100,7 +100,7 @@ def main():
                 continue
             rows.setdefault(method, []).append(json.loads(path.read_text()))
 
-    what = ("DyG-JEPA encoder-training variants" if args.layout == "variants"
+    what = ("DELOS encoder-training variants" if args.layout == "variants"
             else "method comparison")
     print(f"\nMOOC state prediction ({what}) — {args.split} split, "
           f"seeds={args.seeds}")
@@ -169,7 +169,7 @@ def main():
     print("\ngap = fcast - last, paired within seed. >0 = the forecast beats "
           "persistence.\nCLDG/DDGCL/IDOL have no forecast operator, so their "
           "`last` column IS their prediction\nand they are compared against "
-          "DyG-JEPA's and JODIE's `fcast`.")
+          "DELOS's and JODIE's `fcast`.")
 
 
 if __name__ == "__main__":

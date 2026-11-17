@@ -97,7 +97,7 @@ flock -u 9; exec 9>&-
 
 # --probe_epochs 0 keeps this to the JEPA objective; the question here is
 # whether the optimiser is stable, not what the forecast MAE is yet.
-srun --export=ALL python src/train/train_dyg_jepa.py $DATA_ARG $WINDOW_ARG \
+srun --export=ALL python src/train/train_delos.py $DATA_ARG $WINDOW_ARG \
     $EARLY_STOP_ARG $ENC_ARGS $ATTN_FLAG \
     --downstream_task regression --mask_scheme node_mask \
     --encoder_ckpt "$ENC_CKPT" \

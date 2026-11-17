@@ -91,7 +91,7 @@
 #   jepa_vicreg           --train_encoder + VICReg variance/covariance.
 #   jepa_input            predictor regresses input space, not latents.
 #   JEPA-recipe arms (same flags as scripts/classification/, opt-in in
-#   train_dyg_jepa.py): jepa_ctx (frozen + context-encoder masking), jepa_tnorm
+#   train_delos.py): jepa_ctx (frozen + context-encoder masking), jepa_tnorm
 #   (frozen + target LayerNorm), jepa_ema_cos (EMA, cosine momentum),
 #   jepa_sigreg (stop-grad target + SIGReg), jepa_lejepa (no stop-grad +
 #   SIGReg), jepa_ijepa (ema_cos + ctx + tnorm), jepa_lejepa_full (lejepa +
@@ -152,7 +152,7 @@
 # Without PROBE_ONLY the same ROOT still works, as follows.
 # Nothing is retrained: the JEPA arms are skipped as complete (their
 # classification run already wrote the link test_metrics.json, because
-# train_dyg_jepa's downstream task defaults to link_pred), every baseline's
+# train_delos's downstream task defaults to link_pred), every baseline's
 # encoder.ckpt is found and only the frozen link probe runs, and the controls
 # reuse the shared encoder. The one row this cannot produce is
 # "MaskDGNN (end-to-end)": its trainer saves the encoder but not the edge
@@ -180,7 +180,7 @@ case "$DATASET" in
 esac
 SEED="${SEED:-42}"
 # Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
 # trainers' default spans the whole --epochs budget, which early stopping
 # (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
 # 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
@@ -337,7 +337,7 @@ if need_encoder || want controls; then
 fi
 
 # =============================================================================
-# 2. DyG-JEPA encoder-training variants
+# 2. DELOS encoder-training variants
 # =============================================================================
 arm_flags() {
     case "$1" in
@@ -347,7 +347,7 @@ arm_flags() {
         vicreg)      echo "--train_encoder --vicreg_cov 1.0 --vicreg_var 5.0" ;;
         input)       echo "--predict_space input" ;;
         # --- JEPA-recipe variants (2026-09): each flag is opt-in in
-        # train_dyg_jepa.py, so the five arms above are byte-for-byte the old ones.
+        # train_delos.py, so the five arms above are byte-for-byte the old ones.
         ctx)         echo "--mask_encoder_input" ;;
         tnorm)       echo "--target_norm" ;;
         ema_cos)     echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG" ;;
@@ -376,15 +376,15 @@ for ARM in $JEPA_ARMS; do
         if [[ ! ( -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ) ]]; then
             echo "[warn] PROBE_ONLY: $OUT is not a complete run -> skipped"; continue
         fi
-        echo; echo "=== link probe: DyG-JEPA [$ARM] best.ckpt -> $(lp_dir "$OUT") ==="
+        echo; echo "=== link probe: DELOS [$ARM] best.ckpt -> $(lp_dir "$OUT") ==="
         srun --export=ALL python -m src.train.analyze_jepa --link_sources jepa \
             $LINK_COMMON --jepa_ckpt "$OUT/best.ckpt" --out_dir "$(lp_dir "$OUT")" \
             || echo "[warn] link probe failed for $OUT"
         continue
     fi
-    echo; echo "=== DyG-JEPA [$ARM] -> $OUT ==="
+    echo; echo "=== DELOS [$ARM] -> $OUT ==="
     echo "    flags='$VFLAGS $HP_ARGS'"
-    # train_dyg_jepa's own link probe writes test_metrics.json with the
+    # train_delos's own link probe writes test_metrics.json with the
     # all/new subsets -- that IS this arm's result, no second scoring pass.
     # An arm is COMPLETE only with both files: best.ckpt alone is written on
     # every val improvement, so a walltime kill leaves one behind. Same guard
@@ -397,7 +397,7 @@ for ARM in $JEPA_ARMS; do
             echo "[resume] $OUT has best.ckpt but no test_metrics.json (interrupted) -> restarting from scratch"
             rm -f "$OUT/best.ckpt" "$OUT/history.json"
         fi
-        srun --export=ALL python src/train/train_dyg_jepa.py $JEPA_COMMON \
+        srun --export=ALL python src/train/train_delos.py $JEPA_COMMON \
             --encoder_ckpt "$ENC_CKPT" $JEPA_BASE $BASE_HP $VFLAGS $HP_ARGS \
             --out_dir "$OUT" || { echo "[warn] arm $ARM failed"; continue; }
         [[ -f "$OUT/best.ckpt" && -f "$OUT/test_metrics.json" ]] \

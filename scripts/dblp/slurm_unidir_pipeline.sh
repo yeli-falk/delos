@@ -11,7 +11,7 @@
 #
 # Three-stage unidirectional ablation pipeline:
 #   1) pretrain a temporally-causal T-GCN encoder (bidirectional=False)
-#   2) train C-JEPA with that encoder, optionally with the edge-masking
+#   2) train DELOS with that encoder, optionally with the edge-masking
 #      term enabled in the JEPA loss
 #   3) re-run pretrained-encoder + probe ablation on the same encoder
 #
@@ -74,14 +74,14 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Stage 2: train C-JEPA with the unidir encoder (optionally + edge masking)
+# Stage 2: train DELOS with the unidir encoder (optionally + edge masking)
 # -----------------------------------------------------------------------------
-CJEPA_DIR="outputs/dblp_cjepa_${TAG}"
+DELOS_DIR="outputs/dblp_cjepa_${TAG}"
 echo
 echo "================================================================="
-echo "  Stage 2/3: C-JEPA train -> $CJEPA_DIR"
+echo "  Stage 2/3: DELOS train -> $DELOS_DIR"
 echo "================================================================="
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG \
     --encoder_ckpt "$ENC_DIR/encoder.ckpt" \
     --history_size 3 --num_preds 1 \
     --encoder_kind tgcn --encoder_hidden 128 --node_dim 128 \
@@ -89,7 +89,7 @@ srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_A
     --edge_mask_rate "$EDGE" --edge_weight 1.0 --edge_neg_per_pos 1 \
     --batch_size 8 --num_workers ${SLURM_CPUS_PER_TASK:-8} \
     --device cuda --epochs 50 --lr 5e-4 --probe_epochs 3 \
-    --seed "$SEED" --out_dir "$CJEPA_DIR"
+    --seed "$SEED" --out_dir "$DELOS_DIR"
 
 # -----------------------------------------------------------------------------
 # Stage 3: pretrained-encoder + probe ablation with the same unidir encoder
@@ -111,5 +111,5 @@ srun --export=ALL python src/train/ablations_dblp.py --mode pretrained_probe \
 
 echo
 echo "[done] all three stages finished. Compare:"
-echo "  cat $CJEPA_DIR/test_metrics.json"
+echo "  cat $DELOS_DIR/test_metrics.json"
 echo "  cat $PROBE_DIR/test_metrics.json"

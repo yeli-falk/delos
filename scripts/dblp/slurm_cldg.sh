@@ -10,9 +10,9 @@
 #SBATCH --partition=gpu
 #
 # CLDG baseline (Contrastive Learning on Dynamic Graphs, Xu et al., ICDE'23),
-# two-stage so it is directly comparable to the DyG-JEPA pipeline:
+# two-stage so it is directly comparable to the DELOS pipeline:
 #   1) train the CLDG encoder with temporal contrastive learning
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses
 #      (ablations_dblp --mode pretrained_probe)
 #
 # Outputs:
@@ -25,7 +25,7 @@
 #         reddit_title (or synthetic). Stage 1 + stage 2 share these flags.
 #
 # Note: CLDG is a static-GNN-per-view method, so ENC_KIND=gcn is its natural
-# encoder. For an apples-to-apples comparison, run DyG-JEPA with the same
+# encoder. For an apples-to-apples comparison, run DELOS with the same
 # --encoder_kind.
 
 set -uo pipefail
@@ -94,4 +94,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] CLDG baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

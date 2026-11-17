@@ -53,7 +53,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 NODE_DESC = 6     # dims of nu_u^s
 PAIR_DESC = 6     # dims of mu_uv^s

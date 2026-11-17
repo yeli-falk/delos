@@ -52,21 +52,21 @@ def _read_json(path: Path):
         return None
 
 
-def load_run(cjepa_dir: Path) -> dict:
+def load_run(delos_dir: Path) -> dict:
     """Pull a single flat row from a <tag>_cjepa directory + its diagnostic."""
-    tag = cjepa_dir.name[:-len("_cjepa")] if cjepa_dir.name.endswith("_cjepa") \
-        else cjepa_dir.name
-    diag_dir = cjepa_dir.parent / f"{tag}_diagnostic"
+    tag = delos_dir.name[:-len("_cjepa")] if delos_dir.name.endswith("_cjepa") \
+        else delos_dir.name
+    diag_dir = delos_dir.parent / f"{tag}_diagnostic"
 
     # Prefer the extended metrics file if present (rescored runs with
     # AUC + Hits@1). Fall back to the v1 file for legacy / not-yet-rescored
     # runs so multi-seed tables still populate.
-    test = (_read_json(cjepa_dir / "test_metrics_v2.json")
-            or _read_json(cjepa_dir / "test_metrics.json") or {})
+    test = (_read_json(delos_dir / "test_metrics_v2.json")
+            or _read_json(delos_dir / "test_metrics.json") or {})
     diag = _read_json(diag_dir / "diagnostic.json") or {}
-    args = _read_json(cjepa_dir / "args.json") or {}
-    block = _read_json(cjepa_dir / "block_probe.json") or {}
-    state = _read_json(cjepa_dir / "state_probe.json") or {}
+    args = _read_json(delos_dir / "args.json") or {}
+    block = _read_json(delos_dir / "block_probe.json") or {}
+    state = _read_json(delos_dir / "state_probe.json") or {}
 
     # Link prediction: new format is {"all": {h: {...}}, "new": {h: {...}}};
     # old format was {h: {...}} directly. Handle both.

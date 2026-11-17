@@ -1,4 +1,4 @@
-"""Ablation table for DyG-JEPA on the MOOC node-state task -> LaTeX.
+"""Ablation table for DELOS on the MOOC node-state task -> LaTeX.
 
 Companion of ``scripts/classification/slurm_ablation_mooc.sh``. Reads one
 ``state_probe.json`` per (arm, seed), where an arm's results live either in
@@ -42,7 +42,7 @@ from aggregate_classification import (  # noqa: E402
 
 # arm -> (row label, legacy main-table stem or None); `full` is patched per --base
 ARMS = {
-    "full":          ("DyG-JEPA (full: cosine-EMA target)", "jepa_ema_cos"),
+    "full":          ("DELOS (full: cosine-EMA target)", "jepa_ema_cos"),
     "const_ema":     ("w/o cosine anneal (constant EMA)",    "jepa_ema"),
     "cos_ema":       ("+ cosine anneal (cosine EMA)",        "jepa_ema_cos"),
     "no_target_net": ("w/o EMA target (shared encoder)",     "jepa_naive"),
@@ -59,8 +59,8 @@ ARMS = {
 }
 # base -> (full-row label, full-row legacy stem, abl dir prefix, schedule arm it owns)
 BASES = {
-    "ema_cos": ("DyG-JEPA (full: cosine-EMA target)",  "jepa_ema_cos", "abl",     "const_ema"),
-    "ema":     ("DyG-JEPA (full: constant-EMA target)", "jepa_ema",     "abl_ema", "cos_ema"),
+    "ema_cos": ("DELOS (full: cosine-EMA target)",  "jepa_ema_cos", "abl",     "const_ema"),
+    "ema":     ("DELOS (full: constant-EMA target)", "jepa_ema",     "abl_ema", "cos_ema"),
 }
 FLOORS = ((LAST_COL, "copy-last (encoder at last history step)"),
           (DEGREE_COL, "degree-trend control"),

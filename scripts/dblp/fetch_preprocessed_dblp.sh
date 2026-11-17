@@ -48,7 +48,7 @@ After fetching one of the above into dataset/dblp/graphs.pkl, run:
 
 Then the DBLP training script will pick it up:
 
-    python src/train/train_dyg_jepa.py --no_attention_mask \\
+    python src/train/train_delos.py --no_attention_mask \\
         --data_path dataset/dblp/edges.csv \\
         --device cuda --epochs 5
 EOF

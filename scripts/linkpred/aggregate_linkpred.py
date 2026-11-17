@@ -6,7 +6,7 @@ Third of the three task aggregators, alongside
 
 Two writers produce results, and they share a schema but not a filename:
 
-  DyG-JEPA arms   train_dyg_jepa.py --downstream_task link_pred
+  DELOS arms   train_delos.py --downstream_task link_pred
                   -> <run>/test_metrics.json
   baselines and   analyze_jepa.py --link_sources ...
   controls        -> <run>/analysis.json, under ["link_pred"][source]
@@ -40,7 +40,7 @@ import statistics as st
 from pathlib import Path
 
 # Display name -> (directory stem, source key inside analysis.json or None).
-# None means "read test_metrics.json directly" (the DyG-JEPA arms).
+# None means "read test_metrics.json directly" (the DELOS arms).
 METHODS = [
     ("Random",              ("controls", "random")),
     ("Supervised (end-to-end)", ("controls", "supervised")),
@@ -58,22 +58,22 @@ METHODS = [
     ("DyG2Vec",             ("dyg2vec", "encoder")),
     ("DyG-WM (SSL)",        ("dygwm", "encoder")),
     ("SG-JEPA",             ("sgjepa", "encoder")),
-    ("DyG-JEPA (frozen)",   ("jepa_frozen", None)),
-    ("DyG-JEPA (naive)",    ("jepa_naive", None)),
-    ("DyG-JEPA (EMA)",      ("jepa_ema", None)),
-    ("DyG-JEPA (VICReg)",   ("jepa_vicreg", None)),
-    ("DyG-JEPA (input-space)", ("jepa_input", None)),
-    # JEPA-recipe variants (opt-in flags in train_dyg_jepa.py), same rows and
+    ("DELOS (frozen)",   ("jepa_frozen", None)),
+    ("DELOS (naive)",    ("jepa_naive", None)),
+    ("DELOS (EMA)",      ("jepa_ema", None)),
+    ("DELOS (VICReg)",   ("jepa_vicreg", None)),
+    ("DELOS (input-space)", ("jepa_input", None)),
+    # JEPA-recipe variants (opt-in flags in train_delos.py), same rows and
     # order as scripts/classification/aggregate_classification.py.
-    ("DyG-JEPA (frozen + ctx-mask)",  ("jepa_ctx", None)),
-    ("DyG-JEPA (frozen + target-LN)", ("jepa_tnorm", None)),
-    ("DyG-JEPA (EMA cosine)",         ("jepa_ema_cos", None)),
-    ("DyG-JEPA (EMA + target-LN)",    ("jepa_ema_tnorm", None)),
-    ("DyG-JEPA (EMA cosine + target-LN)", ("jepa_ema_cos_tnorm", None)),
-    ("DyG-JEPA (SIGReg)",             ("jepa_sigreg", None)),
-    ("DyG-JEPA (LeJEPA)",             ("jepa_lejepa", None)),
-    ("DyG-JEPA (I-JEPA recipe)",      ("jepa_ijepa", None)),
-    ("DyG-JEPA (LeJEPA + recipe)",    ("jepa_lejepa_full", None)),
+    ("DELOS (frozen + ctx-mask)",  ("jepa_ctx", None)),
+    ("DELOS (frozen + target-LN)", ("jepa_tnorm", None)),
+    ("DELOS (EMA cosine)",         ("jepa_ema_cos", None)),
+    ("DELOS (EMA + target-LN)",    ("jepa_ema_tnorm", None)),
+    ("DELOS (EMA cosine + target-LN)", ("jepa_ema_cos_tnorm", None)),
+    ("DELOS (SIGReg)",             ("jepa_sigreg", None)),
+    ("DELOS (LeJEPA)",             ("jepa_lejepa", None)),
+    ("DELOS (I-JEPA recipe)",      ("jepa_ijepa", None)),
+    ("DELOS (LeJEPA + recipe)",    ("jepa_lejepa_full", None)),
 ]
 # Four ranking metrics; AUC is computed by link_ranking_metrics and can be
 # added back with --metrics, but the paper table does not carry it.
@@ -98,7 +98,7 @@ def _load(path: Path):
 
 # Set by --probe_subdir (PROBE_ONLY=1 runs of slurm_all_methods.sh): every
 # analyze_jepa link probe then lives in <run>/<subdir>/analysis.json, and the
-# DyG-JEPA rows are read from there too (source "jepa") so that ALL rows come
+# DELOS rows are read from there too (source "jepa") so that ALL rows come
 # from the same probe rather than the trainer's own shorter one.
 PROBE_SUBDIR = None
 
@@ -264,7 +264,7 @@ def main():
     p.add_argument("--probe_subdir", default=None,
                    help="Read the analyze_jepa link probes from "
                         "<run>/<subdir>/ (PROBE_ONLY=1 writes link_probe). "
-                        "The DyG-JEPA rows then come from that same probe "
+                        "The DELOS rows then come from that same probe "
                         "instead of the trainer's test_metrics.json.")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     p.add_argument("--metrics", nargs="+", default=DEFAULT_METRICS)

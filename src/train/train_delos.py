@@ -1,4 +1,4 @@
-"""Unified DyG-JEPA trainer (Block 3 entry point).
+"""Unified DELOS trainer (Block 3 entry point).
 
 Pick the predictor masking scheme and the downstream task; the data source flows through the universal loader and the readout flows
 through the task-adjustable probe (Block 4):
@@ -12,9 +12,9 @@ through the task-adjustable probe (Block 4):
 
 
 Run:
-    python src/train/train_dyg_jepa.py --data_source dblp --synthetic \
+    python src/train/train_delos.py --data_source dblp --synthetic \
         --mask_scheme node_mask --downstream_task link_pred --encoder_ckpt ...
-    python src/train/train_dyg_jepa.py --data_source metr_la --metr_la_synthetic \
+    python src/train/train_delos.py --data_source metr_la --metr_la_synthetic \
         --mask_scheme node_mask --downstream_task regression --history_size 12 --num_preds 12
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ import os
 import numpy as np
 import torch
 
-from src.cjepa_graph_predictor import (
+from src.delos_predictor import (
     build_predictor,
     compute_trajectory_jepa_loss,
 )
@@ -52,7 +52,7 @@ from src.train.jepa import (
     train_jepa_epoch_fixed as metr_train_epoch,
 )
 from src.train import probe as probe_stage
-from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
+from src.world_models.delos_encoder import build_encoder, normalize_adjacency
 from src.world_models.trajectory_jepa import (
     TrajectoryWindowPooler,
     sample_trajectory_mask_blocks,

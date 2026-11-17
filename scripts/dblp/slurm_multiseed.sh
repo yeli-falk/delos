@@ -11,7 +11,7 @@
 #SBATCH --array=0-9
 #
 # SLURM array job: 5 seeds x 2 modes = 10 independent tasks.
-# Each task trains either C-JEPA or fits the pretrained-encoder + probe
+# Each task trains either DELOS or fits the pretrained-encoder + probe
 # baseline with one seed. Each lands in its own outputs/ directory so the
 # aggregator can pick them all up afterwards.
 #
@@ -70,7 +70,7 @@ fi
 case $MODE in
     cjepa)
         OUT_DIR="outputs/dblp_cjepa_s${SEED}"
-        srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG \
+        srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG \
             --encoder_ckpt "$ENCODER_CKPT" \
             --history_size 3 --num_preds 1 \
             --encoder_kind tgcn --encoder_hidden 128 --node_dim 128 \

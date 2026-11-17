@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Collect and rank the DyG-JEPA hyperparameter-search runs.
+"""Collect and rank the DELOS hyperparameter-search runs.
 
 Scans a sweep root (default: ``outputs/dyg_hparam``) for per-cell run
 directories produced by ``scripts/dblp/slurm_hparam_search.sh``. Each cell

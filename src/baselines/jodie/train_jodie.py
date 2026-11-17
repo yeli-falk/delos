@@ -11,7 +11,7 @@ Protocol (matched to every other baseline for direct comparability):
     ever seen (self-supervised).
   - SAME model selection: the val bins [0.7, 0.8) score every epoch and the
     best-val weights are restored, with the shared --early_stop_patience rule
-    -- identical to DyG-JEPA and to the CLDG / DDGCL / IDOL baselines.
+    -- identical to DELOS and to the CLDG / DDGCL / IDOL baselines.
   - SAME evaluation: after training, the event stream is replayed with frozen
     weights and the DYNAMIC embeddings are snapshotted at the END of every
     bin. ``run_block_probe.py --jodie_ckpt`` then builds the standard columns

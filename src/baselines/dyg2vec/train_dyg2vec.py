@@ -42,7 +42,7 @@ from src.custom_codes.dataset_factory import (
 )
 from src.train import cli
 from src.train.engine import save_encoder_ckpt, set_deterministic, setup_output_dir
-from src.world_models.graph_jepa_encoder import build_encoder
+from src.world_models.delos_encoder import build_encoder
 
 
 def _window_length(T: int, want: int, what: str) -> int:

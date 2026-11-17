@@ -69,7 +69,7 @@ from pathlib import Path
 
 # Display name -> directory stem under outputs/cls_<dataset>/.
 # Static SSL control first, then the temporal contrastive baselines, then the
-# DyG-JEPA arms, as the table should read.
+# DELOS arms, as the table should read.
 METHODS = [
     ("GRACE (static)",      "grace"),
     ("GraphMAE (static)",   "graphmae"),
@@ -82,21 +82,21 @@ METHODS = [
     ("DyG2Vec",             "dyg2vec"),
     ("DyG-WM (SSL)",        "dygwm"),
     ("SG-JEPA",             "sgjepa"),
-    ("DyG-JEPA (frozen)",   "jepa_frozen"),
-    ("DyG-JEPA (naive)",    "jepa_naive"),
-    ("DyG-JEPA (EMA)",      "jepa_ema"),
-    ("DyG-JEPA (VICReg)",   "jepa_vicreg"),
-    ("DyG-JEPA (input-space)", "jepa_input"),
-    # JEPA-recipe variants (opt-in flags in train_dyg_jepa.py; see README).
-    ("DyG-JEPA (frozen + ctx-mask)",  "jepa_ctx"),
-    ("DyG-JEPA (frozen + target-LN)", "jepa_tnorm"),
-    ("DyG-JEPA (EMA cosine)",         "jepa_ema_cos"),
-    ("DyG-JEPA (EMA + target-LN)",    "jepa_ema_tnorm"),
-    ("DyG-JEPA (EMA cosine + target-LN)", "jepa_ema_cos_tnorm"),
-    ("DyG-JEPA (SIGReg)",             "jepa_sigreg"),
-    ("DyG-JEPA (LeJEPA)",             "jepa_lejepa"),
-    ("DyG-JEPA (I-JEPA recipe)",      "jepa_ijepa"),
-    ("DyG-JEPA (LeJEPA + recipe)",    "jepa_lejepa_full"),
+    ("DELOS (frozen)",   "jepa_frozen"),
+    ("DELOS (naive)",    "jepa_naive"),
+    ("DELOS (EMA)",      "jepa_ema"),
+    ("DELOS (VICReg)",   "jepa_vicreg"),
+    ("DELOS (input-space)", "jepa_input"),
+    # JEPA-recipe variants (opt-in flags in train_delos.py; see README).
+    ("DELOS (frozen + ctx-mask)",  "jepa_ctx"),
+    ("DELOS (frozen + target-LN)", "jepa_tnorm"),
+    ("DELOS (EMA cosine)",         "jepa_ema_cos"),
+    ("DELOS (EMA + target-LN)",    "jepa_ema_tnorm"),
+    ("DELOS (EMA cosine + target-LN)", "jepa_ema_cos_tnorm"),
+    ("DELOS (SIGReg)",             "jepa_sigreg"),
+    ("DELOS (LeJEPA)",             "jepa_lejepa"),
+    ("DELOS (I-JEPA recipe)",      "jepa_ijepa"),
+    ("DELOS (LeJEPA + recipe)",    "jepa_lejepa_full"),
 ]
 
 FORECAST_COL = "jepa"
@@ -243,8 +243,8 @@ def main():
                         "(binary switch-event probe derived from a state checkpoint).")
     p.add_argument("--jepa_tag", nargs="*", default=[],
                    help="Also report the tagged predictor variants written with JEPA_TAG, "
-                        "e.g. --jepa_tag vel adds a 'DyG-JEPA (<arm>) +vel' row under every "
-                        "DyG-JEPA row that has a jepa_<arm>_vel_s<seed> directory.")
+                        "e.g. --jepa_tag vel adds a 'DELOS (<arm>) +vel' row under every "
+                        "DELOS row that has a jepa_<arm>_vel_s<seed> directory.")
     args = p.parse_args()
     if args.metrics is None:
         args.metrics = default_metrics(args.dataset)
@@ -298,12 +298,12 @@ def main():
     if not rows:
         raise SystemExit(f"No results found under {root}.")
 
-    # --- the shared reference columns, from the DyG-JEPA runs ----------------
+    # --- the shared reference columns, from the DELOS runs ----------------
     # encoder_oracle / degree_history_baseline are matched controls present in
     # every run; report them once rather than per method.
     ref_runs = next((r for _, _, _, hf, _, r in rows if hf), None)
     if ref_runs:
-        print(f"\nshared controls (from the DyG-JEPA runs, {len(ref_runs)} seeds)")
+        print(f"\nshared controls (from the DELOS runs, {len(ref_runs)} seeds)")
         for cname, clabel in ((PERSIST_COL, "label_persistence (floor)"),
                               ("label_moving_average", "label_moving_avg (floor)"),
                               (ORACLE_COL, "encoder_oracle (upper bound)"),

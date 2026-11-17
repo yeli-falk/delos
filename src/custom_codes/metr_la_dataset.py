@@ -1,4 +1,4 @@
-"""METR-LA dataset for C-JEPA on dynamic graphs.
+"""METR-LA dataset for DELOS on dynamic graphs.
 
 METR-LA is a fixed-topology spatiotemporal graph: 207 traffic-loop sensors on
 LA highways, sampled every 5 minutes. The graph adjacency is constant; only

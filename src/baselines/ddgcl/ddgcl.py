@@ -5,7 +5,7 @@ CIKM'21) — baseline.
 Faithful reimplementation of the reference (https://github.com/ckldan520/DDGCL)
 on this project's dense per-snapshot adjacency. The four defining ingredients
 of the reference are all reproduced here; only the *encoder* is swapped for the
-pipeline's GNN so the input matches DyG-JEPA exactly (the reference uses a
+pipeline's GNN so the input matches DELOS exactly (the reference uses a
 TGAT-style transformer over sampled temporal neighbours):
 
   1. **MoCo framework** (``moco_builder.Moco``). A query encoder + a
@@ -37,7 +37,7 @@ TGAT-style transformer over sampled temporal neighbours):
 The "dynamic" regime is realised by sampling, per step, a node's two temporal
 views as two nearby TRAIN snapshots ``t1 < t2`` (gap ``Δt``); ``Δt`` conditions
 the time-aware bilinear score. Only the (query) encoder is kept and probed with
-the SAME link-prediction / node-classification probe as DyG-JEPA
+the SAME link-prediction / node-classification probe as DELOS
 (``src.train.analyze_jepa --skip_diagnostic --link_sources encoder``).
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import normalize_adjacency
+from src.world_models.delos_encoder import normalize_adjacency
 
 
 class TimeEncoder(nn.Module):

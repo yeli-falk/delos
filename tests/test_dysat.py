@@ -7,7 +7,7 @@ on earlier steps (otherwise it is the plain GCN with extra parameters).
 """
 import torch
 
-from src.world_models.graph_jepa_encoder import ENCODER_REGISTRY, build_encoder
+from src.world_models.delos_encoder import ENCODER_REGISTRY, build_encoder
 
 
 def _inputs(B=2, T=4, N=6, F=5, seed=0):

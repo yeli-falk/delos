@@ -213,7 +213,7 @@ case "$ARM" in
 --vicreg_var 0.5 --vicreg_cov 0.05" ;;
     esac
     jepa_encoder
-    srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask \
+    srun --export=ALL python src/train/train_delos.py --no_attention_mask \
         $DATA_ARG $ENCODER_ARG $WINDOW_ARG $ES_ARG \
         --encoder_ckpt "$ENC_CKPT" \
         --downstream_task regression --mask_scheme node_mask --residual_head \

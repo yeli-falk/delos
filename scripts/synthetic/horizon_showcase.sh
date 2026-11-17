@@ -7,7 +7,7 @@
 # (run_block_probe.py::_fit_per_horizon), so a single run yields the whole
 # curve h = 1..NPRED:
 #
-#   DyG-JEPA row    `jepa`          the predictor's rolled-out latent at h
+#   DELOS row    `jepa`          the predictor's rolled-out latent at h
 #                   `encoder_last`  the SAME (EMA-trained) encoder at the
 #                                   last observed bin + a head trained for h
 #                                   (the direct-forecast control; the paired

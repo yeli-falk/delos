@@ -11,11 +11,11 @@
 #
 # DyG-WM baseline (Dynamic Graph World Modelling, Li et al., 2026; arXiv
 # 2610.19364), SSL-only core, two-stage so it is directly comparable to the
-# DyG-JEPA pipeline:
+# DELOS pipeline:
 #   1) pre-train its context encoder (--encoder_kind dygwm: shared GCN + node /
 #      neighbourhood trajectory GRUs) to predict an EMA target encoder's
 #      NEXT-bin node + relation latents (no link / rank loss)
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses
 #
 # Outputs:
 #   outputs/dygwm_<TAG>/encoder.ckpt
@@ -98,4 +98,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] DyG-WM baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

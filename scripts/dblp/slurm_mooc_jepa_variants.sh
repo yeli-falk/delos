@@ -9,7 +9,7 @@
 #SBATCH --time=08:00:00
 #SBATCH --partition=gpu
 #
-# DyG-JEPA VARIANTS on MOOC state prediction: how the encoder is trained.
+# DELOS VARIANTS on MOOC state prediction: how the encoder is trained.
 #
 #   frozen  encoder frozen, predictor only.  The targets are fixed, so latent
 #           collapse is impossible by construction. This is the reference arm.
@@ -181,7 +181,7 @@ flock -u 9; exec 9>&-
 # --- train the variant ------------------------------------------------------
 # Order matters: BASE_HP then the variant flags then the cell's own knobs, so
 # the most specific setting wins (argparse honours the last occurrence).
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask \
     $DATA_ARG $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
     --encoder_ckpt "$ENC_CKPT" --mask_scheme node_mask --residual_head \
     --depth 4 --heads 4 --mlp_dim 512 \

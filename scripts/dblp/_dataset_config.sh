@@ -61,7 +61,7 @@ _NPRED_FROM_CALLER=${NPRED:-}
 SEED=${SEED:-42}
 SEEDS=${SEEDS:-"42 43 44 45 46"}
 
-# Model selection. Every trainer (DyG-JEPA, CLDG, DDGCL, IDOL, JODIE) restores
+# Model selection. Every trainer (DELOS, CLDG, DDGCL, IDOL, JODIE) restores
 # its best-val-loss weights and stops after PATIENCE non-improving epochs.
 PATIENCE=${PATIENCE:-20}
 MIN_DELTA=${MIN_DELTA:-0.0}
@@ -292,7 +292,7 @@ case "$DATASET" in
         CHASE_PCA=${CHASE_PCA:-0}
         EDGE_FEATS=0
         # gossipcop (6091 nodes, 776-d features): BATCH 4 like the CLDG
-        # graphs. At 8 the encoder-training DyG-JEPA arms (naive / ema /
+        # graphs. At 8 the encoder-training DELOS arms (naive / ema /
         # vicreg) OOM a 32 GB V100. dblp_s at full size (34,717 nodes) is
         # ~5.7x more adjacency cells per snapshot than gossipcop: BATCH 1.
         case "$CHASE_NAME" in

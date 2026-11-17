@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full England COVID comparison: parameter-free baselines + DyG-JEPA
+# Full England COVID comparison: parameter-free baselines + DELOS
 # (random-init encoder and pretrained encoder). Run from the repo root.
 #
 #   bash scripts/england_covid/run_all.sh            # uses cuda
@@ -20,8 +20,8 @@ python scripts/regression/run_baselines.py \
     --history_size $HS --num_preds $NP \
     --out_dir outputs/england_covid_baselines
 
-echo "================ 2/4  DyG-JEPA (random-init encoder) ================"
-python src/train/train_dyg_jepa.py --data_source england_covid \
+echo "================ 2/4  DELOS (random-init encoder) ================"
+python src/train/train_delos.py --data_source england_covid \
     --downstream_task regression --mask_scheme node_mask \
     --history_size $HS --num_preds $NP \
     --encoder_kind tgcn --bidirectional false --node_dim 64 \
@@ -38,8 +38,8 @@ python src/train/pretrain_encoder.py --data_source england_covid \
     --batch_size 8 --epochs 300 --lr 1e-3 --early_stop_patience 30 \
     --out_dir outputs/england_covid_encoder $EXTRA
 
-echo "================ 4/4  DyG-JEPA (pretrained encoder) ================"
-python src/train/train_dyg_jepa.py --data_source england_covid \
+echo "================ 4/4  DELOS (pretrained encoder) ================"
+python src/train/train_delos.py --data_source england_covid \
     --downstream_task regression --mask_scheme node_mask \
     --history_size $HS --num_preds $NP \
     --encoder_kind tgcn --bidirectional false --node_dim 64 \
@@ -51,4 +51,4 @@ python src/train/train_dyg_jepa.py --data_source england_covid \
 
 echo "================ done ================"
 echo "Baselines : outputs/england_covid_baselines/baseline_metrics.json"
-echo "DyG-JEPA  : outputs/england_covid_cjepa_{randenc,pretrained}/test_metrics.json"
+echo "DELOS  : outputs/england_covid_cjepa_{randenc,pretrained}/test_metrics.json"

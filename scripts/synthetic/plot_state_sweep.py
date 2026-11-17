@@ -48,8 +48,8 @@ import numpy as np
 
 # --- what is plotted --------------------------------------------------------
 # (arm directory stem, legend label, column inside state_probe.json)
-JEPA_ARMS = [("jepa_frozen", "DyG-JEPA (frozen enc.)", "jepa"),
-             ("jepa_ema", "DyG-JEPA (EMA enc.)", "jepa"),
+JEPA_ARMS = [("jepa_frozen", "DELOS (frozen enc.)", "jepa"),
+             ("jepa_ema", "DELOS (EMA enc.)", "jepa"),
              ("jepa_input", "same predictor, input-space target", "jepa")]
 BASELINES = [("cldg", "CLDG", "encoder_last"),
              ("ddgcl", "DDGCL", "encoder_last"),
@@ -294,15 +294,15 @@ def plot_margin(mg: dict, axes: list[str], metrics: list[str], labels: dict, out
                                mec="white", mew=1.2, zorder=3)
                 handles[label] = h
             _style_axis(ax, AXIS_LABEL.get(axis, axis) if r == nrow - 1 else "",
-                        f"JEPA (frozen) − method,\n{labels[metric]}" if c == 0 else "",
+                        f"DELOS (frozen) − method,\n{labels[metric]}" if c == 0 else "",
                         values, x, categorical)
             if r < nrow - 1:
                 ax.tick_params(labelbottom=False)
     fig.legend(handles.values(), handles.keys(), loc="lower center", ncol=min(4, len(handles)),
                frameon=False, fontsize=8, bbox_to_anchor=(0.5, -0.01))
     btxt = "±1 std over seeds" if band == "std" else "±1 standard error of the mean"
-    fig.suptitle(f"Margin of the JEPA forecast over each method "
-                 f"(paired within seed; band = {btxt}; above 0 = JEPA wins)", fontsize=10, color=TEXT)
+    fig.suptitle(f"Margin of the DELOS forecast over each method "
+                 f"(paired within seed; band = {btxt}; above 0 = DELOS wins)", fontsize=10, color=TEXT)
     fig.tight_layout(rect=(0, 0.05, 1, 0.97))
     fig.savefig(out, bbox_inches="tight")
     fig.savefig(out.with_suffix(".png"), dpi=200, bbox_inches="tight")
@@ -313,9 +313,9 @@ def print_table(mg: dict, data: dict, axes: list[str], latex: bool, metric_label
                 controls: str = "oracle"):
     cols = (["copy_last"] if controls == "all" else []) + [s for s, _, _ in BASELINES]
     names = {"copy_last": "copy-last", "cldg": "CLDG", "ddgcl": "DDGCL", "idol": "IDOL"}
-    print(f"\n[{metric_label}] JEPA (frozen) minus method, PAIRED within seed (same generated graph). "
-          "* = margin exceeds 1 std, ** = 2 std; k/n = seeds where JEPA is ahead. '--' = arm not run.")
-    hdr = f"{'axis':<16}{'value':>8}{'JEPA':>10}" + "".join(f"{names[c]:>24}" for c in cols)
+    print(f"\n[{metric_label}] DELOS (frozen) minus method, PAIRED within seed (same generated graph). "
+          "* = margin exceeds 1 std, ** = 2 std; k/n = seeds where DELOS is ahead. '--' = arm not run.")
+    hdr = f"{'axis':<16}{'value':>8}{'DELOS':>10}" + "".join(f"{names[c]:>24}" for c in cols)
     print(hdr)
     print("-" * len(hdr))
     rows_tex = []
@@ -339,7 +339,7 @@ def print_table(mg: dict, data: dict, axes: list[str], latex: bool, metric_label
         print("\n% --- LaTeX ---")
         print(r"\begin{tabular}{llr" + "r" * len(cols) + "}")
         print(r"\toprule")
-        print("axis & value & JEPA & " + " & ".join(f"vs {names[c]}" for c in cols) + r" \\")
+        print("axis & value & DELOS & " + " & ".join(f"vs {names[c]}" for c in cols) + r" \\")
         print(r"\midrule")
         print("\n".join(rows_tex))
         print(r"\bottomrule")

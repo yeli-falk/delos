@@ -34,7 +34,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import TrajectoryJEPAPredictor
+from src.delos_predictor import TrajectoryJEPAPredictor
 from src.custom_codes.dataset_factory import (
     add_dataset_cli_flags,
     build_dynamic_dataset,
@@ -45,7 +45,7 @@ from src.train.analyze_jepa import (
     compute_block_labels,
     run_diagnostic,
 )
-from src.world_models.graph_jepa_encoder import build_encoder, normalize_adjacency
+from src.world_models.delos_encoder import build_encoder, normalize_adjacency
 from src.world_models.trajectory_jepa import TrajectoryWindowPooler
 
 

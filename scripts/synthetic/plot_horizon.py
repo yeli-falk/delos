@@ -8,7 +8,7 @@ so a single run gives the whole curve h = 1..NPRED.
 
 What is plotted, per horizon:
 
-  DyG-JEPA arms      the rolled-out latent (`jepa` column)
+  DELOS arms      the rolled-out latent (`jepa` column)
   baselines          their embedding at the last observed bin, with a head
                      trained for that horizon (`encoder_last`) -- direct
                      multi-step forecasting, the only option without a
@@ -22,13 +22,13 @@ What is plotted, per horizon:
 
 Outputs (<out>/):
   horizon_curves.pdf|png   one panel per metric, methods vs steps ahead
-  horizon_margin.pdf|png   DyG-JEPA minus each baseline, PAIRED WITHIN
+  horizon_margin.pdf|png   DELOS minus each baseline, PAIRED WITHIN
                            SEED (the seed is the generated graph, so every arm
                            of a seed sees the same data), band = std of the
                            per-seed differences; and minus its own copy-last
   horizon_table.tex|txt    mean +/- std per method at the table horizons,
                            switch-row and overall accuracy, plus seeds-won
-                           counts for DyG-JEPA vs each baseline
+                           counts for DELOS vs each baseline
 
 Usage:
     python scripts/synthetic/plot_horizon.py --root outputs/synth_horizon/NPRED_12 \
@@ -45,11 +45,11 @@ from pathlib import Path
 import numpy as np
 
 # (arm directory stem, legend label, column inside state_probe.json)
-# The DyG-JEPA row is the EMA arm (encoder trained jointly with an EMA target);
+# The DELOS row is the EMA arm (encoder trained jointly with an EMA target);
 # --ref_arm picks which JEPA run supplies the matched controls and the paired
 # margins. jepa_frozen is kept as an optional extra row, off by default.
-JEPA_ARMS = [("jepa_ema", "DyG-JEPA rollout", "jepa")]
-OPTIONAL_JEPA = [("jepa_frozen", "DyG-JEPA rollout (frozen enc.)", "jepa")]
+JEPA_ARMS = [("jepa_ema", "DELOS rollout", "jepa")]
+OPTIONAL_JEPA = [("jepa_frozen", "DELOS rollout (frozen enc.)", "jepa")]
 BASELINES = [("cldg", "CLDG", "encoder_last"),
              ("ddgcl", "DDGCL", "encoder_last"),
              ("idol", "IDOL", "encoder_last"),
@@ -391,7 +391,7 @@ def plot_margin(horizons, mg, metrics, out: Path, band: str, legend_cols: int = 
             _style_axis(ax, "steps ahead (h)", "rollout − method", horizons)
         else:
             _style_axis(ax, "steps ahead (h)",
-                        "DyG-JEPA rollout − method\n" + METRIC_LABEL.get(m, m).split("\n")[0],
+                        "DELOS rollout − method\n" + METRIC_LABEL.get(m, m).split("\n")[0],
                         horizons)
     keys = list(handles)
     _add_legend(fig, handles, keys, legend_cols, top=1.0)
@@ -439,7 +439,7 @@ def write_table(horizons, data, mg, table_metrics, table_h, out_dir: Path, latex
         lines_tex += [r"\bottomrule", r"\end{tabular}", ""]
         # margins
         if mg.get(m):
-            lines_txt += ["", f"--- DyG-JEPA rollout minus method, paired within seed  [{title}]  (mean ± std, seeds won)"]
+            lines_txt += ["", f"--- DELOS rollout minus method, paired within seed  [{title}]  (mean ± std, seeds won)"]
             lines_tex += [r"\begin{tabular}{l" + "r" * len(ks) + "}", r"\toprule",
                           f"rollout $-$ method ({title}) & " + " & ".join(f"$h={k + 1}$" for k in ks) + r" \\",
                           r"\midrule"]
@@ -490,7 +490,7 @@ def main():
                    help="baseline stems to draw, in this order (default: every one whose "
                         "runs exist): cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjepa graphmae bgrl grace")
     p.add_argument("--main_label", default=None,
-                   help="legend/table name for a tagged --ref_arm (e.g. 'DyG-JEPA')")
+                   help="legend/table name for a tagged --ref_arm (e.g. 'DELOS')")
     p.add_argument("--jepa_arms", nargs="*", default=[],
                    help="extra JEPA run stems to draw as rows, e.g. predictor variants "
                         "written with JEPA_TAG (jepa_ema_ff jepa_ema_cw4); label = stem suffix")
@@ -540,17 +540,17 @@ def main():
         # --main_label the reference is drawn under that plain name, for the
         # paper figure.
         JEPA_ARMS[:] = [(st, l, c) for st, l, c in JEPA_ARMS if st != "jepa_ema" or "jepa_ema" in a.jepa_arms]
-        JEPA_ARMS.insert(0, (REF_ARM, a.main_label or f"DyG-JEPA rollout ({suffix})", "jepa"))
+        JEPA_ARMS.insert(0, (REF_ARM, a.main_label or f"DELOS rollout ({suffix})", "jepa"))
         COLORS[REF_ARM] = COLORS["jepa_ema"]
         STYLE[REF_ARM] = dict(ls="-", marker="o", lw=2.4)
         if "jepa_ema" in a.jepa_arms:
-            JEPA_ARMS[:] = [x for x in JEPA_ARMS if x[0] != "jepa_ema"] + [("jepa_ema", "DyG-JEPA rollout (ema)", "jepa")]
+            JEPA_ARMS[:] = [x for x in JEPA_ARMS if x[0] != "jepa_ema"] + [("jepa_ema", "DELOS rollout (ema)", "jepa")]
             STYLE["jepa_ema"] = dict(ls="--", marker="s", lw=2.0)
     for i, stem in enumerate(a.jepa_arms):
         if any(stem == st for st, _, _ in JEPA_ARMS):
             continue
         suffix = stem.split("jepa_", 1)[-1]
-        JEPA_ARMS.append((stem, f"DyG-JEPA rollout ({suffix})", "jepa"))
+        JEPA_ARMS.append((stem, f"DELOS rollout ({suffix})", "jepa"))
         COLORS[stem] = COLORS["jepa_ema"]
         STYLE[stem] = extra_styles[i % len(extra_styles)]
 

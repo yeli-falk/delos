@@ -1,4 +1,4 @@
-"""Shared argparse building blocks for the DyG-JEPA entry scripts.
+"""Shared argparse building blocks for the DELOS entry scripts.
 
 Each entry point composes these with :func:`add_dataset_cli_flags` (from
 ``dataset_factory``) and adds only its block-specific arguments, so the common
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import torch
 
-from src.world_models.graph_jepa_encoder import ENCODER_REGISTRY
+from src.world_models.delos_encoder import ENCODER_REGISTRY
 
 
 def _bool(s: str) -> bool:
@@ -68,7 +68,7 @@ def add_optim_flags(p, lr: float = 1e-3, epochs: int = 20,
 def add_early_stop_flags(p, patience: int = 20, min_delta: float = 0.0) -> None:
     """Best-val-loss selection + early stopping, shared by every trainer.
 
-    Defined once so DyG-JEPA and the baselines cannot drift apart on model
+    Defined once so DELOS and the baselines cannot drift apart on model
     selection — the JEPA selecting on val while a baseline keeps its final
     epoch would flatter the JEPA for a reason unrelated to representation
     quality. ``--early_stop_patience 0`` disables stopping but every trainer

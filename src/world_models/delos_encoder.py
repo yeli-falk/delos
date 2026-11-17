@@ -1,4 +1,4 @@
-"""Frozen node encoders for graph C-JEPA.
+"""Frozen node encoders for DELOS.
 
 Fixed encoder so its outputs can serve as
 prediction targets without the predictor finding shortcuts in encoder space.
@@ -29,7 +29,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Pretext heads / samplers used to live here; re-export for backward compat
-# so `from ...graph_jepa_encoder import EdgePretrainer` keeps working.
+# so `from ...delos_encoder import EdgePretrainer` keeps working.
 from src.world_models.pretrainers import (  # noqa: F401
     EdgePretrainer,
     EncoderPretrainer,
@@ -85,7 +85,7 @@ def _spatial_aggregate(adj_norm: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
 # Encoder interface + registry
 # ---------------------------------------------------------------------------
 class EncoderBase(nn.Module):
-    """Common interface for all DyG-JEPA node encoders.
+    """Common interface for all DELOS node encoders.
 
     Contract: ``forward(x, adj_norm) -> z`` with ``x: (B, T, N, F_in)`` and
     ``z: (B, T, N, out_dim)``. ``adj_norm`` is a (pre-normalised) adjacency in

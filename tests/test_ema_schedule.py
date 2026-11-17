@@ -1,10 +1,10 @@
 """EMA target: anneal horizon and the encoder-freeze pause.
 
-Guards the two 2026-09-23 fixes behind DyG-JEPA's ema_cos arm and the
+Guards the two 2026-09-23 fixes behind DELOS's ema_cos arm and the
 encoder-freeze knob:
   * the cosine anneal runs over ``total_steps`` updates and reaches
     ``momentum_end`` there, regardless of how long the run then continues
-    (train_dyg_jepa maps --ema_anneal_epochs onto total_steps);
+    (train_delos maps --ema_anneal_epochs onto total_steps);
   * a paused target neither moves nor advances its anneal clock, so the
     schedule starts when the encoder is unfrozen.
 """

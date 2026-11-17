@@ -56,7 +56,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.world_models.graph_jepa_encoder import _spatial_aggregate, normalize_adjacency
+from src.world_models.delos_encoder import _spatial_aggregate, normalize_adjacency
 
 
 def sce_loss(x: torch.Tensor, y: torch.Tensor, gamma: float = 2.0) -> torch.Tensor:

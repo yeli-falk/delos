@@ -11,12 +11,12 @@
 #
 # MaskDGNN baseline (Self-Supervised Dynamic GNNs with Activeness-aware Temporal
 # Masking, He et al., IJCAI'25), two-stage so it is directly comparable to the
-# DyG-JEPA pipeline:
+# DELOS pipeline:
 #   1) train MaskDGNN (activeness-aware edge masking + masked/next-edge BCE on
 #      a GCN with an adaptive frequency layer). The trainer also scores its own
 #      encoder + edge head end-to-end on the test split (the paper's protocol)
 #      -> link_e2e.json
-#   2) freeze the encoder and fit the SAME link-prediction probe DyG-JEPA uses
+#   2) freeze the encoder and fit the SAME link-prediction probe DELOS uses
 #
 # Outputs:
 #   outputs/maskdgnn_<TAG>/encoder.ckpt, maskdgnn.ckpt, link_e2e.json
@@ -104,4 +104,4 @@ echo
 echo "[done] MaskDGNN baseline complete ($DATASET)."
 echo "       encoder    : $ENC_DIR/encoder.ckpt"
 echo "       end-to-end : $ENC_DIR/link_e2e.json      (paper protocol)"
-echo "       probe      : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       probe      : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

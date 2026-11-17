@@ -51,7 +51,7 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 # Use `srun --export=ALL` so PYTHONPATH propagates into the task on clusters
 # that strip env vars by default.
 # ---------------------------------------------------------------------------
-srun --export=ALL python src/train/train_dyg_jepa.py --data_source metr_la --downstream_task regression \
+srun --export=ALL python src/train/train_delos.py --data_source metr_la --downstream_task regression \
     --metr_la_data_dir dataset/metr_la \
     --history_size 12 \
     --num_preds 12 \

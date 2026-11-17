@@ -12,7 +12,7 @@
 #
 # Encoder ablation as a SLURM array job: sweeps ENCODERS x SEEDS, holding the
 # dataset, pretext, predictor, probe and splits fixed. Each task (a) pretrains a
-# GraphMAE encoder of one kind, then (b) trains DyG-JEPA on top of it and fits
+# GraphMAE encoder of one kind, then (b) trains DELOS on top of it and fits
 # the downstream probe -- writing test_metrics.json the aggregator picks up.
 #
 # Default grid: 3 encoders x 5 seeds = 15 tasks  ->  --array=0-14.
@@ -112,11 +112,11 @@ fi
 echo "[pretrain] ckpt=$ENC_CKPT"
 
 # -----------------------------------------------------------------------------
-# (b) Train DyG-JEPA on top + fit the downstream probe (writes test_metrics.json).
+# (b) Train DELOS on top + fit the downstream probe (writes test_metrics.json).
 #     Everything except the encoder is held constant across the grid.
 # -----------------------------------------------------------------------------
 echo "[jepa] encoder=$ENC task=$DOWNSTREAM -> $JEPA_DIR"
-srun --export=ALL python src/train/train_dyg_jepa.py --no_attention_mask $DATA_ARG \
+srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG \
     --encoder_ckpt "$ENC_CKPT" --encoder_kind "$ENC" \
     --downstream_task "$DOWNSTREAM" $SHAPE \
     --encoder_hidden 128 --node_dim 128 \

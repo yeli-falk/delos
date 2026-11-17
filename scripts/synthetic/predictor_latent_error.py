@@ -2,7 +2,7 @@
 
 Before any downstream number can show a rollout advantage, the predictor's
 forecast latent has to be closer to the target latent than the last observed
-latent is. This script measures exactly that on a trained DyG-JEPA checkpoint,
+latent is. This script measures exactly that on a trained DELOS checkpoint,
 per forecast horizon, on the held-out windows:
 
   mse_pred / mse_last   mean squared error of the forecast vs of copy-last,
@@ -48,9 +48,9 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.dblp.run_block_probe import (  # noqa: E402
     _make_args_namespace, collect_test_latents)
-from src.cjepa_graph_predictor import build_predictor, predictor_flags_from_args  # noqa: E402
+from src.delos_predictor import build_predictor, predictor_flags_from_args  # noqa: E402
 from src.custom_codes.dataset_factory import build_dynamic_dataset  # noqa: E402
-from src.world_models.graph_jepa_encoder import build_encoder  # noqa: E402
+from src.world_models.delos_encoder import build_encoder  # noqa: E402
 
 
 def load_run(jepa_ckpt: Path, device: str, split: str, batch_size: int, num_workers: int):
@@ -98,7 +98,7 @@ def linear_oracle(encoder, loader, history_size, device, test_frac=0.3, lam=1e-2
     the first (1 - test_frac) windows, scored on the rest. This is the floor
     any predictor that sees the same latents should reach; a trained
     predictor far above it is underfitting a linear map of its inputs."""
-    from src.world_models.graph_jepa_encoder import normalize_adjacency
+    from src.world_models.delos_encoder import normalize_adjacency
     X, Y, L, Hh = [], [], [], []
     encoder.eval()
     for batch in loader:

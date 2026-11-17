@@ -9,7 +9,7 @@
 #SBATCH --time=06:00:00
 #SBATCH --partition=gpu
 #
-# Unified analysis for a trained encoder + C-JEPA predictor. Runs BOTH:
+# Unified analysis for a trained encoder + DELOS predictor. Runs BOTH:
 #   (1) the representation diagnostic (effective rank, CKA, *trained* structural
 #       probes for degree / PageRank / k-core / is-hub on encoder vs JEPA), and
 #   (2) the downstream link-prediction ablation across four representation

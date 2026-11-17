@@ -1,4 +1,4 @@
-"""Rescore saved C-JEPA runs with the extended link-prediction metric set
+"""Rescore saved DELOS runs with the extended link-prediction metric set
 (adds AUC and exposes Hits@1, which the JSON dumps drop by default).
 
 The original `test_metrics.json` only stores aggregated MRR / Hits@10 — the
@@ -11,14 +11,14 @@ training args), refit the link probe on the train split, and rerun
 Usage:
     # Rescore one run.
     python scripts/dblp/rescore_link_metrics.py \
-        --cjepa_dir outputs/reddit_body_long_s42_cjepa \
+        --delos_dir outputs/reddit_body_long_s42_cjepa \
         --encoder_dir outputs/reddit_body_long_s42_encoder
 
     # Rescore every long-training run.
     for d in outputs/reddit_body_long_s*_cjepa; do
         tag=${d%_cjepa}
         python scripts/dblp/rescore_link_metrics.py \
-            --cjepa_dir "$d" --encoder_dir "${tag}_encoder"
+            --delos_dir "$d" --encoder_dir "${tag}_encoder"
     done
 
 The probe is refit fresh (its state isn't checkpointed), so MRR numbers may
@@ -36,8 +36,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.custom_codes.dataset_factory import build_dynamic_dataset
-from src.world_models.graph_jepa_encoder import build_encoder
-from src.cjepa_graph_predictor import MaskedNodePredictor
+from src.world_models.delos_encoder import build_encoder
+from src.delos_predictor import MaskedNodePredictor
 from src.train.engine import set_deterministic
 from src.world_models.probes import (
     evaluate_link_prediction,
@@ -53,25 +53,25 @@ def _ns_from_dict(d: dict) -> types.SimpleNamespace:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--cjepa_dir", required=True,
+    p.add_argument("--delos_dir", required=True,
                    help="outputs/<TAG>_cjepa containing best.ckpt + args.json")
     p.add_argument("--encoder_dir", required=True,
                    help="outputs/<TAG>_encoder containing encoder.ckpt")
     p.add_argument("--device", default="cuda")
     p.add_argument("--out_name", default="test_metrics_v2.json",
-                   help="Filename written under --cjepa_dir.")
+                   help="Filename written under --delos_dir.")
     p.add_argument("--probe_epochs", type=int, default=None,
                    help="Override saved probe_epochs (None = use saved).")
     args = p.parse_args()
 
-    cjepa_dir = Path(args.cjepa_dir)
+    delos_dir = Path(args.delos_dir)
     enc_dir = Path(args.encoder_dir)
-    ckpt_path = cjepa_dir / "best.ckpt"
+    ckpt_path = delos_dir / "best.ckpt"
     if not ckpt_path.exists():
         raise FileNotFoundError(f"missing {ckpt_path}")
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print(f"[rescore] cjepa_dir={cjepa_dir}  device={device}")
+    print(f"[rescore] delos_dir={delos_dir}  device={device}")
 
     ck = torch.load(ckpt_path, map_location=device, weights_only=False)
     saved_args = ck["args"]
@@ -143,7 +143,7 @@ def main():
         for tp, m in sorted(metrics.get(subset_name, {}).items()):
             print(f"  +{tp+1:>2}: " + " ".join(f"{k}={v:.4f}" for k, v in m.items()))
 
-    out_path = cjepa_dir / args.out_name
+    out_path = delos_dir / args.out_name
     with open(out_path, "w") as f:
         json.dump(metrics, f, indent=2)
     print(f"[rescore] wrote {out_path}")

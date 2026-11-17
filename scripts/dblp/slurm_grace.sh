@@ -11,12 +11,12 @@
 #
 # GRACE baseline (Deep Graph Contrastive Representation Learning, Zhu et al.,
 # 2020) -- the STATIC self-supervised control, two-stage so it is directly
-# comparable to the DyG-JEPA pipeline:
+# comparable to the DELOS pipeline:
 #   1) train the GRACE encoder: each step draws ONE training snapshot, builds
 #      two augmented views of it (edge removal + feature-dimension masking)
 #      and contrasts them with inter- and intra-view negatives. No history is
 #      aggregated and no two snapshots are compared: the objective is static.
-#   2) freeze it and fit the SAME link-prediction probe DyG-JEPA uses, which
+#   2) freeze it and fit the SAME link-prediction probe DELOS uses, which
 #      reads the encoder at the last history snapshot ("static SSL, last
 #      frame").
 #
@@ -103,4 +103,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] GRACE baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

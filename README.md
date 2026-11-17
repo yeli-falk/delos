@@ -1,4 +1,4 @@
-# DyG-JEPA (Graph C-JEPA)
+# DELOS
 
 Joint-embedding predictive pretraining on **discrete-time dynamic graphs**:
 C-JEPA's masked-slot prediction moved from object-centric video slots to graph
@@ -15,10 +15,10 @@ only at the probe stage.
 
 ```
 snapshots (B,T,N,F) + adjacency (B,T,N,N)
-  │  encoder (registry in src/world_models/graph_jepa_encoder.py)
+  │  encoder (registry in src/world_models/delos_encoder.py)
   ▼
 node latents (B,T,N,D)
-  │  DyGJEPAPredictor: mask nodes' history and/or the future, predict latents
+  │  DELOSPredictor: mask nodes' history and/or the future, predict latents
   ▼
 predicted latents ── JEPA loss in latent space
   │  frozen-backbone probe
@@ -33,8 +33,8 @@ The code is organised in four blocks.
 | block | where | entry point |
 |---|---|---|
 | 1. Universal DTDG loader | `src/custom_codes/dtdg/`, one thin parser per dataset in `src/custom_codes/`, dispatch in `dataset_factory.py` | `--data_source ...` |
-| 2. Encoder pretraining | encoders in `src/world_models/graph_jepa_encoder.py` (`@register_encoder`), pretext heads in `src/world_models/pretrainers.py` | `src/train/pretrain_encoder.py --pretext edge_mask\|feature_mask\|masked_signal` |
-| 3. Predictor | `src/cjepa_graph_predictor.py` (`DyGJEPAPredictor`, `build_predictor`), loops in `src/train/jepa.py`, two-level variant in `src/world_models/hier.py` | `src/train/train_dyg_jepa.py --mask_scheme node_mask\|future_forecast\|trajectory_block --downstream_task link_pred\|regression\|none` |
+| 2. Encoder pretraining | encoders in `src/world_models/delos_encoder.py` (`@register_encoder`), pretext heads in `src/world_models/pretrainers.py` | `src/train/pretrain_encoder.py --pretext edge_mask\|feature_mask\|masked_signal` |
+| 3. Predictor | `src/delos_predictor.py` (`DELOSPredictor`, `build_predictor`), loops in `src/train/jepa.py`, two-level variant in `src/world_models/hier.py` | `src/train/train_delos.py --mask_scheme node_mask\|future_forecast\|trajectory_block --downstream_task link_pred\|regression\|none` |
 | 4. Probes | `src/world_models/probes.py`, state / class / ranking probes in `scripts/dblp/run_block_probe.py` | run by the pipelines below |
 
 Other entry points: `src/train/finetune_state.py` (end-to-end fine-tuning),
@@ -122,7 +122,7 @@ with `PYTHONPATH=.`.
 
 ```bash
 # Smoke test: no data, no GPU
-PYTHONPATH=. python src/train/train_dyg_jepa.py --data_source synthetic_dyn \
+PYTHONPATH=. python src/train/train_delos.py --data_source synthetic_dyn \
     --mask_scheme future_forecast --downstream_task none --smoke --device cpu
 
 # Tests

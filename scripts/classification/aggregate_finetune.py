@@ -28,7 +28,7 @@ PAT = re.compile(r"^(?P<init>[a-z_]+)_aux(?P<aux>[0-9.e-]+)_f(?P<frac>[0-9.e-]+)
 # Display order for rows.
 INIT_ORDER = ["random", "encoder", "jepa", "grace", "graphmae", "bgrl", "ddgcl", "cldg", "idol", "maskdgnn", "dysubc", "dyg2vec", "dygwm", "sgjepa"]
 INIT_LABEL = {"random": "random init", "encoder": "edge-mask enc.",
-              "jepa": "DyG-JEPA (enc.+pred.)", "ddgcl": "DDGCL enc.",
+              "jepa": "DELOS (enc.+pred.)", "ddgcl": "DDGCL enc.",
               "cldg": "CLDG enc.", "idol": "IDOL enc.",
               "maskdgnn": "MaskDGNN enc.", "dysubc": "DySubC enc.",
               "grace": "GRACE enc. (static)",

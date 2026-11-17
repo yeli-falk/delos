@@ -20,7 +20,7 @@ Three views of each run:
          the JEPA objective regresses onto); horizon 0 only
   last   encoder at the last observed step (what the frozen probe reads for
          every baseline: `encoder_last`); horizon 0 only
-  pred   the predictor's forecast latent, all horizons (DyG-JEPA runs only)
+  pred   the predictor's forecast latent, all horizons (DELOS runs only)
 
 Metrics per view (Z = rows x D, at most --max_rows rows, fixed subsample):
   rankme        exp(entropy of s / sum(s)), s = singular values of the
@@ -45,14 +45,14 @@ Temporal (enc view, nodes seen in >= 2 windows):
   step_ratio    E||z(target) - z(last observed)||^2 / E||z_i - z_j||^2 over
                 random pairs: how far a node moves in one step relative to
                 the distance between two random nodes.
-Forecast (DyG-JEPA only, per horizon; scripts/synthetic/predictor_latent_error.py):
+Forecast (DELOS only, per horizon; scripts/synthetic/predictor_latent_error.py):
   ratio         mse(forecast, target) / mse(copy-last, target); 1 = the
                 predictor returns its input unchanged
   disp_mag      ||forecast - last|| / ||target - last||; 0 = pure copy
   disp_cos      cosine between predicted and true displacement
 
 Reference rows (written to <root>/_collapse/<name>_s<seed>/), per seed:
-  ref_pretrain  the shared edge-mask encoder every DyG-JEPA arm starts from
+  ref_pretrain  the shared edge-mask encoder every DELOS arm starts from
   ref_random    the same architecture at random initialisation (a random
                 network is high-rank too: rank alone is not evidence of
                 learning, so read it next to the probe score)
@@ -85,9 +85,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.dblp.run_block_probe import (  # noqa: E402
     _make_args_namespace, collect_encoder_latents, collect_test_latents)
 from scripts.synthetic.predictor_latent_error import latent_error  # noqa: E402
-from src.cjepa_graph_predictor import build_predictor, predictor_flags_from_args  # noqa: E402
+from src.delos_predictor import build_predictor, predictor_flags_from_args  # noqa: E402
 from src.custom_codes.dataset_factory import build_dynamic_dataset  # noqa: E402
-from src.world_models.graph_jepa_encoder import build_encoder  # noqa: E402
+from src.world_models.delos_encoder import build_encoder  # noqa: E402
 
 RUN_RE = re.compile(r"^(?P<stem>.+)_s(?P<seed>\d+)$")
 SPLIT_SUFFIX = {"test": "", "val": "_val"}

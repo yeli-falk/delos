@@ -11,14 +11,14 @@
 #
 # BGRL baseline (Large-Scale Representation Learning on Graphs via
 # Bootstrapping, Thakoor et al., ICLR'22) -- the STATIC negative-free control,
-# two-stage so it is directly comparable to the DyG-JEPA pipeline:
+# two-stage so it is directly comparable to the DELOS pipeline:
 #   1) train the BGRL encoder: each step draws ONE training snapshot, builds
 #      two augmented views of it (edge removal + feature-dimension masking),
 #      and trains an online encoder + predictor to match an EMA target
 #      encoder's embedding of the other view. No negatives, no history, no two
 #      snapshots compared: the objective is static.
 #   2) freeze the ONLINE encoder and fit the SAME link-prediction probe
-#      DyG-JEPA uses, which reads it at the last history snapshot ("static
+#      DELOS uses, which reads it at the last history snapshot ("static
 #      SSL, last frame").
 #
 # Outputs:
@@ -55,7 +55,7 @@ EMA=${EMA:-0.99}
 SELECT=${SELECT:-val}
 # Momentum anneal horizon in epochs (0 = whole run). Under SELECT=val the run
 # stops early and a whole-run anneal never finishes; 50 matches every other
-# BGRL invocation and the DyG-JEPA cosine arms.
+# BGRL invocation and the DELOS cosine arms.
 EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
 ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 PE1=${PE1:-0.2}
@@ -111,4 +111,4 @@ srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
 echo
 echo "[done] BGRL baseline complete ($DATASET)."
 echo "       encoder : $ENC_DIR/encoder.ckpt"
-echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DyG-JEPA)"
+echo "       metrics : $PROBE_DIR/analysis.json  (link_pred.encoder.{all,new}; compare to DELOS)"

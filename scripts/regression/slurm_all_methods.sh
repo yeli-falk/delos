@@ -142,7 +142,7 @@ case "$DATASET" in
 esac
 SEED="${SEED:-42}"
 # Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DyG-JEPA ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
+# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
 # trainers' default spans the whole --epochs budget, which early stopping
 # (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
 # 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
@@ -173,7 +173,7 @@ ARMS="${ARMS:-all}"
 want() {
     [[ " $ARMS " == *" all "* || " $ARMS " == *" $1 "* ]]
 }
-# The shared encoder is a prerequisite of every DyG-JEPA arm, so any job that
+# The shared encoder is a prerequisite of every DELOS arm, so any job that
 # runs one must be prepared to build it (under flock, below).
 need_encoder() {
     want jepa_frozen || want jepa_naive || want jepa_ema || want jepa_vicreg \
@@ -331,7 +331,7 @@ if need_encoder; then
 fi
 
 # =============================================================================
-# 3. DyG-JEPA encoder-training variants
+# 3. DELOS encoder-training variants
 # =============================================================================
 arm_flags() {
     case "$1" in
@@ -351,12 +351,12 @@ for ARM in frozen naive ema vicreg; do
     eval "HP_ARGS=\${VARIANT_HP_${ARM}:-}"
     OUT="$(d "jepa_$ARM")"
     mkdir -p "$OUT"
-    echo; echo "=== DyG-JEPA [$ARM] -> $OUT ==="
+    echo; echo "=== DELOS [$ARM] -> $OUT ==="
     echo "    flags='$VFLAGS $HP_ARGS'"
     # Order matters: base recipe, then tuned predictor HP, then the variant
     # flags, then the variant's own tuned knobs — argparse honours the last
     # occurrence, so the most specific setting wins.
-    srun --export=ALL python src/train/train_dyg_jepa.py $JEPA_COMMON \
+    srun --export=ALL python src/train/train_delos.py $JEPA_COMMON \
         --encoder_ckpt "$ENC_CKPT" $JEPA_BASE $BASE_HP $VFLAGS $HP_ARGS \
         --out_dir "$OUT" || { echo "[warn] arm $ARM failed"; continue; }
 
@@ -374,11 +374,11 @@ for ARM in frozen naive ema vicreg; do
 done
 
 # =============================================================================
-# 4. DyG-JEPA-enc control: the SAME shared encoder + a head, no predictor
+# 4. DELOS-enc control: the SAME shared encoder + a head, no predictor
 # =============================================================================
 JENC_DIR="$(d jepa_enc)"
 if want jepa_enc; then
-echo; echo "=== DyG-JEPA-enc control (no predictor) -> $JENC_DIR ==="
+echo; echo "=== DELOS-enc control (no predictor) -> $JENC_DIR ==="
 srun --export=ALL python scripts/regression/probe_encoder_regression.py \
     --encoder_ckpt "$ENC_CKPT" $PROBE_ARGS --out_dir "$JENC_DIR" \
     || echo "[warn] jepa_enc probe failed"

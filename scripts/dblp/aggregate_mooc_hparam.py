@@ -5,7 +5,7 @@ VAL-split probe written by slurm_mooc_hparam.sh — and prints each method's
 cells best-first, plus the winning flag string to paste into the final run.
 
 The ranking metric is deliberately per-method:
-  * DyG-JEPA / JODIE have a forecast column, so they rank on the PAIRED gap
+  * DELOS / JODIE have a forecast column, so they rank on the PAIRED gap
     (forecast AUROC - persistence AUROC). Ranking them on raw forecast AUROC
     would reward a strong encoder rather than a useful predictor, which is not
     the claim being made.
@@ -31,7 +31,7 @@ from pathlib import Path
 # Env var each method's winning flags go into for the final 3-seed run.
 ENV_VAR = {"jepa": "JEPA_HP", "cldg": "CLDG_HP", "ddgcl": "DDGCL_HP",
            "idol": "IDOL_HP", "jodie": "JODIE_HP",
-           # DyG-JEPA variants (slurm_mooc_jepa_variants.sh)
+           # DELOS variants (slurm_mooc_jepa_variants.sh)
            "frozen": "VARIANT_HP_frozen", "ema": "VARIANT_HP_ema",
            "naive": "VARIANT_HP_naive", "vicreg": "VARIANT_HP_vicreg"}
 # Method order for display; anything unlisted is appended alphabetically.
