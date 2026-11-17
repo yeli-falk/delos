@@ -178,4 +178,6 @@ dmypy.json
 tests.ipynb
 
 dataset/
-figures/
+figures/*
+!figures/delos_overview.svg
+tests/

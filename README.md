@@ -13,6 +13,8 @@ Prediction always happens in an encoder's latent space, never in input
 with a masking pretext) or an EMA copy of the online encoder. Labels enter
 only at the probe stage.
 
+![DELOS architecture: training with node and future masking in latent space, and inference with a probe head](figures/delos_overview.svg)
+
 ```
 snapshots (B,T,N,F) + adjacency (B,T,N,N)
   │  encoder (registry in src/world_models/delos_encoder.py)
@@ -124,9 +126,6 @@ with `PYTHONPATH=.`.
 # Smoke test: no data, no GPU
 PYTHONPATH=. python src/train/train_delos.py --data_source synthetic_dyn \
     --mask_scheme future_forecast --downstream_task none --smoke --device cpu
-
-# Tests
-PYTHONPATH=. python -m pytest tests
 ```
 
 ## Design notes
@@ -139,7 +138,7 @@ PYTHONPATH=. python -m pytest tests
   evaluated as an edge list through gather/scatter attention
   (`--attn_impl sparse`), so memory is linear in the number of allowed pairs
   rather than `(T·N)²`. `--attn_impl dense` keeps the materialised path for
-  parity checks (`tests/test_sparse_attention.py`). `--no_attention_mask`
+  parity checks. `--no_attention_mask`
   drops the mask entirely; some pipeline scripts still pass it to reproduce
   historical runs.
 - **Per-batch random node masking.** Masked node indices are resampled every
