@@ -9,6 +9,24 @@ Data sources:
   - "jodie_reddit":    JODIE Reddit binned to DTDG
   - "jodie_wikipedia": JODIE Wikipedia binned to DTDG
   - "jodie_mooc":      JODIE MOOC binned to DTDG (densest state labels)
+  - "cldg_dblp":       CLDG-format DBLP (27 yearly snapshots, 10 static classes)
+  - "cldg_patent":     CLDG-format patent citations (6 static classes)
+  - "tgbn_trade":      TGB tgbn-trade (31 yearly snapshots, per-(year, nation)
+                       export-share label vectors, NDCG@10 ranking probe)
+  - "bts_flights":     BTS on-time flights: daily airport network, label =
+                       airport in a delayed state (recurring), binary probe
+  - "nyc_taxi":        NYC TLC taxi trips: hourly zone-to-zone network, label =
+                       zone congested (low trip speed; recurring and periodic),
+                       binary probe
+  - "tgbn_genre" / "tgbn_reddit" / "tgbn_token":
+                       TGB weekly user->class interaction streams; label =
+                       the user's next-week class distribution, same probe
+  - "chase_dblp_s" / "chase_gossipcop" / "chase_music":
+                       CHASE (Kim et al., NeurIPS'26) snapshot graphs with
+                       PER-SNAPSHOT node labels (research area / fake-news
+                       consumption / dominant genre) and per-snapshot node
+                       features; binary probe for the first two, dynamic
+                       multiclass (5 classes) for music
 
 JODIE-specific kwargs (num_bins, jodie_data_path; the full dataset is always used)
 are passed through; the DBLP class quietly ignores them.
@@ -17,6 +35,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.custom_codes.cldg_format_dataset import CLDGFormatDynamicGraphDataset
 from src.custom_codes.dblp_dataset import DBLPDynamicGraphDataset
 from src.custom_codes.ehrshot_dataset import EHRshotPerPatientDataset
 from src.custom_codes.england_covid_dataset import (
@@ -27,6 +46,10 @@ from src.custom_codes.jodie_dataset import JODIEDynamicGraphDataset
 from src.custom_codes.metr_la_dataset import MetrLADataset
 from src.custom_codes.reddit_dataset import RedditHyperlinkDynamicGraphDataset
 from src.custom_codes.synthetic_dyn_dataset import SyntheticDynamicGraphDataset
+from src.custom_codes.bts_flights_dataset import BTSFlightsDataset
+from src.custom_codes.chase_dataset import CHASEDataset
+from src.custom_codes.nyc_taxi_dataset import NYCTaxiDataset
+from src.custom_codes.tgbn_dataset import TGBNInteractionDataset, TGBNTradeDataset
 
 
 def add_dataset_cli_flags(p) -> None:
@@ -38,9 +61,15 @@ def add_dataset_cli_flags(p) -> None:
                    choices=["dblp", "jodie_reddit", "jodie_wikipedia",
                             "jodie_mooc", "reddit_body", "reddit_title",
                             "ehrshot", "metr_la", "england_covid",
-                            "synthetic_dyn"],
+                            "synthetic_dyn", "cldg_dblp", "cldg_patent",
+                            "tgbn_trade", "tgbn_genre", "tgbn_reddit",
+                            "tgbn_token", "bts_flights", "nyc_taxi",
+                            "chase_dblp_s", "chase_gossipcop", "chase_music"],
                    help="Which DTDG to load. 'dblp' covers the real DBLP "
-                        "edges CSV"
+                        "edges CSV (unlabelled, link prediction). 'cldg_dblp' "
+                        "/ 'cldg_patent' load the CLDG-release graphs under "
+                        "dataset/cldg/ (static per-node classes; see "
+                        "--cldg_* and src/custom_codes/cldg_format_dataset.py). "
                         "'jodie_*' load Stanford's JODIE bipartite CSVs and "
                         "bin them into DTDG snapshots. 'reddit_body' / "
                         "'reddit_title' load Kumar 2018's homogeneous "
@@ -116,6 +145,140 @@ def add_dataset_cli_flags(p) -> None:
                    help="Load via torch_geometric_temporal's "
                         "EnglandCovidDatasetLoader instead of the vendored "
                         "JSON cache (requires that package installed).")
+    # --- CLDG-format (dblp / patent) knobs ----------------------------------
+    p.add_argument("--cldg_data_dir", default="dataset/cldg",
+                   help="Folder holding <name>/<name>.txt, node2label.txt and "
+                        "feature.txt (from scripts/dblp/extract_cldg_datasets.sh).")
+    p.add_argument("--cldg_num_bins", type=int, default=30,
+                   help="Number of DTDG snapshots. 0 = one snapshot per "
+                        "DISTINCT timestamp, the dataset's own granularity "
+                        "(dblp: 27 years). patent has 891 distinct values on "
+                        "a very skewed axis, so it is binned.")
+    p.add_argument("--cldg_binning", choices=["equal_width", "equal_freq"],
+                   default="equal_freq",
+                   help="How --cldg_num_bins > 0 cuts the time axis. "
+                        "'equal_freq' (quantile bins, ~equal edge counts) is "
+                        "the only usable choice on patent, where 83%% of the "
+                        "edges fall in the last tenth of the axis.")
+    p.add_argument("--cldg_top_k", type=int, default=0,
+                   help="Keep the K most active nodes (combined src+dst "
+                        "count); 0 = every node. The dense (T, N, N) snapshots "
+                        "make the 28k-node DBLP graph infeasible at full "
+                        "size; labels and features follow the subset.")
+    p.add_argument("--no_cldg_file_features", dest="cldg_file_features",
+                   action="store_false",
+                   help="Do NOT append the 128-dim feature.txt rows (the "
+                        "sinusoidal node-index code CLDG trains on) to the "
+                        "8 graph-derived features. Ablation only: without an "
+                        "identity code the frozen latent carries little about "
+                        "a node's class.")
+    p.set_defaults(cldg_file_features=True)
+    # --- TGB node property prediction (tgbn-trade) ---------------------------
+    p.add_argument("--tgbn_data_dir", default=None,
+                   help="Folder with tgbn-<name>_edgelist.csv and "
+                        "tgbn-<name>_node_labels.csv (scripts/dblp/"
+                        "fetch_tgbn.sh <name>). Default dataset/tgb/tgbn-<name>. "
+                        "trade: snapshots are the native years and the label "
+                        "is each nation's export-share vector. genre / reddit / "
+                        "token: weekly bipartite user->class snapshots, label = "
+                        "the user's next-week class distribution. All probed "
+                        "with run_block_probe.py --task ranking (NDCG@10).")
+    # --- BTS airport delay propagation --------------------------------------
+    p.add_argument("--bts_data_dir", default="dataset/bts",
+                   help="Folder with the BTS on-time monthly zips "
+                        "(scripts/dblp/fetch_bts_flights.sh <year>).")
+    p.add_argument("--bts_years", type=int, nargs="+", default=[2019],
+                   help="Calendar years to load (consecutive). One year = "
+                        "365 daily snapshots of ~360 airports.")
+    p.add_argument("--bts_bin_hours", type=int, default=24,
+                   help="Snapshot length in hours (must divide 24). 24 = one "
+                        "per day (FlightDate); shorter bins use the scheduled "
+                        "LOCAL departure hour.")
+    p.add_argument("--bts_label", choices=["share_del15", "mean_delay"],
+                   default="share_del15",
+                   help="Delay state: share of departures delayed >= 15 min "
+                        "above --bts_threshold (default 0.30), or mean "
+                        "departure delay in minutes above it (use ~15).")
+    p.add_argument("--bts_threshold", type=float, default=0.30)
+    p.add_argument("--bts_min_departures", type=int, default=5,
+                   help="Airport-bins with fewer flown departures get no label.")
+    p.add_argument("--no_bts_ops_features", dest="bts_ops_features",
+                   action="store_false",
+                   help="Drop the operational descriptors (departures, "
+                        "arrivals, delay shares, cancellation rate, "
+                        "day-of-week) and keep only the 8 graph statistics.")
+    p.set_defaults(bts_ops_features=True)
+    # --- NYC taxi zone congestion -------------------------------------------
+    p.add_argument("--nyc_data_dir", default="dataset/nyc_taxi",
+                   help="Folder with the TLC monthly parquet files "
+                        "(scripts/dblp/fetch_nyc_taxi.sh <YYYY-MM> ...).")
+    p.add_argument("--nyc_months", nargs="+",
+                   default=["2019-01", "2019-02", "2019-03"],
+                   help="Months to load, YYYY-MM (consecutive). One month = "
+                        "~720 hourly snapshots of ~260 taxi zones.")
+    p.add_argument("--nyc_bin_hours", type=int, default=1,
+                   help="Snapshot length in hours on the pickup time (must "
+                        "divide 24).")
+    p.add_argument("--nyc_kind", choices=["yellow", "green"], default="yellow")
+    p.add_argument("--nyc_label", choices=["rel_speed", "abs_speed"],
+                   default="rel_speed",
+                   help="Congestion state: mean pickup-trip speed below the "
+                        "zone's own --nyc_threshold quantile over the train "
+                        "bins (default 0.25), or below --nyc_threshold mph "
+                        "(use ~10).")
+    p.add_argument("--nyc_threshold", type=float, default=0.25)
+    p.add_argument("--nyc_min_trips", type=int, default=10,
+                   help="Zone-bins with fewer valid-speed pickups get no label.")
+    p.add_argument("--nyc_min_edge_trips", type=int, default=1,
+                   help="Trips needed in a bin for a pickup->dropoff edge.")
+    p.add_argument("--no_nyc_ops_features", dest="nyc_ops_features",
+                   action="store_false",
+                   help="Drop the trip descriptors (pickups, dropoffs, speed, "
+                        "trip length, day-of-week / hour) and keep only the "
+                        "8 graph statistics.")
+    p.set_defaults(nyc_ops_features=True)
+    # --- CHASE dynamic-label benchmarks (dblp_s / gossipcop / music) --------
+    p.add_argument("--chase_data_dir", default="dataset/chase",
+                   help="Folder with DBLP-S.pkl / GossipCop.pkl / Music.pkl "
+                        "(scripts/dblp/fetch_chase.sh).")
+    p.add_argument("--chase_top_k", type=int, default=0,
+                   help="Keep the K most active nodes (sum of degrees over "
+                        "the timeline); 0 = every node. The dense (T, N, N) "
+                        "snapshots make 34,717-node DBLP-S infeasible at "
+                        "full size; labels and features follow the subset.")
+    p.add_argument("--no_chase_node_features", dest="chase_node_features",
+                   action="store_false",
+                   help="Do NOT append the release's per-snapshot node "
+                        "vectors (768-dim BERT / 779-dim listening "
+                        "descriptors) to the 8 graph statistics. Ablation.")
+    p.set_defaults(chase_node_features=True)
+    p.add_argument("--no_chase_feat_norm", dest="chase_feat_norm",
+                   action="store_false",
+                   help="Skip the per-dimension z-scoring of the node vectors "
+                        "(fitted on the train snapshots' active rows).")
+    p.set_defaults(chase_feat_norm=True)
+    p.add_argument("--chase_feat_pca", type=int, default=0,
+                   help="Reduce the node vectors to this many PCA dims "
+                        "(fitted on the train snapshots); 0 = keep all.")
+    p.add_argument("--tgbn_bin_days", type=int, default=7,
+                   help="genre / reddit / token only: snapshot length in days. "
+                        "7 = TGB's weekly label grid (label(b) == snapshot b's "
+                        "interaction distribution); coarser bins keep the label "
+                        "queried at the bin start, which still spans one week.")
+    p.add_argument("--tgbn_max_bins", type=int, default=0,
+                   help="genre / reddit / token only: keep only the LAST k "
+                        "labelled bins (plus the lead-in) and the nodes seen in "
+                        "them -- a time cut, not a node subset; every label row "
+                        "of the kept weeks survives. 0 = whole stream. reddit "
+                        "(~730 weeks, 11.8k nodes) needs this for the dense "
+                        "pipeline; genre does not.")
+    p.add_argument("--no_tgbn_weight_features", dest="tgbn_weight_features",
+                   action="store_false",
+                   help="Drop the 5 per-(year, nation) trade-weight "
+                        "descriptors (max share, entropy, partner counts, "
+                        "import mass) that carry the edge weights the bool "
+                        "snapshot loses.")
+    p.set_defaults(tgbn_weight_features=True)
     # --- synthetic_dyn generator knobs -------------------------------------
     # The experiment sweeps --synth_node_noise (observation noise, which the
     # model cannot predict) while holding --synth_ou_sigma LOW (so the latent
@@ -196,6 +359,10 @@ def add_dataset_cli_flags(p) -> None:
     p.add_argument("--synth_density", type=float, default=0.05)
     p.add_argument("--synth_persistence", type=float, default=0.6)
     p.add_argument("--synth_diffusion", type=float, default=0.3)
+    p.add_argument("--synth_feature_readout", choices=["tanh", "linear"], default="tanh",
+                   help="synthetic_dyn node-feature readout of the latent: legacy 2-layer "
+                        "tanh, or linear (position/velocity linearly recoverable from "
+                        "feature differences; used by the horizon showcase)")
     p.set_defaults(normalize_edge_features=True)
     p.add_argument("--split_mode", choices=["chronological", "iid"],
                    default="chronological",
@@ -226,6 +393,25 @@ def add_dataset_cli_flags(p) -> None:
 
 
 def build_dynamic_dataset(args, split: str):
+    """Build the dataset for ``args``; with ``args.coarse_window = w > 1``
+    (the coarse level of a two-level run, src/world_models/hier.py) the
+    window lengths in ``args`` are COARSE steps: the underlying dataset is
+    built with ``w`` times as many fine snapshots and every window is reduced
+    on the fly."""
+    w = int(getattr(args, "coarse_window", 1) or 1)
+    if w <= 1:
+        return _build_dynamic_dataset(args, split)
+    import copy
+    from src.world_models.hier import CoarseWindowDataset
+    fine = copy.copy(args)
+    fine.coarse_window = 1
+    fine.history_size = args.history_size * w
+    fine.num_preds = args.num_preds * w
+    return CoarseWindowDataset(_build_dynamic_dataset(fine, split), w,
+                               getattr(args, "coarse_mode", "last"))
+
+
+def _build_dynamic_dataset(args, split: str):
     """Build the train/val/test dataset matching `args.data_source`.
 
     `args` must already carry: data_source, history_size, num_preds, seed,
@@ -285,6 +471,90 @@ def build_dynamic_dataset(args, split: str):
             with_edge_features=with_edge_features,
             normalize_edge_features=normalize_edge_features,
         )
+    if args.data_source in ("cldg_dblp", "cldg_patent"):
+        return CLDGFormatDynamicGraphDataset(
+            name=args.data_source.split("_", 1)[1],
+            data_dir=getattr(args, "cldg_data_dir", "dataset/cldg"),
+            split=split,
+            history_size=args.history_size,
+            num_preds=args.num_preds,
+            num_bins=getattr(args, "cldg_num_bins", 30),
+            binning=getattr(args, "cldg_binning", "equal_freq"),
+            top_k=getattr(args, "cldg_top_k", 0),
+            with_file_features=getattr(args, "cldg_file_features", True),
+            seed=seed,
+            split_mode=split_mode,
+        )
+    if args.data_source == "bts_flights":
+        return BTSFlightsDataset(
+            data_dir=getattr(args, "bts_data_dir", "dataset/bts"),
+            years=getattr(args, "bts_years", [2019]),
+            split=split,
+            history_size=args.history_size,
+            num_preds=args.num_preds,
+            bin_hours=getattr(args, "bts_bin_hours", 24),
+            label_kind=getattr(args, "bts_label", "share_del15"),
+            threshold=getattr(args, "bts_threshold", 0.30),
+            min_departures=getattr(args, "bts_min_departures", 5),
+            with_ops_features=getattr(args, "bts_ops_features", True),
+            seed=seed,
+            split_mode=split_mode,
+        )
+    if args.data_source == "nyc_taxi":
+        return NYCTaxiDataset(
+            data_dir=getattr(args, "nyc_data_dir", "dataset/nyc_taxi"),
+            months=getattr(args, "nyc_months", ["2019-01", "2019-02", "2019-03"]),
+            split=split,
+            history_size=args.history_size,
+            num_preds=args.num_preds,
+            bin_hours=getattr(args, "nyc_bin_hours", 1),
+            kind=getattr(args, "nyc_kind", "yellow"),
+            label_kind=getattr(args, "nyc_label", "rel_speed"),
+            threshold=getattr(args, "nyc_threshold", 0.25),
+            min_trips=getattr(args, "nyc_min_trips", 10),
+            min_edge_trips=getattr(args, "nyc_min_edge_trips", 1),
+            with_ops_features=getattr(args, "nyc_ops_features", True),
+            seed=seed,
+            split_mode=split_mode,
+        )
+    if args.data_source in ("chase_dblp_s", "chase_gossipcop", "chase_music"):
+        return CHASEDataset(
+            name=args.data_source.split("_", 1)[1],
+            data_dir=getattr(args, "chase_data_dir", "dataset/chase"),
+            split=split,
+            history_size=args.history_size,
+            num_preds=args.num_preds,
+            top_k=getattr(args, "chase_top_k", 0),
+            with_node_features=getattr(args, "chase_node_features", True),
+            feat_norm=getattr(args, "chase_feat_norm", True),
+            feat_pca=getattr(args, "chase_feat_pca", 0),
+            seed=seed,
+            split_mode=split_mode,
+        )
+    if args.data_source in ("tgbn_genre", "tgbn_reddit", "tgbn_token"):
+        name = args.data_source.split("_", 1)[1]
+        return TGBNInteractionDataset(
+            name=name,
+            data_dir=getattr(args, "tgbn_data_dir", None) or f"dataset/tgb/tgbn-{name}",
+            split=split,
+            history_size=args.history_size,
+            num_preds=args.num_preds,
+            bin_days=getattr(args, "tgbn_bin_days", 7),
+            max_bins=getattr(args, "tgbn_max_bins", 0),
+            with_weight_features=getattr(args, "tgbn_weight_features", True),
+            seed=seed,
+            split_mode=split_mode,
+        )
+    if args.data_source == "tgbn_trade":
+        return TGBNTradeDataset(
+            data_dir=getattr(args, "tgbn_data_dir", None) or "dataset/tgb/tgbn-trade",
+            split=split,
+            history_size=args.history_size,
+            num_preds=args.num_preds,
+            with_weight_features=getattr(args, "tgbn_weight_features", True),
+            seed=seed,
+            split_mode=split_mode,
+        )
     if args.data_source == "england_covid":
         return EnglandCovidDataset(
             data_dir=getattr(args, "england_covid_data_dir",
@@ -316,6 +586,7 @@ def build_dynamic_dataset(args, split: str):
             target_density=getattr(args, "synth_density", 0.05),
             persistence=getattr(args, "synth_persistence", 0.6),
             diffusion_alpha=getattr(args, "synth_diffusion", 0.3),
+            feature_readout=getattr(args, "synth_feature_readout", "tanh"),
             anchor_scale=getattr(args, "synth_anchor_scale", 2.0),
             beta=getattr(args, "synth_beta", 1.0),
             d_latent=getattr(args, "synth_d_latent", 8),

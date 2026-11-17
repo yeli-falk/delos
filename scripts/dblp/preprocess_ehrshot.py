@@ -93,11 +93,9 @@ def parse_splits(splits_csv: Path) -> dict:
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--csv", default="/home/yeli/Desktop/phd/ehrshot-benchmark/"
-                                    "EHRSHOT_ASSETS/data/ehrshot.csv",
+    p.add_argument("--csv", default="dataset/ehrshot/ehrshot.csv",
                    help="Path to raw ehrshot.csv (~41M rows).")
-    p.add_argument("--splits", default="/home/yeli/Desktop/phd/ehrshot-benchmark/"
-                                       "EHRSHOT_ASSETS/splits/person_id_map.csv")
+    p.add_argument("--splits", default="dataset/ehrshot/person_id_map.csv")
     p.add_argument("--out", default="dataset/ehrshot/ehrshot_cohort.pkl",
                    help="Output pickle path.")
     p.add_argument("--top_k_codes", type=int, default=500,

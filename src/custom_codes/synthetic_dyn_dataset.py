@@ -110,6 +110,7 @@ class SyntheticDynamicGraphDataset(Dataset):
         target_density: float = 0.05,
         persistence: float = 0.6,
         diffusion_alpha: float = 0.3,
+        feature_readout: str = "tanh",
         anchor_scale: float = 2.0,
         beta: float = 1.0,
         d_latent: int = 8,
@@ -134,6 +135,7 @@ class SyntheticDynamicGraphDataset(Dataset):
             ("switch_prob", switch_prob),
             ("switch_mode", switch_mode), ("target_density", target_density),
             ("persistence", persistence), ("diffusion_alpha", diffusion_alpha),
+            ("feature_readout", feature_readout),
             ("anchor_scale", anchor_scale), ("beta", beta),
             ("d_latent", d_latent), ("label_mode", label_mode),
             ("hysteresis", hysteresis),
@@ -214,6 +216,13 @@ class SyntheticDynamicGraphDataset(Dataset):
              for i in range(N)], dtype=np.int64)
 
         self.latents = data["latents"]        # ground truth, for latent probes
+        # Generator state the probes need to reconstruct the HIDDEN velocity
+        # v(t) = z(t) - z(t-1) - theta * (a_{c(t)} - z(t-1)) exactly (the
+        # momentum term is the only part of the future a snapshot cannot read).
+        self.anchors = data["anchors"]
+        self.ou_theta = float(ou_theta)
+        self.momentum = float(momentum)
+        self.feature_readout = feature_readout
         self.communities = comm
         self.num_nodes = N
         self.feat_dim = feats.shape[-1]

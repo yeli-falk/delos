@@ -11,8 +11,8 @@ DEST=dataset/metr_la
 mkdir -p "$DEST"
 
 PY=${PYTHON:-python}
-if [[ -x /home/yeli/.conda/envs/cjepa/bin/python ]]; then
-    PY=/home/yeli/.conda/envs/cjepa/bin/python
+if [[ -z "${PYTHON:-}" && -x "$HOME/.conda/envs/cjepa/bin/python" ]]; then
+    PY="$HOME/.conda/envs/cjepa/bin/python"
 fi
 
 if ! "$PY" -c "import huggingface_hub" >/dev/null 2>&1; then

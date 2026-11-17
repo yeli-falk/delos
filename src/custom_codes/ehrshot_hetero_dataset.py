@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, List
 
 import numpy as np
 import torch

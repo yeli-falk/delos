@@ -36,7 +36,6 @@ from torch.utils.data import Dataset
 
 from src.custom_codes.dtdg.dataset import DTDGDataset
 from src.custom_codes.dtdg.features import (
-    VOCAB_TYPE_DIM,
     build_graph_features,
     concept_static_features as _concept_static_features,  # noqa: F401
 )
