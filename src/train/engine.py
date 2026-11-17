@@ -91,6 +91,33 @@ def save_encoder_ckpt(path, encoder, args, feature_dim: int, **extra) -> None:
     torch.save(payload, path)
 
 
+def check_encoder_ckpt_batch_size(ckpt: dict, args, ckpt_path: str) -> None:
+    """Refuse to train on a pretrained encoder produced at a different batch size.
+
+    ``save_encoder_ckpt`` stores the pretraining ``args``; a run that consumes
+    the encoder (DyG-JEPA with ``--encoder_ckpt``) must use the same
+    ``--batch_size`` so the two stages sit on one optimisation budget and the
+    table compares objectives, not batch sizes. A checkpoint whose trainer had
+    no ``--batch_size`` flag (the baseline SSL encoders sample nodes per
+    snapshot instead) cannot be verified and is let through with a notice.
+    """
+    saved_args = ckpt.get("args", {}) or {}
+    saved = saved_args.get("batch_size")
+    if saved is None:
+        print(f"[encoder] {ckpt_path}: no batch_size recorded in the pretraining "
+              f"args; cannot verify it matches --batch_size {args.batch_size}.",
+              flush=True)
+        return
+    if int(saved) != int(args.batch_size):
+        raise SystemExit(
+            f"--encoder_ckpt {ckpt_path!r} was pretrained with batch_size={saved} "
+            f"but this run uses --batch_size {args.batch_size}. Pretrained "
+            f"encoders must be consumed at the batch size they were trained "
+            f"with: pass --batch_size {saved}, or re-run the encoder "
+            f"pretraining with --batch_size {args.batch_size}.")
+    print(f"[encoder] batch_size {saved} matches the pretraining run.", flush=True)
+
+
 def load_encoder_from_ckpt(ckpt_path: str, feature_dim: int, device,
                            freeze: bool = True):
     """Rebuild a frozen encoder from a pretrain checkpoint. Returns

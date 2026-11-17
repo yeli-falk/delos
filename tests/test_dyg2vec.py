@@ -60,7 +60,6 @@ def test_window_edges_time_and_structure():
     # structural masking: keep=False zeroes only the W2 part
     keep = torch.zeros_like(adj)
     _, _, f0 = enc._window_edges(adj, T=2, N=N, keep_b=keep)
-    dt = torch.zeros(8)
     assert not torch.allclose(f, f0)
 
 

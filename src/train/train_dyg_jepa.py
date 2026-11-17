@@ -36,6 +36,7 @@ from src.custom_codes.dataset_factory import (
 )
 from src.train import cli
 from src.train.engine import (
+    check_encoder_ckpt_batch_size,
     cosine_warmup_lr,
     make_loader,
     set_deterministic,
@@ -81,6 +82,7 @@ def build_encoder_for(args, feature_dim, device):
                 f"scripts/england_covid/pretrain_encoder.sh) to produce it, or "
                 f"drop --encoder_ckpt to train with a random-init encoder.")
         ckpt = torch.load(args.encoder_ckpt, map_location=device, weights_only=False)
+        check_encoder_ckpt_batch_size(ckpt, args, args.encoder_ckpt)
         enc_kind = ckpt.get("encoder_kind", enc_kind)
         enc_hidden = ckpt.get("encoder_hidden", enc_hidden)
         enc_out = ckpt.get("node_dim", enc_out)
@@ -101,7 +103,40 @@ def build_encoder_for(args, feature_dim, device):
     return encoder
 
 
-def build_jepa_predictor(args, num_nodes, device):
+def build_jepa_predictor(args, num_nodes, device, feature_dim=None):
+    """``--hier_ckpt``: the frozen coarse model is built inside the predictor
+    and its weights loaded here; ``args.hier_cfg`` (saved with the fine
+    checkpoint) is what lets every other script rebuild it."""
+    hier_ckpt = None
+    if getattr(args, "hier_ckpt", None):
+        from src.world_models.hier import hier_cfg_from_ckpt
+        if feature_dim is None:
+            raise SystemExit("--hier_ckpt is wired for --downstream_task "
+                             "link_pred / none only")
+        if not os.path.exists(args.hier_ckpt):
+            raise FileNotFoundError(f"--hier_ckpt {args.hier_ckpt!r} does not exist "
+                                    f"(train the coarse level first)")
+        hier_ckpt = torch.load(args.hier_ckpt, map_location=device, weights_only=False)
+        args.hier_cfg = hier_cfg_from_ckpt(hier_ckpt, feature_dim)
+        if args.hier_cfg.get("data_source") != args.data_source:
+            raise SystemExit(f"--hier_ckpt was trained on "
+                             f"{args.hier_cfg.get('data_source')!r}, this run is "
+                             f"{args.data_source!r}")
+    predictor = _build_jepa_predictor(args, num_nodes, device)
+    if hier_ckpt is not None:
+        predictor.hint.load_weights(hier_ckpt)
+        c = args.hier_cfg
+        print(f"[hier] coarse level from {args.hier_ckpt}: window={c['coarse_window']} "
+              f"mode={c.get('coarse_mode')} {c['history_size']}+{c['num_preds']} coarse "
+              f"steps, hint={args.hier_hint} (frozen, "
+              f"{sum(q.numel() for q in predictor.hint.parameters())} params)", flush=True)
+    return predictor
+
+
+def _build_jepa_predictor(args, num_nodes, device):
+    hier = {}
+    if getattr(args, "hier_cfg", None):
+        hier = dict(hier_cfg=args.hier_cfg, hier_hint=args.hier_hint)
     return build_predictor(
         args.mask_scheme,
         num_nodes=num_nodes, node_dim=args.node_dim,
@@ -115,23 +150,91 @@ def build_jepa_predictor(args, num_nodes, device):
         use_edge_head=(args.edge_mask_rate > 0),
         residual_head=args.residual_head,
         latent_norm=args.target_norm,
+        mask_frac=args.mask_frac,
+        input_delta=args.input_delta,
+        linear_skip=args.linear_skip,
+        **hier,
     ).to(device)
 
 
 def build_ema(args, encoder, device, steps_per_epoch):
     """EMA target encoder, or None. ``--ema_schedule cosine`` anneals the
-    momentum from --ema_momentum to --ema_momentum_end over the whole run
-    (I-JEPA / V-JEPA); ``const`` is the legacy fixed momentum."""
+    momentum from --ema_momentum to --ema_momentum_end over
+    ``--ema_anneal_epochs`` epochs (0 = the whole ``--epochs`` budget, the
+    I-JEPA / V-JEPA convention); ``const`` is the legacy fixed momentum.
+
+    The horizon matters under early stopping: with patience 20 the MOOC EMA
+    runs stop at 85-240 of 300 epochs, so a whole-run anneal from 0.996 had
+    only reached ~0.997 when the checkpoint was taken -- the cosine arm was
+    the constant arm under another name. A horizon shorter than a typical run
+    lets the schedule finish (target frozen at --ema_momentum_end) while the
+    predictor still trains. The anneal clock counts encoder updates, so it
+    starts when --encoder_freeze_epochs ends."""
     if not args.ema_target:
         return None
     if args.ema_schedule == "cosine":
+        horizon = args.ema_anneal_epochs if args.ema_anneal_epochs > 0 else args.epochs
         ema = EMAEncoder(encoder, momentum=args.ema_momentum,
                          momentum_end=args.ema_momentum_end,
-                         total_steps=max(1, args.epochs * steps_per_epoch))
+                         total_steps=max(1, horizon * steps_per_epoch))
     else:
         ema = EMAEncoder(encoder, momentum=args.ema_momentum)
     ema.target.to(device)
     return ema
+
+
+def smoke_done(args, train_ds=None):
+    """End a ``--smoke`` run with the peak GPU memory and the window geometry.
+
+    A full run OOMs in the backward pass long after the queue has given it a
+    card, so sizing the batch by resubmitting is expensive. Three steps are
+    enough to reach the peak, and the dominant term is predictable: a
+    dynamic-topology window carries a dense ``(B, T, N, N)`` adjacency plus its
+    normalised float32 copy, so memory is linear in the batch AND in
+    ``T = history_size + num_preds``. The printed estimate is that term alone;
+    the measured peak includes the encoder, the predictor's activations and the
+    autograd graph.
+    """
+    import torch as _t
+    line = "[smoke] ok"
+    if train_ds is not None:
+        N = getattr(train_ds, "num_nodes", None)
+        T = args.history_size + args.num_preds
+        if N:
+            gb = args.batch_size * T * N * N * 5 / 1024 ** 3   # bool + float32 copy
+            line += (f"  N={N} T={T} (hist {args.history_size} + preds {args.num_preds}) "
+                     f"batch={args.batch_size} -> dense adjacency ~{gb:.1f} GiB")
+    if _t.cuda.is_available():
+        line += (f"  peak allocated={_t.cuda.max_memory_allocated() / 1024 ** 3:.1f} GiB"
+                 f"  reserved={_t.cuda.max_memory_reserved() / 1024 ** 3:.1f} GiB")
+    print(line, flush=True)
+
+
+def set_encoder_frozen(args, epoch, encoder, ema):
+    """Apply ``--encoder_freeze_epochs`` at the start of ``epoch`` (0-based).
+
+    For the first K epochs of a --train_encoder run the encoder's parameters
+    get no gradient (AdamW skips them, weight decay included) and the EMA
+    target neither updates nor advances its anneal clock. The predictor
+    therefore first fits a FIXED, pretrained target, and the encoder only
+    starts moving once the predictor's gradients carry signal rather than
+    its initial noise. Motivation (MOOC, 2026-09-23): raising the encoder lr
+    lowered the JEPA loss and the copy-last AUROC together without improving
+    the forecast, i.e. the early encoder updates were reshaping the latents
+    to be easier to predict, not more informative. Returns True while frozen.
+    """
+    k = getattr(args, "encoder_freeze_epochs", 0)
+    if not args.train_encoder or k <= 0:
+        return False
+    frozen = epoch < k
+    for p_ in encoder.parameters():
+        p_.requires_grad_(not frozen)
+    if ema is not None:
+        ema.paused = frozen
+    if epoch == k:
+        print(f"  [encoder] unfrozen at epoch {epoch + 1}: encoder lr and "
+              f"EMA updates now active", flush=True)
+    return frozen
 
 
 def jepa_variant_kwargs(args):
@@ -195,7 +298,23 @@ def _append_history(out_dir, record):
         json.dump(hist, f, indent=2)
 
 
-def _update_best(vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir):
+def _ckpt_payload(predictor, encoder, epoch, val_loss, args, ema=None):
+    """best.ckpt / snapshot schema. ``encoder`` is the ONLINE encoder (what
+    every probe reads). With an EMA target the predictor was trained to emit
+    the TARGET encoder's latents, so that encoder is saved too
+    (``ema_encoder``, 2026-10-05): the latent-error diagnostic scores the
+    forecast against it, since online and target drift apart in some seeds and
+    the online encoder is then the wrong yardstick for the predictor's
+    objective. Older checkpoints simply lack the key."""
+    out = {"predictor": predictor.state_dict(), "encoder": encoder.state_dict(),
+           "epoch": epoch, "val_loss": val_loss, "args": vars(args)}
+    if ema is not None and getattr(ema, "target", None) is not None:
+        out["ema_encoder"] = ema.target.state_dict()
+    return out
+
+
+def _update_best(vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir,
+                 ema=None):
     """Save best.ckpt on improvement and decide whether to early-stop.
 
     Returns ``(best_val, no_improve, improved, stop)``. An improvement requires
@@ -205,15 +324,93 @@ def _update_best(vl, best_val, no_improve, epoch, args, predictor, encoder, out_
     if improved:
         best_val = vl["loss"]
         no_improve = 0
-        torch.save({"predictor": predictor.state_dict(),
-                    "encoder": encoder.state_dict(), "epoch": epoch,
-                    "val_loss": best_val, "args": vars(args)},
+        torch.save(_ckpt_payload(predictor, encoder, epoch, best_val, args, ema),
                    out_dir / "best.ckpt")
     else:
         no_improve += 1
     stop = (args.early_stop_patience > 0
             and no_improve >= args.early_stop_patience)
     return best_val, no_improve, improved, stop
+
+
+def _save_snapshot(epoch, vl, args, predictor, encoder, out_dir, ema=None):
+    """Periodic checkpoint for probe-based model selection.
+
+    ``best.ckpt`` is chosen on the validation JEPA loss. With an EMA target that
+    loss is measured against a MOVING target, so it is not comparable across
+    epochs and only loosely tied to what the downstream probe reads. With
+    ``--snapshot_every N`` every N-th epoch is also kept as
+    ``snapshots/ep<NNNN>/best.ckpt`` (same schema, so every ckpt consumer can
+    read it); ``scripts/classification/select_ckpt_by_probe.py`` then probes
+    them on the VALIDATION split and promotes the best one. One directory per
+    snapshot because the probe writes its json next to the checkpoint.
+    """
+    every = getattr(args, "snapshot_every", 0)
+    # --snapshot_first K additionally keeps each of the first K epochs: latent
+    # collapse, when it happens, happens in the first few epochs, long before
+    # the first periodic snapshot (scripts/collapse/collapse_metrics.py).
+    early = (epoch + 1) <= getattr(args, "snapshot_first", 0)
+    if not early and (every <= 0 or (epoch + 1) % every != 0):
+        return
+    d = out_dir / "snapshots" / f"ep{epoch + 1:04d}"
+    d.mkdir(parents=True, exist_ok=True)
+    torch.save(_ckpt_payload(predictor, encoder, epoch, vl["loss"], args, ema), d / "best.ckpt")
+
+
+@torch.no_grad()
+def init_linear_skip_ridge(predictor, encoder, loader, history_size, device, lam=1e-2):
+    """Set the predictor's linear skip (``--linear_skip``) to the closed-form
+    ridge solution on the TRAINING windows: per future step k, the map from
+    the flattened history latents [z_{t-H+1} .. z_t] (plus bias) to the
+    displacement z_{t+k} - z_t, in the encoder's own latent space.
+
+    Why: on the synthetic showcase a ridge of exactly this form reaches a
+    latent-error ratio of 0.47-0.60 vs copy-last while the trained predictor
+    plateaus at 0.68-0.88, and a zero-initialised skip trained by gradient
+    descent never caught up before early stopping. Solving it exactly puts the
+    predictor AT the linear floor before the first step; the transformer then
+    only has to learn the nonlinear / structural residual. Valid for a frozen
+    encoder (the latents are fixed); with --train_encoder it is a warm start
+    that goes stale as the encoder moves. ``lam`` is relative to the mean
+    diagonal of X^T X so it is scale-free. Masked nodes are irrelevant here:
+    the skip is applied to visible-history nodes only at run time.
+    """
+    skip = getattr(predictor, "skip", None)
+    if skip is None:
+        raise SystemExit("--linear_skip_init ridge needs --linear_skip")
+    encoder.eval()
+    H, P = predictor.history_frames, predictor.pred_frames
+    D = predictor.node_dim
+    F = H * D
+    XtX = torch.zeros(F + 1, F + 1, dtype=torch.float64, device=device)
+    XtY = torch.zeros(P, F + 1, D, dtype=torch.float64, device=device)
+    n_rows = 0
+    for batch in loader:
+        x_hist = batch["x_hist"].to(device); x_fut = batch["x_fut"].to(device)
+        adj = batch["adj"].to(device); active = batch["active"].to(device)
+        adj_norm = normalize_adjacency(adj)
+        z_full = encoder(torch.cat([x_hist, x_fut], dim=1), adj_norm)        # (B,T,N,D)
+        z_hist = encoder(x_hist, adj_norm[:, :H])                              # (B,H,N,D)
+        B, T_total, N = active.shape
+        # rows = nodes active at EVERY future step (one X row serves all k)
+        act = active[:, H:].all(dim=1)                                         # (B,N)
+        Xb = z_hist.permute(0, 2, 1, 3).reshape(B, N, F)[act].double()         # (R,F)
+        Xb = torch.cat([Xb, torch.ones(Xb.shape[0], 1, dtype=Xb.dtype, device=device)], 1)
+        last = z_hist[:, -1][act].double()                                     # (R,D)
+        XtX += Xb.T @ Xb
+        for k in range(P):
+            Yk = z_full[:, H + k][act].double() - last
+            XtY[k] += Xb.T @ Yk
+        n_rows += Xb.shape[0]
+    reg = lam * XtX.diagonal()[:-1].mean()
+    A = XtX + reg * torch.eye(F + 1, dtype=XtX.dtype, device=device)
+    A[-1, -1] -= reg                                                            # no penalty on the bias
+    W = torch.linalg.solve(A, XtY.reshape(P, F + 1, D).permute(1, 0, 2).reshape(F + 1, P * D))
+    W = W.float()                                                              # (F+1, P*D)
+    skip.weight.copy_(W[:-1].T)                                                # (P*D, F)
+    skip.bias.copy_(W[-1])
+    print(f"[skip] ridge-initialised linear skip from {n_rows} training rows "
+          f"(F={F} -> P*D={P * D}, lam={lam})", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -231,10 +428,21 @@ def run_link_pred(args, device, out_dir):
 
     encoder = build_encoder_for(args, train_ds.feature_dim, device)
     ema = build_ema(args, encoder, device, max(1, len(train_loader)))
-    predictor = build_jepa_predictor(args, train_ds.num_nodes, device)
+    predictor = build_jepa_predictor(args, train_ds.num_nodes, device,
+                                     feature_dim=train_ds.feature_dim)
     decoder = build_obs_decoder(args, train_ds.feature_dim, device)
+    if args.linear_skip and args.linear_skip_init == "ridge":
+        if args.train_encoder:
+            print("[skip] WARNING: ridge init with --train_encoder is a warm start only; "
+                  "the encoder will move away from the latents it was fitted on", flush=True)
+        init_linear_skip_ridge(predictor, encoder, train_loader, args.history_size, device,
+                               lam=args.linear_skip_lam)
+    if args.linear_skip and args.linear_skip_freeze:
+        for q in predictor.skip.parameters():
+            q.requires_grad_(False)
+        print("[skip] linear skip frozen", flush=True)
 
-    pred_params = list(predictor.parameters())
+    pred_params = [q for q in predictor.parameters() if q.requires_grad]
     if decoder is not None:
         pred_params += list(decoder.parameters())
     if args.train_encoder:
@@ -262,27 +470,31 @@ def run_link_pred(args, device, out_dir):
         community_rng=community_rng,
         decoder=decoder,
         change_weight=args.change_weight,
+                            horizon_norm=args.horizon_norm,
         **jepa_variant_kwargs(args))
 
     if args.smoke:
         dblp_train_epoch(predictor, encoder, train_loader, opt, args.history_size,
                          device, log_every=1, max_steps=3, scheduler=sched,
                          **train_kwargs)
-        print("[smoke] ok"); return
+        smoke_done(args, train_ds); return
 
     best_val = float("inf")
     no_improve = 0
     for epoch in range(args.epochs):
         print(f"[epoch {epoch+1}/{args.epochs}]", flush=True)
+        set_encoder_frozen(args, epoch, encoder, ema)
         tr = dblp_train_epoch(predictor, encoder, train_loader, opt,
                               args.history_size, device, scheduler=sched, **train_kwargs)
         vl = dblp_eval_jepa(predictor, encoder, val_loader, args.history_size,
                             device, decoder=decoder, ema_target=ema,
                             change_weight=args.change_weight,
+                            horizon_norm=args.horizon_norm,
                             mask_encoder_input=args.mask_encoder_input,
                             target_norm=args.target_norm)
         best_val, no_improve, improved, stop = _update_best(
-            vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir)
+            vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir, ema=ema)
+        _save_snapshot(epoch, vl, args, predictor, encoder, out_dir, ema=ema)
         _append_history(out_dir, {
             "epoch": epoch + 1, "train_loss": tr["loss"], "val_loss": vl["loss"],
             "lr": opt.param_groups[0]["lr"], "best": improved})
@@ -296,6 +508,14 @@ def run_link_pred(args, device, out_dir):
     # Block 4: downstream probe stage (fit + evaluate + report).
     # --probe_split val during a hyperparameter sweep, so configurations are
     # ranked without ever reading the test split; test for the final table.
+    if args.downstream_task == "none":
+        # Pretext-only run (e.g. the node-state horizon showcase, whose probe
+        # is scripts/dblp/run_block_probe.py on best.ckpt): skip the link
+        # probe but still write test_metrics.json, the launchers' marker that
+        # training reached its end.
+        print("[probe] downstream_task=none -> no link-prediction probe", flush=True)
+        probe_stage._save_metrics({"downstream_task": "none"}, out_dir)
+        return
     eval_loader = val_loader if args.probe_split == "val" else test_loader
     probe_stage.probe_link_pred(predictor, encoder, train_loader, eval_loader,
                                 args, device, out_dir)
@@ -331,7 +551,7 @@ def run_regression(args, device, out_dir):
     if args.smoke:
         metr_train_epoch(predictor, encoder, train_loader, opt, adj_dense,
                          adj_norm, args.history_size, device, log_every=1, max_steps=3)
-        print("[smoke] ok"); return
+        smoke_done(args, train_ds); return
 
     best_val = float("inf")
     no_improve = 0
@@ -343,6 +563,7 @@ def run_regression(args, device, out_dir):
                             args.history_size, device)
         best_val, no_improve, improved, stop = _update_best(
             vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir)
+        _save_snapshot(epoch, vl, args, predictor, encoder, out_dir)
         _append_history(out_dir, {
             "epoch": epoch + 1, "train_loss": tr["loss"], "val_loss": vl["loss"],
             "lr": opt.param_groups[0]["lr"], "best": improved})
@@ -397,7 +618,8 @@ def run_regression_dynamic(args, device, out_dir):
         opt = torch.optim.AdamW(pred_params, lr=args.lr,
                                 weight_decay=args.weight_decay)
     sched = _scheduler(opt, args, max(1, len(train_loader)))
-    train_kwargs = dict(change_weight=args.change_weight, ema_target=ema,
+    train_kwargs = dict(change_weight=args.change_weight,
+                            horizon_norm=args.horizon_norm, ema_target=ema,
                         train_encoder=args.train_encoder, decoder=decoder,
                         vicreg_var_weight=args.vicreg_var,
                         vicreg_cov_weight=args.vicreg_cov,
@@ -408,22 +630,25 @@ def run_regression_dynamic(args, device, out_dir):
         dblp_train_epoch(predictor, encoder, train_loader, opt, args.history_size,
                          device, log_every=1, max_steps=3, scheduler=sched,
                          **train_kwargs)
-        print("[smoke] ok"); return
+        smoke_done(args, train_ds); return
 
     best_val = float("inf")
     no_improve = 0
     for epoch in range(args.epochs):
         print(f"[epoch {epoch+1}/{args.epochs}]", flush=True)
+        set_encoder_frozen(args, epoch, encoder, ema)
         tr = dblp_train_epoch(predictor, encoder, train_loader, opt,
                               args.history_size, device, scheduler=sched,
                               **train_kwargs)
         vl = dblp_eval_jepa(predictor, encoder, val_loader, args.history_size,
                             device, decoder=decoder, ema_target=ema,
                             change_weight=args.change_weight,
+                            horizon_norm=args.horizon_norm,
                             mask_encoder_input=args.mask_encoder_input,
                             target_norm=args.target_norm)
         best_val, no_improve, improved, stop = _update_best(
-            vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir)
+            vl, best_val, no_improve, epoch, args, predictor, encoder, out_dir, ema=ema)
+        _save_snapshot(epoch, vl, args, predictor, encoder, out_dir, ema=ema)
         _append_history(out_dir, {
             "epoch": epoch + 1, "train_loss": tr["loss"], "val_loss": vl["loss"],
             "lr": opt.param_groups[0]["lr"], "best": improved})
@@ -493,7 +718,7 @@ def run_trajectory(args, device, out_dir):
             tot += loss.item() * x.shape[0]; n += x.shape[0]
         print(f"[epoch {epoch+1}] traj loss={tot/max(n,1):.4f}", flush=True)
         if args.smoke:
-            print("[smoke] ok"); return
+            smoke_done(args, train_ds); return
     torch.save({"predictor": predictor.state_dict(), "pooler": pooler.state_dict(),
                 "encoder": encoder.state_dict(), "args": vars(args)},
                out_dir / "best.ckpt")
@@ -520,6 +745,12 @@ def main():
                    choices=["link_pred", "regression", "none"], default="link_pred")
     # predictor
     p.add_argument("--num_masked_nodes", type=int, default=10)
+    p.add_argument("--mask_frac", type=float, default=0.0,
+                   help="Mask this FRACTION of the maskable nodes (active at the "
+                        "first history step in every window of the batch) "
+                        "instead of --num_masked_nodes. 0 = off (use the count). "
+                        "I-JEPA / V-JEPA mask half or more of the tokens; a "
+                        "count of 20-50 is under 1%% of a 7k-node graph.")
     p.add_argument("--depth", type=int, default=4)
     p.add_argument("--heads", type=int, default=4)
     p.add_argument("--mlp_dim", type=int, default=512)
@@ -532,6 +763,27 @@ def main():
                         "materialised (B,1,TN,TN) mask through SDPA, quadratic "
                         "memory; kept for parity checks. Identical function.")
     p.add_argument("--allow_temporal_neighbors", action="store_true")
+    p.add_argument("--linear_skip_init", choices=["zero", "ridge"], default="zero",
+                   help="How the linear skip starts: zero (learned by gradient descent, "
+                        "legacy) or ridge (closed-form least squares on the training "
+                        "windows' latents; see init_linear_skip_ridge).")
+    p.add_argument("--linear_skip_lam", type=float, default=1e-2,
+                   help="Ridge strength for --linear_skip_init ridge, relative to the mean "
+                        "diagonal of X^T X.")
+    p.add_argument("--linear_skip_freeze", action="store_true",
+                   help="Keep the linear skip fixed during training (with the ridge init: "
+                        "the transformer learns only the residual).")
+    p.add_argument("--linear_skip", action="store_true",
+                   help="Linear-dynamics prior: a zero-init per-node linear map from the "
+                        "flattened history latents to every future step's displacement, "
+                        "added to the predictor output (masked nodes excluded). Saved in "
+                        "args and restored by predictor_flags_from_args.")
+    p.add_argument("--input_delta", action="store_true",
+                   help="Velocity channel: add a learned (zero-init) projection of "
+                        "z_t - z_{t-1} to every visible history token, so the "
+                        "predictor receives consecutive-latent differences instead "
+                        "of having to assemble them through attention. Saved in "
+                        "args and restored by predictor_flags_from_args.")
     p.add_argument("--residual_head", action="store_true",
                    help="pred = last-visible-latent + to_out(h), with to_out "
                         "zero-initialised: copy-last becomes the training "
@@ -558,6 +810,18 @@ def main():
                         "to --ema_momentum_end over the run (I-JEPA / V-JEPA). "
                         "'const' = legacy fixed momentum.")
     p.add_argument("--ema_momentum_end", type=float, default=1.0)
+    p.add_argument("--ema_anneal_epochs", type=int, default=0,
+                   help="Epochs over which the cosine momentum anneal runs "
+                        "(0 = the whole --epochs budget). Under early "
+                        "stopping the whole-run horizon is rarely reached, "
+                        "so set this below a typical run length for the "
+                        "schedule to actually finish. Counted in encoder "
+                        "updates, so it starts after --encoder_freeze_epochs.")
+    p.add_argument("--encoder_freeze_epochs", type=int, default=0,
+                   help="With --train_encoder: keep the encoder frozen (no "
+                        "gradient, no EMA update) for the first K epochs so "
+                        "the predictor fits the pretrained target before the "
+                        "encoder starts moving. 0 = off.")
     # JEPA variants (all off by default => legacy behaviour is reproducible)
     p.add_argument("--mask_encoder_input", action="store_true",
                    help="Hide the masked nodes from the ONLINE encoder too "
@@ -591,12 +855,49 @@ def main():
     p.add_argument("--vicreg_var", type=float, default=0.0)
     p.add_argument("--vicreg_cov", type=float, default=0.0)
     p.add_argument("--vicreg_gamma", type=float, default=1.0)
+    p.add_argument("--horizon_norm", action="store_true",
+                   help="Divide each future step's latent MSE by the copy-last MSE at "
+                        "that step (batch statistic, no gradient), so every horizon "
+                        "weighs the same and the future loss is error relative to "
+                        "persistence (1 = zero update). Off = raw MSE (legacy).")
     p.add_argument("--change_weight", type=float, default=0.0,
                    help="Weight per-(t,n) latent MSE by 1 + change_weight * "
                         "||z_t - z_{t-1}|| / mean: upweights the rare "
                         "transition-carrying nodes the unweighted average "
                         "drowns out. 0 = off (legacy behaviour).")
     p.add_argument("--community_masking", action="store_true")
+    # two-level (coarse -> fine) DELOS, src/world_models/hier.py
+    p.add_argument("--coarse_window", type=int, default=1,
+                   help="Train the COARSE level: every window is reduced to one "
+                        "step per W fine snapshots, and --history_size / "
+                        "--num_preds count COARSE steps (the data window is W "
+                        "times longer). 1 = off (ordinary run).")
+    p.add_argument("--coarse_mode", choices=["last", "mean"], default="last",
+                   help="How W fine snapshots become one coarse step: last = keep "
+                        "the last one (subsample); mean = average features, union "
+                        "of edges (re-bin).")
+    p.add_argument("--hier_ckpt", default=None,
+                   help="best.ckpt of a --coarse_window run on the same data. Its "
+                        "frozen forecast for the coarse window containing each "
+                        "future step is added to that step's query token "
+                        "(zero-initialised projection). This run's window must be "
+                        "the coarse run's window times its --coarse_window.")
+    p.add_argument("--hier_hint", choices=["forecast", "true", "shuffle"],
+                   default="forecast",
+                   help="forecast = the coarse model's forecast (the method). "
+                        "DIAGNOSTICS: true = the coarse encoding of the TRUE "
+                        "future (ceiling; reads future snapshots); shuffle = the "
+                        "forecast with nodes permuted (capacity control).")
+    p.add_argument("--snapshot_every", type=int, default=0,
+                   help="Also keep every N-th epoch as snapshots/ep<NNNN>/"
+                        "best.ckpt so the checkpoint can be chosen on the "
+                        "VALIDATION PROBE instead of the val JEPA loss "
+                        "(scripts/classification/select_ckpt_by_probe.py). "
+                        "0 = off.")
+    p.add_argument("--snapshot_first", type=int, default=0,
+                   help="Also keep each of the first K epochs as a snapshot "
+                        "(dense early coverage for the collapse-dynamics "
+                        "curves). 0 = off.")
     # lr schedule
     p.add_argument("--warmup_epochs", type=float, default=1.0)
     p.add_argument("--lr_min_ratio", type=float, default=0.05)
@@ -635,10 +936,22 @@ def main():
                          "(node_mask / future_forecast); the plain forecasters "
                          "would see un-normalised inputs against a normalised "
                          "target.")
+    if args.encoder_freeze_epochs > 0 and not args.train_encoder:
+        raise SystemExit("--encoder_freeze_epochs only applies with "
+                         "--train_encoder (a frozen encoder is the default).")
+    if args.encoder_freeze_epochs >= args.epochs > 0:
+        raise SystemExit(f"--encoder_freeze_epochs {args.encoder_freeze_epochs} "
+                         f">= --epochs {args.epochs}: the encoder would never "
+                         f"train; use the frozen arm instead.")
     if args.target_grad and (not args.train_encoder or args.ema_target
                              or args.predict_space != "latent"):
         raise SystemExit("--target_grad requires --train_encoder, no "
                          "--ema_target and --predict_space latent.")
+    if args.hier_ckpt and args.coarse_window > 1:
+        raise SystemExit("--hier_ckpt with --coarse_window: only two levels "
+                         "are supported")
+    if args.hier_ckpt and args.mask_scheme not in ("node_mask", "future_forecast"):
+        raise SystemExit("--hier_ckpt needs --mask_scheme node_mask / future_forecast")
     if args.mask_scheme == "trajectory_block":
         run_trajectory(args, device, out_dir)
     elif args.downstream_task == "regression":
@@ -646,8 +959,8 @@ def main():
             run_regression_dynamic(args, device, out_dir)
         else:
             run_regression(args, device, out_dir)
-    elif args.downstream_task == "link_pred":
-        run_link_pred(args, device, out_dir)
+    elif args.downstream_task in ("link_pred", "none"):
+        run_link_pred(args, device, out_dir)      # none: same loop, no probe
     else:
         raise ValueError(
             f"downstream_task={args.downstream_task!r} with mask_scheme="

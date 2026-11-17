@@ -177,6 +177,23 @@ def build_probe(task: str, in_dim: int, out_dim: int = 1, hidden_dim: int = 64):
 # ---------------------------------------------------------------------------
 # Link prediction (DBLP / JODIE / Reddit) — moved verbatim from train_cjepa_dblp
 # ---------------------------------------------------------------------------
+def score_negatives_chunked(probe, z: torch.Tensor, src: torch.Tensor,
+                            neg_dst: torch.Tensor, max_elems: int = 1 << 26
+                            ) -> torch.Tensor:
+    """``probe(z[src][:, None], z[neg_dst])`` -> (P, k), scored in chunks of
+    positives. The probe concatenates [z_i, z_j, z_i*z_j], i.e. P*k*3D floats
+    at once: on a GossipCop snapshot (~150k edges, k=99, D=128) that single
+    tensor is 22 GB and OOMs a 32 GB card. ``max_elems`` bounds it (256 MB)."""
+    P, k = neg_dst.shape
+    D = z.shape[-1]
+    step = max(1, max_elems // max(k * 3 * D, 1))
+    out = []
+    for s in range(0, P, step):
+        nz = z[neg_dst[s:s + step]]                                 # (p, k, D)
+        out.append(probe(z[src[s:s + step]].unsqueeze(1).expand_as(nz), nz))
+    return torch.cat(out, dim=0) if out else z.new_zeros(0, k)
+
+
 def sample_neg_edges(adj_t: torch.Tensor, active_t: torch.Tensor,
                      k_per_pos: int, seed: int = 0) -> torch.Tensor:
     """For each positive (i, j) edge at time t, sample k_per_pos negatives
@@ -188,7 +205,6 @@ def sample_neg_edges(adj_t: torch.Tensor, active_t: torch.Tensor,
     g = torch.Generator(device=adj_t.device).manual_seed(seed)
     src, dst = adj_t.nonzero(as_tuple=True)
     P = src.shape[0]
-    N = adj_t.shape[0]
     if P == 0:
         return torch.empty((0, k_per_pos), dtype=torch.long, device=adj_t.device)
     candidates = active_t.clone()
@@ -302,11 +318,7 @@ def evaluate_link_prediction(predictor, encoder, probe, loader, history_size,
                     seed=batch_idx * 1000 + b * 100 + tp)
                 if neg_dst.numel() == 0:
                     continue
-                neg_z = z[neg_dst]
-                neg_scores = probe(
-                    z[src].unsqueeze(1).expand_as(neg_z),
-                    neg_z,
-                )                                                    # (P, k)
+                neg_scores = score_negatives_chunked(probe, z, src, neg_dst)  # (P, k)
                 m_all = link_ranking_metrics(pos_scores, neg_scores)
                 per_horizon_all.setdefault(tp, []).append(m_all)
 

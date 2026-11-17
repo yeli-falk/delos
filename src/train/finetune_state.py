@@ -241,9 +241,14 @@ def build_models(args, feature_dim, num_nodes, device):
         allow_temporal_neighbors=g("allow_temporal_neighbors",
                                    args.allow_temporal_neighbors),
         use_attention_mask=not g("no_attention_mask", args.no_attention_mask),
-        use_edge_head=False,
+        # The edge head is never trained here, but it must exist for an
+        # --edge_mask_rate checkpoint's weights to load.
+        use_edge_head=float(g("edge_mask_rate", 0.0) or 0.0) > 0.0,
         residual_head=g("residual_head", args.residual_head),
+        input_delta=bool(g("input_delta", False)),
+        linear_skip=bool(g("linear_skip", False)),
         latent_norm=g("target_norm", False),
+        mask_frac=float(g("mask_frac", 0.0) or 0.0),
     ).to(device)
     if saved and saved.get("history_size", args.history_size) != args.history_size:
         raise SystemExit("--history_size differs from the --jepa_ckpt's; the "

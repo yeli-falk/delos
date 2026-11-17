@@ -197,10 +197,22 @@ def sample_masked_edges(adj: torch.Tensor, active: torch.Tensor,
       neg_idx:     (P * neg_per_pos, 4) long -- random non-edges at same (b, t)
     """
     device = adj.device
+    B, T, N, _ = adj.shape
     # Upper triangle so we don't double-count (i, j) and (j, i) for undirected graphs.
-    triu = torch.triu(torch.ones_like(adj[0, 0]), diagonal=1).bool()
-    edges_b, edges_t, edges_i, edges_j = (adj & triu.unsqueeze(0).unsqueeze(0)
-                                          ).nonzero(as_tuple=True)
+    triu = torch.triu(torch.ones(N, N, dtype=torch.bool, device=device), diagonal=1)
+    # nonzero() refuses tensors with more than INT_MAX (2^31) elements, which
+    # (B, T, N, N) exceeds at full-N MOOC/Reddit with batch 8. Enumerate per
+    # snapshot instead: same row-major (b, t, i, j) order, so the edge list --
+    # and hence the seeded randperm below -- is identical, and the (B, T, N, N)
+    # boolean temporary is never materialised.
+    eb, et, ei, ej = [], [], [], []
+    for b in range(B):
+        for t in range(T):
+            i, j = (adj[b, t].bool() & triu).nonzero(as_tuple=True)
+            eb.append(torch.full_like(i, b)); et.append(torch.full_like(i, t))
+            ei.append(i); ej.append(j)
+    edges_b, edges_t, edges_i, edges_j = (torch.cat(eb), torch.cat(et),
+                                          torch.cat(ei), torch.cat(ej))
     n_edges = edges_b.numel()
     if n_edges == 0:
         empty = torch.empty((0, 4), dtype=torch.long, device=device)

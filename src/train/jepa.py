@@ -40,9 +40,13 @@ class EMAEncoder:
 
     ``momentum_end`` + ``total_steps`` turn on the I-JEPA / V-JEPA cosine
     anneal of m from ``momentum`` to ``momentum_end`` (canonically 1.0) over
-    training; the target is noisy early, when the online encoder moves fast,
-    and frozen late, when the predictor should converge on a fixed target.
-    Leaving both unset keeps the legacy constant momentum.
+    ``total_steps`` updates; the target is noisy early, when the online
+    encoder moves fast, and frozen late, when the predictor should converge on
+    a fixed target. ``total_steps`` must be a horizon the run actually
+    reaches: under early stopping the whole-run horizon is rarely reached and
+    the momentum never leaves its start value (train_dyg_jepa's
+    ``--ema_anneal_epochs``). Leaving both unset keeps the legacy constant
+    momentum.
     """
 
     def __init__(self, online_encoder: torch.nn.Module, momentum: float = 0.996,
@@ -56,6 +60,10 @@ class EMAEncoder:
         self.momentum_end = momentum_end
         self.total_steps = total_steps
         self.step = 0
+        # ``paused`` = the online encoder is frozen (--encoder_freeze_epochs):
+        # the target is identical to it, so an update would be a no-op, and
+        # the anneal clock must not run while nothing moves.
+        self.paused = False
 
     def current_momentum(self) -> float:
         if self.momentum_end is None or not self.total_steps:
@@ -66,6 +74,8 @@ class EMAEncoder:
 
     @torch.no_grad()
     def update(self, online_encoder: torch.nn.Module) -> None:
+        if self.paused:
+            return
         m = self.current_momentum()
         self.step += 1
         for p_target, p_online in zip(
@@ -210,9 +220,12 @@ def _sample_hidden_edges_for_jepa(adj, active, mask_rate, neg_per_pos):
     B, T, N, _ = adj.shape
     triu = torch.triu(torch.ones(N, N, device=device, dtype=torch.bool), diagonal=1)
     pos_mask = adj & triu.view(1, 1, N, N)
-    # Per-(b,t) Bernoulli on real edges:
-    pos_keep = torch.rand_like(pos_mask.float()) < mask_rate
-    pos_hidden = pos_mask & pos_keep
+    # Per-(b,t) Bernoulli on real edges, drawn ONLY over the existing edges: a
+    # dense rand over (B, T, N, N) is two ~3 GB float tensors at full-N MOOC.
+    eb, et, ei, ej = pos_mask.nonzero(as_tuple=True)
+    keep = torch.rand(eb.numel(), device=device) < mask_rate
+    pos_hidden = torch.zeros_like(pos_mask)
+    pos_hidden[eb[keep], et[keep], ei[keep], ej[keep]] = True
     # Symmetrise so the edge head sees both (i,j) and (j,i) for undirected.
     hidden = pos_hidden | pos_hidden.transpose(-1, -2)
 
@@ -261,6 +274,7 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
                      vicreg_cov_weight: float = 0.0,
                      vicreg_gamma: float = 1.0,
                      change_weight: float = 0.0,
+                     horizon_norm: bool = False,
                      community_labels: "np.ndarray | None" = None,
                      community_max_mask_size: int = 30,
                      community_rng: "np.random.Generator | None" = None,
@@ -367,9 +381,18 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
                 adj, active, edge_mask_rate, edge_neg_per_pos,
             )
 
+        cond = None
+        if getattr(predictor, "hint", None) is not None:
+            # Two-level run: the frozen coarse model must hide the same nodes
+            # as the fine predictor, so the mask is drawn here -- at the point
+            # of the RNG stream where the predictor would draw it itself.
+            if forced_idx is None:
+                forced_idx = predictor._mask_indices(active[:, 0], device)
+            cond = predictor.make_cond(x_hist, adj, active, x_fut=x_fut,
+                                       masked_idx=forced_idx)
         pred, masked_idx, edge_out = predictor(
             z_hist, adj, active, hidden_edges=hidden_edges,
-            forced_masked_idx=forced_idx,
+            forced_masked_idx=forced_idx, **({"cond": cond} if cond is not None else {}),
         )
         if decoder is not None:
             pred = decoder(pred)          # (B,T,N,D) -> (B,T,N,F)
@@ -389,6 +412,7 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
             vicreg_cov_weight=vicreg_cov_weight,
             vicreg_gamma=vicreg_gamma,
             change_weight=change_weight,
+            horizon_norm=horizon_norm,
             target_norm=target_norm and decoder is None,
             sigreg_weight=sigreg_weight,
             sigreg_slices=sigreg_slices,
@@ -448,7 +472,8 @@ def evaluate_jepa(predictor, encoder, loader, history_size, device,
                   ema_target: "EMAEncoder | None" = None,
                   change_weight: float = 0.0,
                   mask_encoder_input: bool = False,
-                  target_norm: bool = False):
+                  target_norm: bool = False,
+                  horizon_norm: bool = False):
     """JEPA validation loss over per-batch dynamic adjacency.
 
     ``mask_encoder_input`` / ``target_norm`` must match training so the val
@@ -470,6 +495,12 @@ def evaluate_jepa(predictor, encoder, loader, history_size, device,
                 x_hist, adj[:, :history_size], forced_idx)
         else:
             x_ctx, adj_norm_ctx = x_hist, hist_adj(adj_norm, history_size)
+        cond = None
+        if getattr(predictor, "hint", None) is not None:
+            if forced_idx is None:
+                forced_idx = predictor._mask_indices(active[:, 0], device)
+            cond = predictor.make_cond(x_hist, adj, active, x_fut=x_fut,
+                                       masked_idx=forced_idx)
         z_hist = encoder(x_ctx, adj_norm_ctx)
         x_full = torch.cat([x_hist, x_fut], dim=1)
         if decoder is not None:
@@ -479,12 +510,14 @@ def evaluate_jepa(predictor, encoder, loader, history_size, device,
         else:
             z_target = encoder(x_full, adj_norm)
         pred, masked_idx, _ = predictor(z_hist, adj, active,
-                                        forced_masked_idx=forced_idx)
+                                        forced_masked_idx=forced_idx,
+                                        **({"cond": cond} if cond is not None else {}))
         if decoder is not None:
             pred = decoder(pred)
         losses = compute_graph_jepa_loss(pred, z_target, active, masked_idx,
                                          history_size,
                                          change_weight=change_weight,
+                                         horizon_norm=horizon_norm,
                                          target_norm=target_norm and decoder is None)
         bs = x_hist.shape[0]
         for k in ("loss", "loss_masked_history", "loss_future"):

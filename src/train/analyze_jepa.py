@@ -67,7 +67,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from src.cjepa_graph_predictor import MaskedNodePredictor
+from src.cjepa_graph_predictor import MaskedNodePredictor, predictor_flags_from_args
 from src.custom_codes.dataset_factory import (
     add_dataset_cli_flags,
     build_dynamic_dataset,
@@ -80,7 +80,7 @@ from src.world_models.graph_jepa_encoder import (
     link_ranking_metrics,
     normalize_adjacency,
 )
-from src.world_models.probes import NodeClassProbe, sample_neg_edges
+from src.world_models.probes import NodeClassProbe, sample_neg_edges, score_negatives_chunked
 
 
 # ===========================================================================
@@ -280,6 +280,41 @@ def _auprc(score: np.ndarray, label: np.ndarray) -> float:
     return float((precision * d_recall).sum())
 
 
+def _best_f1_threshold(score: np.ndarray, label: np.ndarray) -> float:
+    """Score cut that maximises F1 on (score, label); predict positive above it.
+
+    Meant to be fitted on the TRAIN rows and applied to test: the BCE probe's
+    natural cut (logit 0) predicts almost all-negative at a ~3% positive rate,
+    so F1 there is ~0 for every method, and tuning the cut on test is leakage.
+    Falls back to 0.0 (the logit cut) when a class is absent.
+    """
+    label = label.astype(bool)
+    n_pos = int(label.sum())
+    if n_pos == 0 or n_pos == len(label):
+        return 0.0
+    order = np.argsort(score)[::-1]
+    s = score[order]
+    tp = np.cumsum(label[order])
+    f1 = 2.0 * tp / (np.arange(1, len(s) + 1) + n_pos)   # 2TP / (n_pred + n_pos)
+    k = int(np.argmax(f1))
+    return float((s[k] + s[k + 1]) / 2.0) if k + 1 < len(s) else float(s[k] - 1e-6)
+
+
+def _prf(score: np.ndarray, label: np.ndarray, thr: float) -> dict:
+    """Positive-class precision / recall / F1 at a fixed score cut."""
+    label = label.astype(bool)
+    if len(label) == 0 or not label.any():
+        return {"f1_test": float("nan"), "precision_test": float("nan"),
+                "recall_test": float("nan")}
+    pred = score > thr
+    tp = int((pred & label).sum())
+    prec = tp / max(int(pred.sum()), 1)
+    rec = tp / int(label.sum())
+    f1 = 2 * prec * rec / (prec + rec) if prec + rec > 0 else 0.0
+    return {"f1_test": float(f1), "precision_test": float(prec),
+            "recall_test": float(rec)}
+
+
 # ---------------------------------------------------------------------------
 # Trained probes for the structural diagnostic (gradient descent, not ridge)
 # ---------------------------------------------------------------------------
@@ -287,6 +322,24 @@ def _iter_minibatches(n, batch_size, generator):
     perm = torch.randperm(n, generator=generator)
     for i in range(0, n, batch_size):
         yield perm[i:i + batch_size]
+
+
+def ndcg_at_k(y_true: np.ndarray, y_score: np.ndarray, k: int = 10) -> np.ndarray:
+    """Per-row NDCG@k, the TGB node-property metric (matches
+    ``sklearn.metrics.ndcg_score(y_true, y_pred, k)`` row by row for rows
+    without score ties). ``y_true`` (n, C) non-negative relevances (the label
+    distribution), ``y_score`` (n, C) predicted scores. Rows whose ideal DCG
+    is zero score 0, as in sklearn."""
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_score = np.asarray(y_score, dtype=np.float64)
+    k = min(k, y_true.shape[1])
+    disc = 1.0 / np.log2(np.arange(2, k + 2))
+    top = np.argpartition(-y_score, k - 1, axis=1)[:, :k]
+    top = np.take_along_axis(top, np.argsort(-np.take_along_axis(y_score, top, 1), axis=1), 1)
+    dcg = (np.take_along_axis(y_true, top, 1) * disc).sum(1)
+    ideal = np.sort(y_true, axis=1)[:, ::-1][:, :k]
+    idcg = (ideal * disc).sum(1)
+    return np.where(idcg > 0, dcg / np.maximum(idcg, 1e-12), 0.0)
 
 
 def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
@@ -304,6 +357,10 @@ def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
       task='regression' -> {"r2_train", "r2_test"}
       task='binary'     -> {"acc_test", "auroc_test", "auprc_test", ...}
       task='multiclass' -> {"acc_test", "macro_f1_test", "n_classes"}
+      task='ranking'    -> {"ndcg10_test", "n_classes"}: y is (rows, C) of
+                           non-negative relevances (tgbn-trade share vectors);
+                           a linear/MLP head to C logits trained with the
+                           soft-target cross-entropy, scored with NDCG@10.
 
     test_subsets (binary / multiclass): optional {name: bool mask over ALL rows};
     the trained probe is additionally scored on `test & mask` and reported
@@ -340,6 +397,18 @@ def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
             torch.manual_seed(seed)
             head = NodeClassProbe(n_in, K, hidden_dim=hidden_dim).to(device)
         loss_fn = F.cross_entropy
+    elif task == "ranking":
+        y = np.asarray(y, dtype=np.float32)
+        K = y.shape[1]
+        Xtr = torch.tensor(Zs[train], device=device)
+        Xte = torch.tensor(Zs[test], device=device)
+        ytr = torch.tensor(y[train], device=device)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            head = NodeClassProbe(n_in, K, hidden_dim=hidden_dim).to(device)
+
+        def loss_fn(logits, target):            # soft-target cross-entropy
+            return -(target * F.log_softmax(logits, dim=-1)).sum(-1).mean()
     else:                                       # regression or binary
         Xtr = torch.tensor(Zs[train], device=device)
         Xte = torch.tensor(Zs[test], device=device)
@@ -388,9 +457,14 @@ def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
             logit_te = head(Xte).cpu().numpy()
             yte_np = yte.cpu().numpy()
             acc = float(((logit_te > 0.0) == (yte_np > 0.5)).mean())
+            # F1 needs a cut; fit it on TRAIN (never test), see _best_f1_threshold.
+            thr = _best_f1_threshold(head(Xtr).cpu().numpy(),
+                                     ytr.cpu().numpy() > 0.5)
             out = {"acc_test": acc,
                    "auroc_test": _auroc(logit_te, yte_np),
                    "auprc_test": _auprc(logit_te, yte_np),
+                   **_prf(logit_te, yte_np > 0.5, thr),
+                   "f1_threshold": thr,
                    "n_pos_test": int((yte_np > 0.5).sum()),
                    "pos_rate_test": float((yte_np > 0.5).mean())}
             for name, sub in (test_subsets or {}).items():
@@ -398,9 +472,21 @@ def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
                 out[f"subset_{name}"] = {
                     "auroc_test": _auroc(logit_te[m], yte_np[m]),
                     "auprc_test": _auprc(logit_te[m], yte_np[m]),
+                    **_prf(logit_te[m], yte_np[m] > 0.5, thr),
                     "n": int(m.sum()),
                     "n_pos": int((yte_np[m] > 0.5).sum()),
                 }
+            return out
+        if task == "ranking":
+            score_te = head(Xte).cpu().numpy()
+            per_row = ndcg_at_k(y[test], score_te, k=10)
+            out = {"ndcg10_test": float(per_row.mean()) if len(per_row) else float("nan"),
+                   "n_classes": int(K), "n": int(len(per_row))}
+            for name, sub in (test_subsets or {}).items():
+                m = sub[test]
+                out[f"subset_{name}"] = {
+                    "ndcg10_test": float(per_row[m].mean()) if m.any() else float("nan"),
+                    "n": int(m.sum())}
             return out
         # multiclass
         pred_idx = head(Xte).argmax(dim=-1).cpu().numpy()
@@ -737,8 +823,7 @@ def eval_link_pred(source, encoder, predictor, probe, loader, history_size,
                 else:
                     z = _step_z(source, z_static, z_pred, b, tp)
                     pos_scores = probe(z[src], z[dst])
-                    src_rep = z[src].unsqueeze(1).expand(-1, neg_dst.shape[1], -1)
-                    neg_scores = probe(src_rep, z[neg_dst])
+                    neg_scores = score_negatives_chunked(probe, z, src, neg_dst)
 
                 m_all = link_ranking_metrics(pos_scores, neg_scores)
                 per_horizon_all.setdefault(tp, []).append(m_all)
@@ -891,9 +976,10 @@ def build_models(args, feature_dim, num_nodes, device):
             pred_args["use_attention_mask"] = not saved["no_attention_mask"]
         if "heads" in saved:
             pred_args["dim_head"] = node_dim // saved["heads"]
-        # residual_head has no parameters, so load_state_dict can't catch a
-        # mismatch — restore it from the training args explicitly.
-        pred_args["residual_head"] = saved.get("residual_head", False)
+        # residual_head / latent_norm have no parameters, so load_state_dict
+        # can't catch a mismatch, and the edge head must exist for its weights
+        # to load — restore all of them from the training args.
+        pred_args.update(predictor_flags_from_args(saved))
     predictor = MaskedNodePredictor(**pred_args).to(device)
     if jepa_ckpt is not None and "predictor" in jepa_ckpt:
         predictor.load_state_dict(jepa_ckpt["predictor"])
@@ -1013,8 +1099,6 @@ def main():
     with open(out_dir / "args.json", "w") as f:
         json.dump(vars(args), f, indent=2)
 
-    # Diagnostic uses the chosen eval split; link-pred needs train/val/test.
-    need_train_splits = not args.skip_linkpred
     eval_ds = build_dynamic_dataset(args, split=args.split)
     print(f"[data] {args.split}: {len(eval_ds)} windows, N={eval_ds.num_nodes}, "
           f"F={eval_ds.feature_dim}", flush=True)

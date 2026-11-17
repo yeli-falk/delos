@@ -159,6 +159,40 @@ class GCNNodeEncoder(EncoderBase):
         return h
 
 
+@register_encoder("gcn_root")
+class GCNRootNodeEncoder(EncoderBase):
+    """2-layer GCN with a ROOT WEIGHT (GraphSAGE-style): each layer is
+    ``W_root x_i + A_hat (W_nbr x)_i`` instead of ``A_hat (W x)_i``.
+
+    Why: with the shared normalised adjacency (self-loops included) a node's
+    own features enter each layer with weight ~1/(deg+1), so two layers of
+    plain GCN return a neighbourhood average. Per-node signals that are
+    independent across neighbours -- on the synthetic generator the hidden
+    velocity, i.e. the part of the dynamics only the trajectory reveals --
+    are averaged away: measured on raw linear-readout features, a linear
+    probe recovers R^2 0.99 of the velocity from two snapshots, 0.37 after
+    one mean aggregation, 0.34 after two, at any edge density. Keeping the
+    node's own features on a separate path restores 0.99. The root path
+    carries the per-node signal, the aggregation path the structural context,
+    and the encoder learns the mix instead of the degree fixing it.
+
+    Same interface, same hidden / output sizes as ``gcn``; two extra linear
+    maps. Selectable everywhere via ``--encoder_kind gcn_root`` (ENC_KIND).
+    """
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int):
+        super().__init__()
+        self.lin1 = nn.Linear(in_dim, hidden_dim)
+        self.root1 = nn.Linear(in_dim, hidden_dim, bias=False)
+        self.lin2 = nn.Linear(hidden_dim, out_dim)
+        self.root2 = nn.Linear(hidden_dim, out_dim, bias=False)
+
+    def forward(self, x: torch.Tensor, adj_norm: torch.Tensor) -> torch.Tensor:
+        h = self.root1(x) + _spatial_aggregate(adj_norm, self.lin1(x))
+        h = F.gelu(h)
+        return self.root2(h) + _spatial_aggregate(adj_norm, self.lin2(h))
+
+
 @register_encoder("tgcn")
 class TGCNEncoder(EncoderBase):
     """Temporal Graph Convolutional Network (Zhao et al., 2019).
@@ -328,15 +362,185 @@ class MaskDGNNEncoder(EncoderBase):
     window (both directions, like the bidirectional TGCN).
     """
 
+    SPATIAL = GCNNodeEncoder          # the shared spatial encoder class
+
     def __init__(self, in_dim: int, hidden_dim: int, out_dim: int,
                  dropout: float = 0.1, freq_bins: int = 33):
         super().__init__()
-        self.gcn = GCNNodeEncoder(in_dim, hidden_dim, out_dim)
+        self.gcn = self.SPATIAL(in_dim, hidden_dim, out_dim)
         self.freq = AdaptiveFrequencyLayer(out_dim, max_bins=freq_bins,
                                            dropout=dropout)
 
     def forward(self, x: torch.Tensor, adj_norm: torch.Tensor) -> torch.Tensor:
         return self.freq(self.gcn(x, adj_norm))
+
+
+@register_encoder("maskdgnn_root")
+class MaskDGNNRootEncoder(MaskDGNNEncoder):
+    """MaskDGNN's frequency layer on the ROOT-WEIGHT GCN (``gcn_root``), so a
+    table whose shared spatial encoder is ``gcn_root`` keeps the "same GCN +
+    the frequency layer" relation. slurm_all_methods.sh selects it when
+    ENC_KIND=gcn_root."""
+    SPATIAL = GCNRootNodeEncoder
+
+
+# ---------------------------------------------------------------------------
+# DySAT-style (Sankar et al., WSDM'20) structural + temporal self-attention
+# ---------------------------------------------------------------------------
+@register_encoder("dysat")
+class DySATEncoder(EncoderBase):
+    """DySAT-style window encoder: per-snapshot structural block, then masked
+    self-attention over each node's sequence of snapshot embeddings.
+
+    DySAT (Sankar, Wu, Gou, Zhang & Yang, WSDM'20, Sec. 3.3) runs structural
+    attention on every snapshot and then a temporal self-attention layer per
+    node over the T structural embeddings, with learned position embeddings
+    added first and a CAUSAL mask (position t attends to t' <= t, eq. 5's
+    ``M_ij = 0 if i <= j else -inf``), followed by a position-wise feed-forward
+    and residual connections.
+
+    Two deliberate departures, both for the encoder ladder this exists for:
+
+    * The structural block is the pipeline's shared 2-layer
+      :class:`GCNNodeEncoder`, not DySAT's GAT -- identical to the ``gcn``,
+      ``tgcn`` and ``maskdgnn`` kinds, so the ONLY difference between those
+      encoders is how a node's per-snapshot embeddings are mixed along time
+      (nothing / GRU / spectral filter / causal self-attention). A dense GAT
+      over full-N MOOC would also not fit in memory.
+    * Position embeddings index the window position ``t`` (0 = oldest), so the
+      same parameters serve any window length up to ``max_len``.
+
+    Output at step ``t`` therefore encodes the prefix ``[0, t]`` of the window
+    (like ``dyg2vec``, unlike the bidirectional ``tgcn`` / ``maskdgnn``): the
+    last history step is the full history-window encoding, and no future
+    step leaks into an earlier one. Shape contract as every encoder:
+    ``(B, T, N, F_in) -> (B, T, N, out_dim)``.
+    """
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int,
+                 heads: int = 4, n_layers: int = 1, dropout: float = 0.1,
+                 max_len: int = 64):
+        super().__init__()
+        self.gcn = GCNNodeEncoder(in_dim, hidden_dim, out_dim)
+        self.pos = nn.Embedding(max_len, out_dim)
+        nn.init.normal_(self.pos.weight, std=0.02)
+        self.layers = nn.ModuleList()
+        for _ in range(n_layers):
+            self.layers.append(nn.ModuleDict({
+                "attn": nn.MultiheadAttention(out_dim, heads, dropout=dropout,
+                                              batch_first=True),
+                "ln1": nn.LayerNorm(out_dim),
+                "ffn": nn.Sequential(nn.Linear(out_dim, 2 * out_dim), nn.GELU(),
+                                     nn.Dropout(dropout),
+                                     nn.Linear(2 * out_dim, out_dim)),
+                "ln2": nn.LayerNorm(out_dim),
+            }))
+        self.dropout = nn.Dropout(dropout)
+        self.attn_chunk = max(1, 32768 // heads)
+
+    def forward(self, x: torch.Tensor, adj_norm: torch.Tensor) -> torch.Tensor:
+        h = self.gcn(x, adj_norm)                                  # (B, T, N, D)
+        B, T, N, D = h.shape
+        if T > self.pos.num_embeddings:
+            raise ValueError(f"dysat: window of {T} steps exceeds max_len "
+                             f"{self.pos.num_embeddings}")
+        seq = h.permute(0, 2, 1, 3).reshape(B * N, T, D)          # one sequence per node
+        seq = seq + self.pos(torch.arange(T, device=h.device))[None]
+        # causal: query t may attend to keys t' <= t (True = masked out)
+        causal = torch.triu(torch.ones(T, T, dtype=torch.bool, device=h.device),
+                            diagonal=1)
+        for layer in self.layers:
+            # chunk over nodes: the fused CUDA attention kernel fails with
+            # "invalid configuration argument" once B*N*heads passes ~2^16
+            a = torch.cat([
+                layer["attn"](s, s, s, attn_mask=causal, need_weights=False)[0]
+                for s in seq.split(self.attn_chunk)], dim=0)
+            seq = layer["ln1"](seq + self.dropout(a))
+            seq = layer["ln2"](seq + self.dropout(layer["ffn"](seq)))
+        return seq.view(B, N, T, D).permute(0, 2, 1, 3).contiguous()
+
+
+# ---------------------------------------------------------------------------
+# DyG-WM (Li et al., 2026, arXiv 2610.19364) context encoder
+# ---------------------------------------------------------------------------
+def neighbour_mean(adj_norm: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+    """Mean of each node's NEIGHBOURS' features, self excluded; 0 for a node
+    with no neighbour (DyG-WM's ``h_bar_u^s``, set to 0 for isolated nodes).
+
+    ``adj_norm`` is any layout :func:`_spatial_aggregate` accepts; only its
+    support (``> 0``) is used, so a normalised or a raw adjacency both work.
+    """
+    a = (adj_norm > 0).to(h.dtype)
+    eye = torch.eye(a.shape[-1], dtype=torch.bool, device=a.device)
+    a = a.masked_fill(eye, 0.0)
+    deg = a.sum(dim=-1, keepdim=True).clamp(min=1.0)
+    return _spatial_aggregate(a / deg, h)
+
+
+@register_encoder("dygwm")
+class DyGWMEncoder(EncoderBase):
+    """DyG-WM's context encoder (Li et al., 2026, Sec. 3.2) on the shared GCN.
+
+    DyG-WM encodes every historical snapshot with a shared online GNN, adds
+    each node's mean neighbourhood representation (0 for isolated nodes), runs
+    SEPARATE recurrent encoders over the node trajectory and the neighbourhood
+    trajectory, and fuses both with the node's own snapshot embedding through
+    a gated residual into the context ``c_u^t``. The per-snapshot GNN alone is
+    what the EMA target encoder applies to the target snapshot
+    (:meth:`snapshot`); the fused context is what the predictors read and
+    what the probe sees.
+
+    As for ``maskdgnn`` / ``dysat`` the spatial block is the pipeline's shared
+    2-layer :class:`GCNNodeEncoder` (same parameters and input as every other
+    arm), so the ONLY architectural difference from the ``gcn`` arms is the
+    two trajectory GRUs + gate -- the method's temporal mixer. Output at step
+    ``t`` encodes the prefix ``[0, t]`` (GRUs are causal): the last history
+    step is the full-history context and no future step leaks backwards.
+    Shape contract as every encoder: ``(B, T, N, F_in) -> (B, T, N, out_dim)``.
+    """
+
+    SPATIAL = GCNNodeEncoder
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int,
+                 dropout: float = 0.1):
+        super().__init__()
+        self.gcn = self.SPATIAL(in_dim, hidden_dim, out_dim)
+        self.gru_node = nn.GRU(out_dim, out_dim, batch_first=True)
+        self.gru_nbr = nn.GRU(out_dim, out_dim, batch_first=True)
+        self.gate = nn.Linear(3 * out_dim, out_dim)
+        self.fuse = nn.Linear(2 * out_dim, out_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def snapshot(self, x: torch.Tensor, adj_norm: torch.Tensor) -> torch.Tensor:
+        """``GNN_theta`` on snapshots alone (no temporal mixing): the map the
+        EMA target encoder applies to the target snapshot."""
+        return self.gcn(x, adj_norm)
+
+    def encode(self, x: torch.Tensor, adj_norm: torch.Tensor):
+        """Return ``(h, c)``: per-snapshot GNN embeddings and fused contexts,
+        both ``(B, T, N, D)``."""
+        h = self.gcn(x, adj_norm)
+        h_bar = neighbour_mean(adj_norm, h)
+        B, T, N, D = h.shape
+        seq = h.permute(0, 2, 1, 3).reshape(B * N, T, D)
+        seq_bar = h_bar.permute(0, 2, 1, 3).reshape(B * N, T, D)
+        r_node, _ = self.gru_node(seq)
+        r_nbr, _ = self.gru_nbr(seq_bar)
+        r = torch.cat([r_node, r_nbr], dim=-1)
+        g = torch.sigmoid(self.gate(torch.cat([seq, r], dim=-1)))
+        c = seq + g * self.dropout(self.fuse(r))
+        return h, c.view(B, N, T, D).permute(0, 2, 1, 3).contiguous()
+
+    def forward(self, x: torch.Tensor, adj_norm: torch.Tensor) -> torch.Tensor:
+        return self.encode(x, adj_norm)[1]
+
+
+@register_encoder("dygwm_root")
+class DyGWMRootEncoder(DyGWMEncoder):
+    """DyG-WM's trajectory GRUs on the ROOT-WEIGHT GCN (``gcn_root``), so a
+    table whose shared spatial encoder is ``gcn_root`` keeps the "same GCN +
+    the method's temporal mixer" relation (as ``maskdgnn_root``)."""
+    SPATIAL = GCNRootNodeEncoder
 
 
 # ---------------------------------------------------------------------------
@@ -578,8 +782,17 @@ def link_ranking_metrics(
     neg_scores: (P, K_neg)   logits for K_neg negatives sharing the source
     """
     # Rank of the positive among (positive + negatives).
+    # NaN guard: torch sorts NaN as the LARGEST value, so a NaN positive (a
+    # diverged encoder, e.g. DyG2Vec at a high lr) would rank FIRST and score
+    # MRR = 1. Treat NaN as -inf and give a NaN positive the worst rank.
     all_scores = torch.cat([pos_scores.unsqueeze(-1), neg_scores], dim=-1)
+    pos_nan = torch.isnan(pos_scores)
+    if pos_nan.any():
+        print(f"[warn] link_ranking_metrics: {int(pos_nan.sum())}/{pos_nan.numel()} "
+              "positive scores are NaN -> ranked last", flush=True)
+    all_scores = torch.nan_to_num(all_scores, nan=float("-inf"))
     ranks = (all_scores.argsort(dim=-1, descending=True) == 0).nonzero()[:, 1] + 1
+    ranks = torch.where(pos_nan, torch.full_like(ranks, all_scores.shape[-1]), ranks)
     out = {"MRR": (1.0 / ranks.float()).mean().item()}
     for k in k_values:
         out[f"Hits@{k}"] = (ranks <= k).float().mean().item()

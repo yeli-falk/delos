@@ -1,9 +1,8 @@
 """
-C-JEPA-DG: dynamic-graph analog of MaskedSlotPredictor.
+DELOS predictor.
 
-Differences vs src/cjepa_predictor.py:
-  - slots -> nodes with explicit identity
-  - full attention -> masked attention over a spatio-temporal graph
+  - nodes with explicit identity
+  - masked attention over a spatio-temporal graph
   - adds optional edge masking + edge-prediction head
   - supports variable node set via per-timestep `active` masks
   - supports irregular time via continuous time embedding
@@ -52,10 +51,6 @@ class GraphMaskedAttention(nn.Module):
         if isinstance(attn_mask, tuple):
             p_drop = self.attn_drop.p if self.training else 0.0
             if torch.is_grad_enabled() and x.requires_grad:
-                # Recompute the per-pair gathers in backward instead of keeping
-                # (P, H, d) tensors alive for every layer: memory then scales
-                # with one layer's pairs, not depth x pairs. RNG state is
-                # preserved so the dropout mask is identical on recompute.
                 out = checkpoint(
                     sparse_attention, q, k, v, *attn_mask,
                     scale=self.scale, dropout_p=p_drop, use_reentrant=False,
@@ -64,8 +59,6 @@ class GraphMaskedAttention(nn.Module):
                 out = sparse_attention(q, k, v, *attn_mask,
                                        scale=self.scale, dropout_p=p_drop)
         else:
-            # SDPA uses memory-efficient kernels (no materialised (L, L) matrix),
-            # which lets large graph sequences (T*N ~ 5k) fit on small GPUs.
             out = F.scaled_dot_product_attention(
                 q, k, v,
                 attn_mask=attn_mask,
@@ -190,11 +183,8 @@ def build_spacetime_mask(
     # and their outputs are masked out of the loss anyway.
     L = allow.shape[-1]
     diag = torch.arange(L, device=device)
-    allow[:, diag, diag] = True
-
-    # Return a bool mask (True = attend). SDPA accepts this natively and avoids
-    # the 4x memory blow-up from the additive-float form.
-    return allow.unsqueeze(1)
+    allow[:, diag, diag] = True    
+    return allow.unsqueeze(1) # Return a bool mask (True = attend)
 
 
 def build_spacetime_edge_index(
@@ -228,9 +218,10 @@ def build_spacetime_edge_index(
 
     bs, qs, ks = [], [], []
 
-    # 1) same timestep, visible edge, both active
-    b, t, i, j = (adj_vis & act_q & act_k).nonzero(as_tuple=True)
-    bs.append(b); qs.append(t * N + i); ks.append(t * N + j)
+    # 1) same timestep, visible edge, both active.
+    for bi in range(B):
+        t, i, j = (adj_vis[bi] & act_q[bi] & act_k[bi]).nonzero(as_tuple=True)
+        bs.append(torch.full_like(t, bi)); qs.append(t * N + i); ks.append(t * N + j)
 
     # 2) same node, different timesteps, both active
     if allow_temporal_self:
@@ -241,7 +232,9 @@ def build_spacetime_edge_index(
 
     # 3) neighbours at time t, attended at every other time t'
     if allow_temporal_neighbors:
-        b, t, i, j = adj_vis.nonzero(as_tuple=True)
+        parts = [adj_vis[bi].nonzero(as_tuple=True) for bi in range(B)]
+        b = torch.cat([torch.full_like(p[0], bi) for bi, p in enumerate(parts)])
+        t, i, j = (torch.cat([p[k] for p in parts]) for k in range(3))
         P0 = b.numel()
         t2 = torch.arange(T, device=device).repeat(P0)              # (P0*T,)
         b = b.repeat_interleave(T); t = t.repeat_interleave(T)
@@ -311,15 +304,15 @@ class DyGJEPAPredictor(nn.Module):
         residual_head: bool = False,
         latent_norm: bool = False,
         attn_impl: str = "sparse",
+        mask_frac: float = 0.0,
+        input_delta: bool = False,
+        linear_skip: bool = False,
+        hier_cfg: Optional[dict] = None,
+        hier_hint: str = "forecast",
     ):
         super().__init__()
         if attn_impl not in ("sparse", "dense"):
             raise ValueError(f"attn_impl must be 'sparse' or 'dense', got {attn_impl!r}")
-        # How the structural attention mask is evaluated (only matters when
-        # use_attention_mask=True). 'dense' materialises the (B,1,TN,TN) bool
-        # mask and runs SDPA (quadratic memory, OOMs past ~3k nodes); 'sparse'
-        # feeds the identical mask as an edge list through gather/scatter
-        # attention (memory linear in #allowed pairs). Same function either way.
         self.attn_impl = attn_impl
         if mask_scheme not in ("node_mask", "future_forecast"):
             raise ValueError(
@@ -329,23 +322,32 @@ class DyGJEPAPredictor(nn.Module):
         self.mask_scheme = mask_scheme
         if mask_scheme == "future_forecast":
             num_masked_nodes = 0
+            mask_frac = 0.0
         self.num_nodes = num_nodes
         self.node_dim = node_dim
         self.history_frames = history_frames
         self.pred_frames = pred_frames
         self.total_frames = history_frames + pred_frames
         self.num_masked_nodes = num_masked_nodes
+        if not 0.0 <= mask_frac < 1.0:
+            raise ValueError(f"mask_frac must be in [0, 1), got {mask_frac}")
+        self.mask_frac = mask_frac
         self.seed = seed
         self.allow_temporal_neighbors = allow_temporal_neighbors
         self.use_attention_mask = use_attention_mask
-        # I-JEPA / V-JEPA normalise the TARGET latents over the channel dim
-        # (parameter-free LayerNorm) before the loss. We apply the same map to
-        # the predictor's INPUT latents here so that (a) the residual head's
-        # copy-last anchor lives in the same space as the normalised target and
-        # (b) every caller of forward()/inference() -- probes, fine-tuning,
-        # intervention eval -- gets the identical featurisation without having
-        # to remember the flag. Pair with compute_graph_jepa_loss(target_norm=True).
         self.latent_norm = latent_norm
+        self.input_delta = input_delta
+        self.delta_proj = None
+        if input_delta:
+            self.delta_proj = nn.Linear(node_dim, node_dim, bias=False)
+            nn.init.zeros_(self.delta_proj.weight)
+
+        self.linear_skip = linear_skip
+        self.skip = None
+        if linear_skip:
+            self.skip = nn.Linear(history_frames * node_dim, pred_frames * node_dim)
+            nn.init.zeros_(self.skip.weight)
+            nn.init.zeros_(self.skip.bias)
 
         self.mask_token = nn.Parameter(torch.zeros(1, 1, node_dim))
         nn.init.trunc_normal_(self.mask_token, std=0.02)
@@ -370,12 +372,6 @@ class DyGJEPAPredictor(nn.Module):
         )
         self.to_out = nn.Linear(node_dim, node_dim)
 
-        # Residual parameterisation: pred = anchor + to_out(h), where anchor is
-        # each node's last VISIBLE history latent. Copy-last becomes the
-        # zero-parameter floor — with to_out zero-initialised the predictor
-        # starts exactly at the copy-last solution and training can only add
-        # dynamics on top, instead of having to first re-learn the identity
-        # (the failure mode where the forecast scores BELOW its own input).
         self.residual_head = residual_head
         if residual_head:
             nn.init.zeros_(self.to_out.weight)
@@ -387,6 +383,22 @@ class DyGJEPAPredictor(nn.Module):
                 nn.Linear(2 * node_dim, node_dim), nn.GELU(),
                 nn.Linear(node_dim, 1),
             )
+
+        self.hint = None
+        self.cond_proj = None
+        if hier_cfg:
+            from src.world_models.hier import CoarseHint
+            rng_state = torch.get_rng_state()
+            self.hint = CoarseHint(hier_cfg, num_nodes, hint=hier_hint)
+            if self.hint.pred * self.hint.w != pred_frames \
+                    or self.hint.hist * self.hint.w != history_frames:
+                raise ValueError(
+                    f"coarse model covers {self.hint.hist}x{self.hint.w} history / "
+                    f"{self.hint.pred}x{self.hint.w} future fine steps, the fine "
+                    f"predictor has {history_frames} / {pred_frames}")
+            self.cond_proj = nn.Linear(self.hint.out_dim, node_dim, bias=False)
+            nn.init.zeros_(self.cond_proj.weight)
+            torch.set_rng_state(rng_state)
 
     def _time_emb(self, B, T, times):
         if self.time_embed is not None:
@@ -400,19 +412,42 @@ class DyGJEPAPredictor(nn.Module):
         on a graph is geographic, so fixing the seed would pin the masked
         sensors to the same 30 forever. Eval keeps the deterministic seed
         so val/test loss is comparable across runs."""
-        if self.num_masked_nodes <= 0:
-            return torch.tensor([], dtype=torch.long, device=device)
+        empty = torch.tensor([], dtype=torch.long, device=device)
+        if self.num_masked_nodes <= 0 and self.mask_frac <= 0:
+            return empty
         valid = active_at_0.all(dim=0).nonzero(as_tuple=True)[0]
-        pool = valid if valid.numel() >= self.num_masked_nodes \
-            else torch.arange(self.num_nodes, device=device)
+        if self.mask_frac > 0:
+            # Fraction of the maskable pool; never falls back to inactive nodes.
+            k = int(round(self.mask_frac * valid.numel()))
+            if k <= 0:
+                return empty
+            pool = valid
+        else:
+            k = self.num_masked_nodes
+            pool = valid if valid.numel() >= k \
+                else torch.arange(self.num_nodes, device=device)
         if self.training:
-            perm = torch.randperm(pool.numel(), device=device)[:self.num_masked_nodes]
+            perm = torch.randperm(pool.numel(), device=device)[:k]
             return pool[perm]
         rng = np.random.RandomState(self.seed)
-        idx = rng.choice(pool.cpu().numpy(), self.num_masked_nodes, replace=False)
+        idx = rng.choice(pool.cpu().numpy(), k, replace=False)
         return torch.from_numpy(idx).to(device)
 
-    def prepare_input(self, x, active, times=None, forced_masked_idx=None):
+    def make_cond(self, x_hist, adj, active, x_fut=None, masked_idx=None):
+        """Top-down hint for one batch, or None for a flat predictor.
+
+        Takes the RAW history features (the coarse model has its own
+        encoder), so it is computed by the caller, which holds them, and
+        passed to forward()/inference() as ``cond``. ``masked_idx`` are the
+        nodes this forward pass will hide (pass the same indices as
+        ``forced_masked_idx``); omit at inference."""
+        if self.hint is None:
+            return None
+        self.hint._owner_training = self.training
+        return self.hint(x_hist, adj, active, x_fut=x_fut, masked_idx=masked_idx)
+
+    def prepare_input(self, x, active, times=None, forced_masked_idx=None,
+                      cond=None):
         B, T_hist, N, D = x.shape
         T_total = self.total_frames
         device = x.device
@@ -437,30 +472,50 @@ class DyGJEPAPredictor(nn.Module):
 
         out = tokens_grid + time_grid + anchor_grid
 
+        x_tok = x
+        if self.delta_proj is not None and T_hist > 1:
+            both = (active[:, 1:T_hist] & active[:, :T_hist - 1]).unsqueeze(-1)
+            delta = torch.zeros_like(x)
+            delta[:, 1:T_hist] = torch.where(
+                both, x[:, 1:T_hist] - x[:, :T_hist - 1], torch.zeros_like(x[:, 1:T_hist]))
+            x_tok = x + self.delta_proj(delta)
+
         # t=0 visible for every active node
         vis0 = active[:, 0:1].unsqueeze(-1)
         out = out.clone()
-        out[:, 0:1] = torch.where(vis0, x[:, 0:1] + time_emb[:, 0:1], out[:, 0:1])
+        out[:, 0:1] = torch.where(vis0, x_tok[:, 0:1] + time_emb[:, 0:1], out[:, 0:1])
 
         # t in [1, T_hist) visible for active & unmasked nodes
         if T_hist > 1:
             unmasked = (~is_masked).view(1, 1, N, 1)
             vis = active[:, 1:T_hist].unsqueeze(-1) & unmasked
             out[:, 1:T_hist] = torch.where(
-                vis, x[:, 1:T_hist] + time_emb[:, 1:T_hist], out[:, 1:T_hist]
+                vis, x_tok[:, 1:T_hist] + time_emb[:, 1:T_hist], out[:, 1:T_hist]
             )
+
+        if self.cond_proj is not None:
+            # Future query tokens: + projected coarse hint. Hidden nodes get
+            # none: the coarse model saw their history, and the hint would
+            # hand it to the masked-history reconstruction.
+            c = self.cond_proj(cond)                              # (B, P, N, D)
+            keep = (~is_masked).view(1, 1, N, 1).to(c.dtype)
+            out[:, T_hist:] = out[:, T_hist:] + c * keep
 
         return out, masked_idx
 
     def forward(self, x, adj, active, times=None, hidden_edges=None,
-                forced_masked_idx=None):
+                forced_masked_idx=None, cond=None):
         B, T_hist, N, D = x.shape
         T_total = self.total_frames
         if self.latent_norm:
             x = F.layer_norm(x, (D,))
+        if self.cond_proj is not None and cond is None:
+            raise ValueError(
+                "this predictor was trained with a coarse hint (--hier_ckpt); "
+                "pass cond=predictor.make_cond(x_hist, adj, active, ...)")
 
         x_input, masked_idx = self.prepare_input(
-            x, active, times, forced_masked_idx=forced_masked_idx,
+            x, active, times, forced_masked_idx=forced_masked_idx, cond=cond,
         )
         x_flat = rearrange(x_input, "b t n d -> b (t n) d")
 
@@ -482,14 +537,23 @@ class DyGJEPAPredictor(nn.Module):
 
         if self.residual_head:
             # Anchor = last latent the predictor was allowed to see: the final
-            # history step for visible nodes, t=0 for masked nodes (their
-            # trajectory past t=0 is hidden — anchoring them at x[:, -1] would
-            # leak the masked history into the reconstruction task).
+            # history step for visible nodes, t=0 for masked nodes.
             anchor = x[:, -1]
             if masked_idx.numel() > 0:
                 anchor = anchor.clone()
                 anchor[:, masked_idx] = x[:, 0][:, masked_idx]
             pred = pred + anchor.unsqueeze(1)
+
+        if self.skip is not None:
+            H, P = self.history_frames, self.pred_frames
+            B_, _, N_, D_ = x.shape
+            hist = x[:, :H].permute(0, 2, 1, 3).reshape(B_, N_, H * D_)      # (B,N,H*D)
+            disp = self.skip(hist).view(B_, N_, P, D_).permute(0, 2, 1, 3)   # (B,P,N,D)
+            if masked_idx.numel() > 0:
+                keep = torch.ones(N_, device=x.device, dtype=disp.dtype)
+                keep[masked_idx] = 0.0
+                disp = disp * keep.view(1, 1, N_, 1)
+            pred = torch.cat([pred[:, :H], pred[:, H:] + disp], dim=1)
 
         edge_out = None
         if self.edge_head is not None and hidden_edges is not None:
@@ -504,7 +568,8 @@ class DyGJEPAPredictor(nn.Module):
         return (b, t, i, j), logits
 
     @torch.no_grad()
-    def inference(self, x, adj, active, times=None, intervention_idx=None):
+    def inference(self, x, adj, active, times=None, intervention_idx=None,
+                  cond=None):
         """Predict future-step latents. By default no nodes are masked
         (observational forecast). Pass `intervention_idx` (a 1-D LongTensor
         of node indices) to force those nodes' trajectories past t=0 to be
@@ -532,16 +597,17 @@ class DyGJEPAPredictor(nn.Module):
         if active is not None and active.shape[1] > H:
             active = active.clone()
             active[:, H:] = active[:, H - 1:H]     # carry last-seen activity forward
-        saved = self.num_masked_nodes
+        saved, saved_frac = self.num_masked_nodes, self.mask_frac
         if intervention_idx is None:
             self.num_masked_nodes = 0
+            self.mask_frac = 0.0
         try:
             pred, _, _ = self.forward(
                 x, adj, active, times=times,
-                forced_masked_idx=intervention_idx,
+                forced_masked_idx=intervention_idx, cond=cond,
             )
         finally:
-            self.num_masked_nodes = saved
+            self.num_masked_nodes, self.mask_frac = saved, saved_frac
         return pred[:, self.history_frames:]
 
 
@@ -687,9 +753,7 @@ class TrajectoryJEPAPredictor(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(node_dim))
         nn.init.trunc_normal_(self.mask_token, std=0.02)
 
-        # Window-position embedding: small (1, K, 1, D). This is harmless
-        # because it only encodes window index, which is a true temporal
-        # variable; the model can't memorise per-node attributes through it.
+        # Window-position embedding: (1, K, 1, D). 
         self.window_pos = nn.Parameter(
             0.02 * torch.randn(1, num_windows, 1, node_dim)
         )
@@ -736,7 +800,6 @@ class TrajectoryJEPAPredictor(nn.Module):
         mtok = self.mask_token.view(1, 1, 1, D).expand(B, K, N, D)
         x = torch.where(mask_b, mtok, tokens)
 
-        # Window position (always added; pure temporal info, no leak risk).
         x = x + self.window_pos[:, :K]
 
         # Node position: only if configured. Node identity comes from the
@@ -819,7 +882,7 @@ class PlainForecaster(nn.Module):
 
         # Residual parameterisation parity with DyGJEPAPredictor: zero-init the
         # head so the forecast STARTS at copy-last (anchor = last history
-        # latent) and can only add dynamics on top. Load-bearing on MOOC.
+        # latent) and can only add dynamics on top. 
         if residual_head:
             nn.init.zeros_(self.to_out.weight)
             nn.init.zeros_(self.to_out.bias)
@@ -850,6 +913,49 @@ class PlainForecaster(nn.Module):
     def inference(self, x, adj=None, active=None, times=None,
                   intervention_idx=None):
         return self._forecast(x)                               # (B, P, N, D)
+
+
+def predictor_flags_from_args(saved: "dict | None") -> dict:
+    """Predictor constructor flags that a checkpoint's weights cannot recover.
+
+    Every script that REBUILDS a trained predictor (state probe, analysis,
+    intervention eval, fine-tuning) must pass these, read from the training
+    ``args`` stored in the checkpoint:
+
+    * ``linear_skip`` adds the ``skip`` weights (linear-dynamics prior).
+    * ``input_delta`` adds the ``delta_proj`` weights (velocity channel);
+      omitting it makes ``load_state_dict`` fail on an ``--input_delta`` ckpt.
+    * ``residual_head`` / ``latent_norm`` have NO parameters, so a mismatch is
+      silent: ``load_state_dict`` succeeds and the predictor then runs a
+      different function from the one that was trained (e.g. a ``--target_norm``
+      model probed without its input LayerNorm).
+    * ``use_edge_head`` adds the ``edge_head.*`` weights; omitting it makes
+      ``load_state_dict`` fail on any ``--edge_mask_rate > 0`` checkpoint.
+    * ``attn_impl`` only changes how the same attention is computed.
+    * ``mask_frac`` is parameter-free too; inference() never masks, but the
+      validation loss and the masked analyses do.
+
+    ``latent_norm`` follows ``--target_norm`` exactly as the trainer sets it
+    (``train_dyg_jepa.build_jepa_predictor``). PlainForecaster ignores the keys
+    it does not use, so the result is safe for every ``mask_scheme``.
+    """
+    saved = saved or {}
+    hier = {}
+    if saved.get("hier_cfg"):
+        # Two-level run: the frozen coarse model is a submodule of the
+        # predictor, so it must be rebuilt before load_state_dict.
+        hier = dict(hier_cfg=saved["hier_cfg"],
+                    hier_hint=saved.get("hier_hint", "forecast"))
+    return dict(
+        **hier,
+        residual_head=bool(saved.get("residual_head", False)),
+        input_delta=bool(saved.get("input_delta", False)),
+        linear_skip=bool(saved.get("linear_skip", False)),
+        latent_norm=bool(saved.get("target_norm", False)),
+        use_edge_head=float(saved.get("edge_mask_rate", 0.0) or 0.0) > 0.0,
+        attn_impl=saved.get("attn_impl", "sparse"),
+        mask_frac=float(saved.get("mask_frac", 0.0) or 0.0),
+    )
 
 
 def build_predictor(mask_scheme: str, **cfg):
@@ -910,8 +1016,21 @@ def compute_graph_jepa_loss(
     sigreg_slices: int = 256,
     sigreg_knots: int = 17,
     sigreg_extra_rows: "list[torch.Tensor] | None" = None,
+    horizon_norm: bool = False,
 ):
     """Latent-MSE JEPA loss (masked-history + future) with optional extras.
+
+    horizon_norm (2026-09-29) divides every FUTURE step's squared error by the
+    copy-last squared error at that step (mean over the batch's active
+    future tokens of ||z_{T_hist-1} - z_t||^2 on the TARGET latents, no
+    gradient). Without it the summed future loss is dominated by the longest
+    horizons purely through their variance (on the synthetic showcase
+    copy-last's error is 0.5 at h=1 and 30 at h=12), most of which is
+    irreducible, so the MSE-optimal predictor shrinks its update toward the
+    mean at long horizons (diagnostic: displacement cosine ~0.5 but
+    magnitude ~0.5). With it every horizon contributes on the same scale and
+    the future loss reads as error RELATIVE TO PERSISTENCE: 1.0 = a zero
+    update, < 1 = better than copy-last. Masked-history terms are unchanged.
 
     target_norm applies a parameter-free LayerNorm over the channel dim of
     the target (I-JEPA / V-JEPA) so no node/dim with a large latent norm can
@@ -945,6 +1064,15 @@ def compute_graph_jepa_loss(
     fut = torch.zeros_like(active)
     fut[:, T_hist:] = True
     fut = fut & active
+
+    if horizon_norm and T_total > T_hist:
+        with torch.no_grad():
+            last = target[:, T_hist - 1:T_hist]                          # (B,1,N,D)
+            cl = (last - target[:, T_hist:]).pow(2).mean(dim=-1)         # (B,T_pred,N)
+            f = fut[:, T_hist:].float()
+            scale = (cl * f).sum(dim=(0, 2)) / f.sum(dim=(0, 2)).clamp(min=1.0)
+            scale = scale.clamp(min=1e-6).view(1, -1, 1)                 # (1,T_pred,1)
+        diff2 = torch.cat([diff2[:, :T_hist], diff2[:, T_hist:] / scale], dim=1)
 
     if change_weight > 0:
         with torch.no_grad():
