@@ -1,0 +1,16 @@
+# Minimal deps for METR-LA C-JEPA training.
+# Install with: pip install -r scripts/metr_la/requirements.txt
+#
+# torch: pin only the major version. On a cluster you often want to use
+#        the IT-provided wheel matching the local CUDA toolkit -- in that
+#        case `module load pytorch/<version>` first and skip torch here.
+# 2.4 / 2.5 wheels still ship sm_70 (V100 support); 2.6+ default builds drop it.
+# Override on a newer GPU with: pip install -U torch
+torch>=2.4,<2.6
+einops>=0.7
+numpy>=1.24
+pandas>=2.0
+tables>=3.8           # for pandas read_hdf
+h5py>=3.10
+pyarrow>=14           # for parquet
+huggingface_hub>=0.23
