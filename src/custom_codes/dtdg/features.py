@@ -1,21 +1,12 @@
 """Per-(t, node) feature engineering for DELOS datasets.
 
-Single home for the feature builders that used to live in (and be imported
-across) the per-dataset files:
-
   - :func:`build_graph_features`        -- 8-dim local graph statistics, the
-        base feature every dynamic-graph dataset uses. Formerly
-        ``dblp_dataset._features_from_history``.
+        base feature every dynamic-graph dataset uses.
   - :func:`aggregate_edge_features_to_nodes` -- mean-pool per-edge features
-        (JODIE LIWC, SNAP PROPERTIES) onto (bin, node) positions. Formerly in
-        ``dblp_dataset``.
+        (JODIE LIWC, SNAP PROPERTIES) onto (bin, node) positions.
   - :func:`concept_static_features`     -- EHRshot vocab one-hot + log-freq.
-        Formerly ``ehrshot_dataset._concept_static_features``.
   - :func:`time_of_day`                 -- fractional time-of-day, used by the
-        METR-LA traffic features. Formerly ``metr_la_dataset._time_of_day``.
-
-The numerics here are byte-for-byte identical to the originals; this module
-only relocates them so a single edit changes the feature stack everywhere.
+        METR-LA traffic features.
 """
 from __future__ import annotations
 
@@ -68,10 +59,7 @@ def aggregate_edge_features_to_nodes(
     """Mean-pool per-edge features over the edges incident to each (bin, node).
 
     For each bin t and node i, the result is the average of `edge_features`
-    over all edges that touched i during bin t (counting both as source and
-    target). Useful for folding edge-level semantic features (e.g. JODIE's
-    172-dim LIWC vectors) into the (T, N, F) node-feature tensor that the
-    encoder expects.
+    over all edges that touched i during bin t (as source or target).
 
     Args:
       edge_features: (E, F) float array of features per event/edge.
@@ -80,13 +68,10 @@ def aggregate_edge_features_to_nodes(
       num_bins:          T
       num_nodes:         N
       normalize:         if True (default), z-score each output feature dim
-                         using statistics computed over ACTIVE (b, n)
-                         positions only. Required for stable MSE training:
-                         JODIE LIWC and SNAP PROPERTIES have native per-dim
-                         stds spanning O(1)..O(10^2), and the multi-seed
-                         pretrain MSE loss becomes bimodal without this.
-                         Inactive positions stay at zero post-normalisation,
-                         preserving the "no edge -> zero feature" semantics.
+                         using statistics computed over active (b, n)
+                         positions only. The raw per-dim scales differ by
+                         orders of magnitude, which destabilises MSE training.
+                         Inactive positions stay at zero.
 
     Returns:
       (T, N, F) float32 array of per-(bin, node) mean edge features.
@@ -94,8 +79,8 @@ def aggregate_edge_features_to_nodes(
     F = edge_features.shape[1]
     feat_sum = np.zeros((num_bins, num_nodes, F), dtype=np.float64)
     count = np.zeros((num_bins, num_nodes), dtype=np.int64)
-    # np.add.at is the scatter-add we need; in a loop over F because
-    # add.at doesn't broadcast the last dim cleanly across all flavours.
+    # Scatter-add, in a loop over F because np.add.at does not broadcast the
+    # last dim.
     for k in range(F):
         np.add.at(feat_sum[..., k], (bin_idx, sources), edge_features[:, k])
         np.add.at(feat_sum[..., k], (bin_idx, targets), edge_features[:, k])

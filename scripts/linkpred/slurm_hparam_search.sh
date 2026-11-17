@@ -8,52 +8,33 @@
 #SBATCH --time=20:00:00
 #SBATCH --partition=gpu
 #
-# HYPERPARAMETER SEARCH for dynamic link prediction. Third of the three sweeps,
-# identical in structure to scripts/regression/ and scripts/classification/.
+# Hyperparameter search for dynamic link prediction: a SLURM array job in which
+# each task id is one grid cell. Every cell scores the validation split (the
+# JEPA arms via --probe_split val -> test_metrics.json from the val loader,
+# the baselines via analyze_jepa -> analysis_val.json), so the test split is
+# never read during the search. See scripts/linkpred/README.md.
 #
-# EVERY cell scores the VALIDATION split. The JEPA arms get --probe_split val
-# (test_metrics.json from the val loader); the baselines get analyze_jepa
-# --probe_split val, which writes analysis_val.json. The test split is never
-# read during the search.
+# Stages (STAGE=), with the same grids and cell indices as
+# scripts/classification/slurm_hparam_search.sh (documented there):
+#   predictor  Predictor knobs on the frozen arm. The winner is BASE_HP.
+#   baselines  Tunes each competing method (lr x its main knob).
+#   variants   Encoder-training knob per arm, BASE_HP fixed. VARIANT_SET=old |
+#              new | all (default).
+#   ema        Wider encoder_lr x ema_momentum grid for the arms in EMA_ARMS,
+#              times the EMA_FREEZE values. Written into the variants root.
+#   ema_pred   Predictor knobs re-tuned under a trained EMA encoder, target
+#              knobs fixed at ENC_HP. Own root. Run it on two seeds.
 #
-# Stages (same set, grids and cell indices as scripts/classification/):
-#   STAGE=predictor  predictor knobs on the FROZEN arm -> BASE_HP
-#   STAGE=baselines  GRACE / CLDG / DDGCL / IDOL / ..., so the table is not "our tuned method
-#                    vs their defaults"
-#   STAGE=variants   encoder-training knob per variant, BASE_HP fixed.
-#                    VARIANT_SET picks the arms: old = frozen / ema / naive /
-#                    vicreg (16 cells, indices 0-15 as before); new = the
-#                    JEPA-recipe arms ctx / tnorm / ema_cos / sigreg / lejepa /
-#                    ijepa / lejepa_full (32 cells); all = old then new (48,
-#                    default). --list prints every cell.
-#   STAGE=ema        the EMA arm's wider MOMENTUM grid (phase A; encoder_lr on $LRS):
-#                    encoder_lr 5e-4/1e-3/2e-3 x momentum 0.99..0.9999, 12 cells
-#                    per arm in EMA_ARMS (ema / ema_cos / ema_tnorm /
-#                    ema_cos_tnorm), x EMA_FREEZE encoder-freeze values. Written into
-#                    the VARIANTS root so --by_arm ranks old and new cells together.
-#   STAGE=ema_pred   predictor knobs re-tuned UNDER a trained EMA encoder (phase
-#                    B): lr x mask_frac x change_weight with the target knobs
-#                    fixed at ENC_HP. Own root. Run on two seeds.
-#
-# Usage:
+# Usage (`--list` prints every cell):
 #   DATASET=mooc STAGE=predictor bash scripts/linkpred/slurm_hparam_search.sh --list
 #   DATASET=mooc STAGE=predictor sbatch --array=0-35%6 scripts/linkpred/slurm_hparam_search.sh
 #   python scripts/linkpred/aggregate_hparam.py --root outputs/lp_hparam/mooc_predictor --emit_flags
-#
 #   DATASET=mooc STAGE=baselines sbatch --array=0-68%6 scripts/linkpred/slurm_hparam_search.sh
-#   python scripts/linkpred/aggregate_hparam.py --root outputs/lp_hparam/mooc_baselines --by_arm --emit_flags
-#
 #   DATASET=mooc STAGE=variants BASE_HP="<from predictor>" \
-#       sbatch --array=0-47%4 scripts/linkpred/slurm_hparam_search.sh     # VARIANT_SET=all
-#   DATASET=mooc STAGE=variants VARIANT_SET=old BASE_HP="<from predictor>" \
-#       sbatch --array=0-15%4 scripts/linkpred/slurm_hparam_search.sh     # legacy four arms
+#       sbatch --array=0-47%4 scripts/linkpred/slurm_hparam_search.sh
 #   python scripts/linkpred/aggregate_hparam.py --root outputs/lp_hparam/mooc_variants --by_arm --emit_flags
-#
-#   DATASET=mooc STAGE=ema EMA_ARMS="ema ema_cos" BASE_HP="<from predictor>" \
-#       sbatch --array=0-23%4 scripts/linkpred/slurm_hparam_search.sh
 #   for S in 42 43; do DATASET=mooc STAGE=ema_pred SEED=$S BASE_HP="<from predictor>" \
 #       ENC_HP="<from variants/ema>" sbatch --array=0-23%6 scripts/linkpred/slurm_hparam_search.sh; done
-#   python scripts/linkpred/aggregate_hparam.py --root outputs/lp_hparam/mooc_ema_pred --emit_flags
 
 set -uo pipefail
 
@@ -61,29 +42,18 @@ DATASET="${DATASET:-mooc}"
 STAGE="${STAGE:-predictor}"
 SEED="${SEED:-42}"
 BASE_HP="${BASE_HP:-}"
-# ONE learning-rate grid shared by every arm that sweeps --lr: all baselines and
-# DELOS's own predictor / ema_pred stages. Per-method grids centred on each
-# paper's default put several winners on a grid EDGE (CLDG lowest, DDGCL / IDOL
-# highest on MOOC) and made "who was tuned harder" depend on the method. A decade
-# ladder spans every reference default (1e-4 DyG2Vec ... 5e-3 STEP / STD-MAE).
-# Cell dirs are named by flag values, not index, so cells already on disk at
-# 1e-3 / 1e-2 are reused. Override: LRS="3e-5 1e-4 3e-4" (e.g. METR-LA, from
-# slurm_lr_probe.sh) -- but then use the SAME override for every stage.
+# One learning-rate grid shared by every arm that sweeps --lr, so that no
+# method is tuned on a grid of its own. If you override LRS, use the same
+# override for every stage.
 LRS="${LRS:-1e-4 1e-3 1e-2}"
 VARIANT_SET="${VARIANT_SET:-all}"
 EMA_ARMS="${EMA_ARMS:-ema}"
 ENC_HP="${ENC_HP:---encoder_lr 5e-4 --ema_momentum 0.999}"
-# Encoder freeze epochs swept by STAGE=ema (outer loop, so the legacy 12 cells
-# per arm keep their indices; "0 10 30" appends the two frozen-start variants).
+# Encoder freeze epochs swept by STAGE=ema (outer loop, so the K=0 cells keep
+# their indices).
 EMA_FREEZE="${EMA_FREEZE:-0}"
-# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
-# trainers' default spans the whole --epochs budget, which early stopping
-# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
-# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
-# was the constant arm. 50 epochs is below every observed run length, so the
-# schedule finishes while the predictor still trains. 0 = whole run (legacy).
-# Same value for every arm and method so no row gets its own schedule.
+# Cosine-anneal horizon of the EMA momentum, shared by every arm that anneals
+# it (see scripts/classification/slurm_all_methods.sh). 0 = the whole run.
 EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
 ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 
@@ -109,9 +79,7 @@ build_grid() {
         done
     elif [[ "$STAGE" == "variants" ]]; then
         if [[ "$VARIANT_SET" == "old" || "$VARIANT_SET" == "all" ]]; then
-            # Legacy grid -- do NOT reorder: cell indices are on disk / in logs.
-            # encoder_lr on the SAME ladder as --lr (LRS) since 2026-09-23; the
-            # 1e-5/1e-4/5e-4 grid put the EMA winners on its top edge.
+            # Do not reorder: cell indices are on disk and in logs.
             GRID+=("frozen|")
             for elr in $LRS; do
                 for m in 0.996 0.999; do
@@ -128,23 +96,20 @@ build_grid() {
             GRID+=("ctx|")
             GRID+=("tnorm|")
             for elr in $LRS; do
-                # cosine anneal: sweep the START momentum (end is 1.0)
+                # Cosine anneal: sweep the start momentum (the end is 1.0).
                 for m in 0.996 0.999; do
                     GRID+=("ema_cos|--encoder_lr $elr --ema_momentum $m")
                     GRID+=("ijepa|--encoder_lr $elr --ema_momentum $m")
                 done
-                # SIGReg weight replaces vicreg_var as the collapse knob. The raw
-                # statistic sits ~0.25-0.3 at init, so 0.5 / 2.0 bracket "as strong
-                # as the prediction term".
+                # The SIGReg weight replaces vicreg_var as the collapse knob.
                 for sw in 0.5 2.0; do
                     GRID+=("sigreg|--encoder_lr $elr --sigreg $sw")
                     GRID+=("lejepa|--encoder_lr $elr --sigreg $sw")
                     GRID+=("lejepa_full|--encoder_lr $elr --sigreg $sw")
                 done
             done
-            # Appended 2026-09-23 (indices above unchanged): the EMA arms with
-            # target LayerNorm but WITHOUT context masking -- isolates tnorm
-            # from ctx, which the ijepa arm bundles. Same grid as ema / ema_cos.
+            # EMA arms with target LayerNorm but without context masking, which
+            # isolates tnorm from ctx (the ijepa arm bundles both).
             for elr in $LRS; do
                 for m in 0.996 0.999; do
                     GRID+=("ema_tnorm|--encoder_lr $elr --ema_momentum $m")
@@ -157,15 +122,11 @@ build_grid() {
             exit 2
         fi
     elif [[ "$STAGE" == "ema" ]]; then
-        # Phase A: the EMA arm's target-network knobs, both edges of the
-        # variants grid extended. Do NOT reorder: indices are on disk / in logs.
+        # EMA target-network knobs. Do not reorder: indices are on disk.
         for fz in $EMA_FREEZE; do
             FZ_ARG=""; [[ "$fz" != "0" ]] && FZ_ARG=" --encoder_freeze_epochs $fz"
             for arm in $EMA_ARMS; do
                 ema_arm_ok "$arm"
-                # encoder_lr on the shared ladder since 2026-09-23 (was
-                # 5e-4/1e-3/2e-3, which did not contain the variants-stage
-                # winner 1e-4); the momentum axis is this stage's own.
                 for elr in $LRS; do
                     for m in 0.99 0.999 0.9995 0.9999; do
                         GRID+=("$arm|--encoder_lr $elr --ema_momentum $m$FZ_ARG")
@@ -174,8 +135,8 @@ build_grid() {
             done
         done
     elif [[ "$STAGE" == "ema_pred" ]]; then
-        # Phase B: predictor knobs under a TRAINED EMA encoder; the target knobs
-        # stay at ENC_HP. Do NOT reorder: indices are on disk / in logs.
+        # Predictor knobs under a trained EMA encoder; the target knobs stay at
+        # ENC_HP. Do not reorder: indices are on disk.
         for arm in $EMA_ARMS; do
             ema_arm_ok "$arm"
             for lr in $LRS; do
@@ -196,23 +157,19 @@ build_grid() {
         for lr in $LRS; do
             for pl in 1 2; do GRID+=("idol|--lr $lr --proj_layers $pl"); done
         done
-        # MaskDGNN: LR x mask ratio (the paper's most sensitive knob; best at
-        # 10-30%, collapses past 40%).
+        # MaskDGNN: LR x mask ratio.
         for lr in $LRS; do
             for mr in 0.1 0.2 0.4; do GRID+=("maskdgnn|--lr $lr --mask_ratio $mr"); done
         done
-        # DySubC: LR x alpha (the sampling trade-off between recency and
-        # degree; the paper's most sensitive knob after subgraph size).
+        # DySubC: LR x alpha (sampling trade-off between recency and degree).
         for lr in $LRS; do
             for a in 1 5 10; do GRID+=("dysubc|--lr $lr --alpha $a"); done
         done
-        # DyG2Vec: LR x distortion strength (p_d, the only knob the paper
-        # validates; 0.3 is its choice). Both dropouts move together.
+        # DyG2Vec: LR x distortion strength; both dropouts move together.
         for lr in $LRS; do
             for pd in 0.15 0.3; do GRID+=("dyg2vec|--lr $lr --p_edge $pd --p_struct $pd"); done
         done
-        # DyG-WM: LR x EMA momentum (the target encoder's own stability knob;
-        # the paper uses 0.995 for node tasks and 0.999 for links).
+        # DyG-WM: LR x EMA momentum (the paper's node-task and link values).
         for lr in $LRS; do
             for m in 0.995 0.999; do GRID+=("dygwm|--lr $lr --ema_momentum $m"); done
         done
@@ -220,18 +177,15 @@ build_grid() {
         for lr in $LRS; do
             for t in 0.1 0.5; do GRID+=("sgjepa|--lr $lr --tau $t"); done
         done
-        # GRACE (static control): LR x tau. The temperature is the paper's
-        # load-bearing knob after the drop rates, which stay at the Cora defaults.
+        # GRACE: LR x temperature; the drop rates stay at the Cora defaults.
         for lr in $LRS; do
             for t in 0.2 0.4 0.7; do GRID+=("grace|--lr $lr --tau $t"); done
         done
-        # GraphMAE (static control): LR x mask rate, the paper's headline knob
-        # (robust 0.3-0.75 on citation graphs; lower on feature-poor inputs).
+        # GraphMAE: LR x mask rate.
         for lr in $LRS; do
             for mr in 0.3 0.5 0.75; do GRID+=("graphmae|--lr $lr --mask_rate $mr"); done
         done
-        # BGRL (static control): LR x initial EMA momentum, the bootstrap's own
-        # stability knob.
+        # BGRL: LR x initial EMA momentum.
         for lr in $LRS; do
             for m in 0.99 0.999; do GRID+=("bgrl|--lr $lr --ema_momentum $m"); done
         done
@@ -285,14 +239,14 @@ TASK=link_pred
 source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 BATCH="${BATCH:-8}"
 # Link-probe window batch. analyze_jepa materialises B x HIST float (N, N)
-# adjacencies: at N=10984 (reddit) B=4 is 5.4 GiB and OOMs an 11 GB card, so
-# use LINK_BATCH=1 there. Use the SAME value in slurm_all_methods.sh.
+# adjacencies, so large graphs (reddit) need LINK_BATCH=1 on an 11 GB card.
+# Use the same value in slurm_all_methods.sh.
 LINK_BATCH="${LINK_BATCH:-4}"
 NW="${SLURM_CPUS_PER_TASK:-8}"
 SHORT="${DATASET#jodie_}"
 
-# Sourcing _dataset_config.sh can clobber loop variables, so re-derive the arm
-# flags AFTER it -- a clobbered $ARM would mislabel a whole cell.
+# Sourcing _dataset_config.sh can clobber loop variables, so the arm flags are
+# derived after it.
 arm_flags() {
     case "$1" in
         frozen)      echo "" ;;
@@ -300,13 +254,11 @@ arm_flags() {
         ema)         echo "--train_encoder --ema_target" ;;
         vicreg)      echo "--train_encoder --vicreg_cov 1.0" ;;
         input)       echo "--predict_space input" ;;
-        # --- JEPA-recipe variants (2026-09): each flag is opt-in in
-        # train_delos.py, so the five arms above are byte-for-byte the old ones.
+        # JEPA-recipe variants; every flag is opt-in in train_delos.py.
         ctx)         echo "--mask_encoder_input" ;;
         tnorm)       echo "--target_norm" ;;
         ema_cos)     echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG" ;;
-        # EMA + target LayerNorm, no context masking (2026-09-23): the
-        # I-JEPA target normalisation on its own, on top of each EMA arm.
+        # EMA + target LayerNorm without context masking.
         ema_tnorm)     echo "--train_encoder --ema_target --target_norm" ;;
         ema_cos_tnorm) echo "--train_encoder --ema_target --ema_schedule cosine $ANNEAL_ARG --target_norm" ;;
         sigreg)      echo "--train_encoder --sigreg 1.0" ;;
@@ -329,9 +281,8 @@ echo "[cell $IDX] dataset=$DATASET stage=$STAGE arm=$ARM seed=$SEED -> $OUT"
 
 # --- STAGE=baselines: one competing method per cell, scored on VAL ----------
 if [[ "$STAGE" == "baselines" ]]; then
-    # A cell is complete once its val metrics exist (analysis_val.json is the last
-    # thing a cell writes), so resubmitting the array -- after a walltime kill or
-    # a grid change -- re-runs only the missing cells. Delete the dir to force one.
+    # A cell is complete once analysis_val.json exists (the last file it
+    # writes), so resubmitting the array re-runs only the missing cells.
     if [[ -f "$OUT/analysis_val.json" ]]; then
         echo "[skip] cell $IDX ($ARM) complete: $OUT/analysis_val.json exists"; exit 0
     fi
@@ -440,9 +391,9 @@ if [[ "$STAGE" == "baselines" ]]; then
         --seed "$SEED" --device cuda --out_dir "$OUT" \
         || { echo "[FATAL] link probe failed" >&2; exit 24; }
     [[ -f "$OUT/analysis_val.json" ]] || { echo "[FATAL] cell $IDX wrote no metrics" >&2; exit 12; }
-    # analyze_jepa exits 0 even when the link source OOMs and writes an EMPTY
-    # link_pred block. That must not count as a finished cell: drop the file so
-    # a resubmit re-probes it (the encoder.ckpt guard above skips retraining).
+    # analyze_jepa exits 0 even when the link source runs out of memory and
+    # writes an empty link_pred block. Drop the file so that a resubmit
+    # re-probes the cell (the encoder.ckpt guard above skips retraining).
     python - "$OUT/analysis_val.json" <<'PY' || { rm -f "$OUT/analysis_val.json"; echo "[FATAL] cell $IDX: probe produced no metrics (OOM? lower LINK_BATCH)" >&2; exit 24; }
 import json, sys
 lp = (json.load(open(sys.argv[1])).get("link_pred") or {}).get("encoder") or {}

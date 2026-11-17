@@ -67,9 +67,9 @@
 #   SPLIT       test (val to keep the test split unread)
 #
 # Reusing an existing table root: finished arms are skipped, so point ROOT at
-# it and only the missing pieces train. Arms trained before this script have
-# no snapshots, hence no dynamics curve; to get one without touching them,
-# retrain into tagged directories next to them:
+# it and only the missing pieces train. Arms trained without the snapshot flags
+# have no dynamics curve; to get one without touching them, retrain into tagged
+# directories next to them:
 #   ROOT=outputs/cls_mooc JEPA_TAG=dyn BASELINES="" bash scripts/collapse/slurm_collapse.sh
 #   (then MAIN=jepa_ema_cos_dyn COLLAPSED="jepa_naive_dyn jepa_naive_dyn_nores")
 # Synthetic showcase root with its own main arm:
@@ -106,9 +106,7 @@ GRES="${GRES:-}"
 CONSTRAINT="${CONSTRAINT:-}"
 JEPA_TAG="${JEPA_TAG:-}"
 
-# ---------------------------------------------------------------------------
-# report: tables + figures from the collapse*.json already on disk
-# ---------------------------------------------------------------------------
+# --- report: tables + figures from the collapse*.json already on disk ---
 report() {   # $1 = python launcher
     $1 scripts/collapse/collapse_report.py --root "$ROOT" --out "$FIG" --split "$SPLIT" \
         --seeds $SEEDS ${MAIN:+--main "$MAIN"} ${COLLAPSED:+--collapsed $COLLAPSED} --latex
@@ -119,9 +117,7 @@ if [[ "$MODE" == "report" ]]; then
     exit $?
 fi
 
-# ---------------------------------------------------------------------------
-# analyze: metrics for every run under $ROOT, then the report
-# ---------------------------------------------------------------------------
+# --- analyze: metrics for every run under $ROOT, then the report ---
 if [[ "$MODE" == "analyze" ]]; then
     # Interpreter: same resolution as slurm_all_methods.sh.
     CONDA_ENV="${CONDA_ENV:-}"
@@ -168,9 +164,7 @@ if [[ "$MODE" == "analyze" ]]; then
     exit "$METRICS_RC"
 fi
 
-# ---------------------------------------------------------------------------
-# submit: training jobs per seed + the dependent analysis job
-# ---------------------------------------------------------------------------
+# --- submit: training jobs per seed + the dependent analysis job ---
 DRY=0
 case "$MODE" in
     submit) ;;

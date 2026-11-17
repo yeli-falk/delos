@@ -1,10 +1,7 @@
 """Deprecated location — delegates to scripts/regression/probe_encoder_regression.py.
 
-This probe was generalised to every node-signal regression dataset (England
-COVID *and* METR-LA) and gained the supervised end-to-end arm. Keeping a second
-copy here is exactly the duplication that makes two result tables silently
-describe different experiments, so this file now forwards to the one
-implementation and exists only so existing command lines keep working.
+The probe covers every node-signal regression dataset. This file only forwards
+to that single implementation so that existing command lines keep working.
 
 Update your scripts to call:
     python scripts/regression/probe_encoder_regression.py ...

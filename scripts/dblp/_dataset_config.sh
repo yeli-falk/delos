@@ -1,58 +1,44 @@
 # shellcheck shell=bash
-# =============================================================================
-# SINGLE SOURCE OF TRUTH for dataset + shared-run configuration.
+# Single source of truth for the dataset and shared-run configuration.
 #
 # Every launcher sources this instead of hard-coding BINS / EDGE_FEATS / etc.
-# If two scripts disagree on the node subset, the binning, the feature set, the
-# window geometry or the encoder, their result tables silently describe
-# DIFFERENT experiments and cannot be merged. That happened before: the MOOC
-# showcase ran at 3000x97 users x items with edge features on a `tgcn` encoder
-# while the baseline comparison ran at 2000x500 with edge features off on
-# `gcn`, so the two tables were never comparable.
+# If two scripts disagree on the binning, the feature set, the window geometry
+# or the encoder, their result tables describe different experiments and
+# cannot be merged.
 #
-# Usage — set DATASET (and TASK) BEFORE sourcing:
+# Usage: set DATASET (and TASK) before sourcing.
 #
 #     DATASET=jodie_mooc
-#     TASK=state_probe                     # or link_pred
+#     TASK=state_probe                     # or link_pred / regression
 #     source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 #     ... $DATA_ARG ...  $WINDOW_ARG ...  $ENCODER_ARG ...  $EARLY_STOP_ARG ...
 #
-# Every value stays env-overridable (`BINS=60 sbatch ...`), so ablations are
-# still one variable away — but the DEFAULT is identical everywhere.
-# =============================================================================
+# Every value stays env-overridable (`BINS=60 sbatch ...`), but the default is
+# identical everywhere.
 
 TASK=${TASK:-state_probe}
 
 # --- shared across every dataset and every method ----------------------------
-# The encoder is `gcn` for ALL methods. CLDG / DDGCL / IDOL each encode ONE
-# aggregated snapshot (a T=1 sequence), so a recurrent encoder such as `tgcn`
-# would get no temporal signal at pretrain time yet be handed T=history_size at
-# probe time — a train/probe input-shape shift that penalises the baselines for
-# a reason unrelated to their objective. `gcn` is shape-agnostic, so every
-# method trains and probes on the same footing. (DySubC encodes k-node
-# subgraphs as T=1 sequences through the same `gcn`, so it is covered too.)
+# The encoder is `gcn` for all methods. CLDG / DDGCL / IDOL / DySubC each
+# encode one aggregated snapshot (a T=1 sequence), so a recurrent encoder such
+# as `tgcn` would get no temporal signal at pretrain time yet be handed
+# T=history_size at probe time. `gcn` is shape-agnostic, so every method trains
+# and probes on the same footing.
 #
-# One exception, by design: the MaskDGNN arm passes `--encoder_kind maskdgnn`
-# AFTER $ENCODER_ARG (argparse keeps the last occurrence). That encoder is this
-# same GCN (same hidden / out dims) plus MaskDGNN's adaptive frequency layer
-# along the window -- the layer is the method's representation learner, so it
-# has to be part of what the probe sees. Everything else stays shared.
-# The DyG2Vec arm does the same with `--encoder_kind dyg2vec` (the paper's
-# window temporal attention encoder is the method), and the DyG-WM arm with
-# `--encoder_kind dygwm` (this GCN + its node / neighbourhood trajectory GRUs).
-# SG-JEPA keeps the plain shared GCN: its spiking layers are its training
-# apparatus, not its representation.
+# Exceptions, by design: the MaskDGNN, DyG2Vec and DyG-WM arms pass their own
+# `--encoder_kind` (maskdgnn / dyg2vec / dygwm) after $ENCODER_ARG (argparse
+# keeps the last occurrence), because for those methods the encoder is the
+# representation learner and must be what the probe sees. Hidden and output
+# dims stay shared. SG-JEPA keeps the plain GCN: its spiking layers are its
+# training apparatus, not its representation.
 ENC_KIND=${ENC_KIND:-gcn}
 ENC_HIDDEN=${ENC_HIDDEN:-128}
 NODE_DIM=${NODE_DIM:-128}
 
 # Window geometry. Every method must see the same history length and forecast
-# horizon or the "all" / per-horizon rows do not line up.
-#
-# Applying the fallback here would defeat the per-dataset defaults set further
-# down (TASK=regression), because `${HIST:-12}` can no longer tell "caller did
-# not set it" from "the generic default already filled it in". So remember what
-# the caller actually passed, and only fall back at the end.
+# horizon or the "all" / per-horizon rows do not line up. Only record here what
+# the caller passed: the generic fallback is applied at the end of the file, so
+# that the per-dataset defaults (TASK=regression) can still take effect.
 _HIST_FROM_CALLER=${HIST:-}
 _NPRED_FROM_CALLER=${NPRED:-}
 
@@ -67,19 +53,16 @@ PATIENCE=${PATIENCE:-20}
 MIN_DELTA=${MIN_DELTA:-0.0}
 
 # --- per-dataset ------------------------------------------------------------
-# JODIE datasets (wikipedia / reddit / mooc) are ALWAYS used at their full
+# JODIE datasets (wikipedia / reddit / mooc) are always used at their full
 # size; there is no node-subset knob. Sizes for reference:
 #     mooc       7047 users x   97 items
 #     wikipedia  8227 users x 1000 items
 #     reddit    10000 users x  984 items
-# The snapshot adjacency is dense (T, N, N) so memory grows ~N^2 — lower
+# The snapshot adjacency is dense (T, N, N), so memory grows as N^2: lower
 # BATCH on the bigger two if you OOM.
-# TASK=state_probe  (node classification; the JODIE/MOOC family)
-#   Edge features on: the state label is a per-user event, so coverage of
-#   users is what the probe needs.
-# TASK=link_pred    (MRR/Hits@k)
-#   Edge features off (historical setting); the probe scores 99 negatives per
-#   positive edge per window, so it is the slower of the two at full N.
+# TASK=state_probe  (node classification) runs with edge features on.
+# TASK=link_pred    (MRR/Hits@k) runs with edge features off; the probe scores
+#   99 negatives per positive edge per window, so it is the slower of the two.
 case "$TASK" in
     state_probe)
         BINS=${BINS:-30}
@@ -93,19 +76,15 @@ case "$TASK" in
         ;;
     regression)
         # Fixed-node-set signal forecasting (england_covid, metr_la): no
-        # binning knobs — the whole graph is used.
+        # binning knobs, the whole graph is used.
         BINS=${BINS:-0}
         EDGE_FEATS=${EDGE_FEATS:-0}
-        # Window geometry follows each dataset's PUBLISHED convention, so our
-        # numbers sit on the same axis as the literature's:
+        # Window geometry follows each dataset's published convention:
         #   metr_la        12 history -> 12 horizon at native 5-min resolution,
-        #                  scored at +3/+6/+12 (15/30/60 min). This is the DCRNN
-        #                  (Li et al. 2018) protocol that STGCN, Graph WaveNet
-        #                  and ASTGCN all report against.
+        #                  scored at +3/+6/+12 (15/30/60 min), the DCRNN
+        #                  (Li et al. 2018) protocol.
         #   england_covid  8 daily lags, the PyG-Temporal / Panagopoulos et al.
         #                  (AAAI'21) EnglandCovid setting.
-        # Every method in a table sources this, so none of them can quietly run
-        # a different history length or horizon than the others.
         case "$DATASET" in
             metr_la)
                 HIST=${_HIST_FROM_CALLER:-12}; NPRED=${_NPRED_FROM_CALLER:-12}
@@ -263,8 +242,7 @@ case "$DATASET" in
         # counts (9/2/3, 26/5/6, 15/4/5), set by the loader. dblp_s and
         # gossipcop are binary (default PROBE_TASK); music is a 5-class
         # dynamic state (the launchers switch to --task multiclass). Read the
-        # loader's label audit (persistence floor: music 0.81, gossipcop
-        # 0.96) before any table. Knobs:
+        # loader's label audit (persistence floor) before any table. Knobs:
         #   CHASE_TOPK   0 = full graph for all three (34,717 / 6,091 / 878
         #                nodes). Set it (e.g. 8000) to keep only the K most
         #                active nodes by summed degree; the dense (T, N, N)
@@ -353,9 +331,8 @@ case "$DATASET" in
         # the dense node-STATE task: the community is the anchor z is closest
         # to (a readout of the latent), so the state at t+1 is knowable from
         # the trajectory and a forecast has real headroom over copy-last.
-        # anchor_scale / ou_sigma are set for a ~5% per-step switch rate and
-        # ~16% oracle error reduction over persistence (state_headroom, h=3);
-        # the loader prints that diagnostic on the test split -- read it.
+        # anchor_scale / ou_sigma are set for a ~5% per-step switch rate; the
+        # loader prints the state_headroom diagnostic on the test split.
         # No edge features: the DTDG snapshots are binary.
         EDGE_FEATS=0
         DATA_ARG="--data_source synthetic_dyn \
@@ -381,8 +358,8 @@ case "$DATASET" in
         exit 2 ;;
 esac
 
-# Edge features change the encoder's INPUT DIM, so this flag must be identical
-# for every method in a table — never set it for one method only.
+# Edge features change the encoder's input dim, so this flag must be identical
+# for every method in a table.
 [[ "$EDGE_FEATS" == "1" ]] && DATA_ARG="$DATA_ARG --with_edge_features"
 
 # Generic fallback for the tasks that set no per-dataset window (state_probe,

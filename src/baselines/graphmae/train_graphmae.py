@@ -1,15 +1,11 @@
 """Train the GraphMAE baseline (STATIC masked-feature autoencoder), then save
 a standard encoder checkpoint.
 
-GraphMAE is encoder-only self-supervised learning on ONE static graph (see
-``graphmae.py``). On a snapshot sequence it runs under the same static
-protocol as GRACE: every training snapshot is an independent static graph,
-each step draws one uniformly, masks a fraction of its nodes and
-reconstructs their features from the rest. No history is aggregated and no
-two snapshots are ever compared. The encoder is saved as ``encoder.ckpt`` in
-the same schema as ``pretrain_encoder.py`` so it evaluates through the
-identical probe, which reads the encoder at the LAST history snapshot
-("static SSL, last frame"):
+GraphMAE is encoder-only self-supervised learning on ONE static graph; the
+method and its static per-snapshot protocol are described in
+``graphmae.py``. The encoder is saved as ``encoder.ckpt`` in the same schema
+as ``pretrain_encoder.py`` so it evaluates through the identical probe, which
+reads the encoder at the LAST history snapshot ("static SSL, last frame"):
 
     # 1. train the GraphMAE encoder
     python -m src.baselines.graphmae.train_graphmae --data_source dblp \
@@ -30,9 +26,7 @@ appends), for the state tables where the 8 graph-derived channels are degree
 statistics and per-snapshot time constants; it errors if there are none.
 
 Supports the global dynamic-graph datasets (dblp / jodie / reddit /
-england_covid) and fixed-topology signal datasets (metr_la). The encoder
-consumes the pipeline's node features, so its input matches DELOS exactly
--- only the SSL objective differs.
+england_covid) and fixed-topology signal datasets (metr_la).
 """
 from __future__ import annotations
 

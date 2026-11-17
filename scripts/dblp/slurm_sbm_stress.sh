@@ -14,10 +14,9 @@
 # Trains the full DELOS pipeline on a synthetic stochastic block model
 # (default: 8 blocks, 1000 nodes, 30 years) and reports effective rank +
 # probe metrics. The SBM has structural rank ~ log2(num_blocks) by
-# construction; if the model recovers an effective rank close to that, the
-# architecture is capable of >1 rank and the DBLP rank-1 finding is a
-# data ceiling. If the model still gives eff_rank ~ 1 here, the
-# architecture itself is the bottleneck.
+# construction: an effective rank close to that means a low rank on real data
+# is a data ceiling, while eff_rank ~ 1 here means the architecture itself is
+# the bottleneck.
 #
 # Stages:
 #   1) edge-masking encoder pretraining on SBM
@@ -63,9 +62,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
 # Stage 1: encoder pretraining via edge masking
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -86,10 +83,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt already exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
-# Stage 2: DELOS training (baseline configuration — no EMA/VICReg to keep
-# the comparison clean against the baseline DBLP cell).
-# -----------------------------------------------------------------------------
+# Stage 2: DELOS training (baseline configuration: no EMA/VICReg).
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -108,9 +102,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: representation diagnostic.
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

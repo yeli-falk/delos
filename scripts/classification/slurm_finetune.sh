@@ -8,25 +8,13 @@
 #SBATCH --time=12:00:00
 #SBATCH --partition=gpu
 #
-# FINE-TUNING / LABEL-EFFICIENCY for dynamic node classification.
+# Fine-tuning / label efficiency for dynamic node classification: the
+# self-supervised weights are an initialisation and the whole network is then
+# trained on labels. One array cell is one (init, aux weight, label fraction).
+# The protocol and the init table are in scripts/classification/README.md.
 #
-# The DDGCL-style protocol: self-supervised weights are an INITIALISATION, the
-# whole network (encoder + predictor + head) is then trained on labels. One
-# SLURM array cell = one (init, aux, label fraction). Every cell shares the
-# predictor architecture of the table's DELOS checkpoint and the same
-# chronological split / schedule / head; only the starting weights differ.
-#
-# Inits (INITS, default "random encoder jepa ddgcl"):
-#   random    encoder + predictor from scratch         (supervised floor)
-#   encoder   the table's shared edge-mask encoder, predictor from scratch
-#   jepa      encoder + predictor from $ROOT/$JEPA_ARM_s$SEED/best.ckpt
-#   ddgcl|cldg|idol|maskdgnn|dysubc|grace|graphmae|bgrl|dyg2vec|dygwm|sgjepa   that baseline's encoder.ckpt, predictor from scratch
-#
-# Regimes (AUXW, default "0 1.0"): 0 = pure fine-tuning (DDGCL fune_train),
-# w>0 = BCE + w * JEPA latent loss (DDGCL's multi-task scheme).
-#
-# Reads the artefacts the final-table launcher wrote under ROOT, so run
-# scripts/classification/slurm_all_methods.sh for the seed first.
+# It reads the artefacts slurm_all_methods.sh wrote under ROOT, so run that
+# launcher for the seed first.
 #
 # Usage:
 #   DATASET=mooc ROOT=outputs/cls_mooc_full SEED=42 \
@@ -36,7 +24,10 @@
 #   python scripts/classification/aggregate_finetune.py \
 #       --root outputs/cls_mooc_full/finetune --seeds 42 43 44
 #
-# Knobs: FRACS="0.01 0.05 0.1 0.25 1.0"  INITS  AUXW  JEPA_ARM=jepa_frozen
+# Knobs: INITS="random encoder jepa ddgcl" (also cldg idol maskdgnn dysubc grace
+#        graphmae bgrl dyg2vec dygwm sgjepa)
+#        AUXW="0 1.0" (0 = pure fine-tuning, w>0 = BCE + w * JEPA latent loss)
+#        FRACS="0.01 0.05 0.1 0.25 1.0" JEPA_ARM=jepa_frozen
 #        FT_EPOCHS=100 FT_PATIENCE=15 LR=1e-4 ENC_LR=<LR> HEAD_LR=1e-2 CLIP=1.0 BATCH=4
 #        LABEL_SEED=0 STATE_MODE=state FT_HP="<extra finetune_state flags>"
 
@@ -80,12 +71,8 @@ export PYTHONPATH="$REPO_ROOT"
 # Full-N adjacency tensors are multi-GB; expandable segments stop the caching
 # allocator from stranding reserved-but-unusable blocks between them.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-# Interpreter. Three ways to point the job at the right python, in priority:
-#   PY=/path/to/python          use this interpreter outright (no activation)
-#   CONDA_ENV=<name|/path>      activate this conda env, then use its python
-#   (neither)                   activate ~/.conda/envs/cjepa if it exists (ruche)
-# On a cluster where none of these resolve, srun fails with
-# "execve(): python: No such file or directory" -- hence the hard check.
+# Interpreter, in priority order: PY=/path/to/python (used as is),
+# CONDA_ENV=<name|/path> (activated), otherwise ~/.conda/envs/cjepa if it exists.
 CONDA_ENV="${CONDA_ENV:-}"
 if [[ -z "${PY:-}" ]]; then
     [[ -z "$CONDA_ENV" && -d "$HOME/.conda/envs/cjepa" ]] && CONDA_ENV=cjepa

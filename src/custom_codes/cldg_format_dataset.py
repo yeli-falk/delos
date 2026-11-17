@@ -1,10 +1,9 @@
-"""CLDG-format dynamic graphs with STATIC per-node class labels (DBLP / Patent).
+"""CLDG-format dynamic graphs with static per-node class labels (DBLP / Patent).
 
 The release format of CLDG (Xu et al., ICDE'23, github.com/yimingxu24/CLDG)
-and the follow-up multi-view work that ships the same folders. Two of them
-were dropped into ``dataset/`` as Google-Drive zips
-(``dblp-<stamp>.zip`` / ``patent-<stamp>.zip``); unpack with
-``scripts/dblp/extract_cldg_datasets.sh`` to::
+and the follow-up multi-view work that ships the same folders. Place the
+release zips (``dblp-<stamp>.zip`` / ``patent-<stamp>.zip``) in ``dataset/``
+and unpack with ``scripts/dblp/extract_cldg_datasets.sh`` to::
 
     dataset/cldg/<name>/<name>.txt        src dst t          t normalised to [0, 1]
     dataset/cldg/<name>/node2label.txt    node label         one row per node
@@ -12,49 +11,41 @@ were dropped into ``dataset/`` as Google-Drive zips
     (label.txt is node2label sorted by node; MVC Features/ are precomputed
      embeddings of another method -- neither is used here.)
 
-What the two graphs are (measured on the files, 2026-09-24):
+The two graphs:
 
     name    nodes   edges    distinct t  classes   notes
     dblp    28,085  236,894      27        10      yearly co-authorship, undirected
                                                    (stored one direction, some
                                                    multi-edges); t is the year
                                                    index / 26, so the 27 distinct
-                                                   values ARE the snapshots
+                                                   values are the snapshots
     patent  12,214   41,916     891         6      citation graph, directed; the
                                                    timeline is extremely skewed
-                                                   (83% of edges in the last 10%
-                                                   of the axis; the 10%-quantile
-                                                   of t is 0.87)
-    (arXivAI from the same release was tried and dropped: 69,854 nodes, 27
-     yearly timestamps with 99% of its 699k edges in the last 6 years, so the
-     chronological train period holds ~4.7k edges. Not a temporal benchmark.)
+                                                   (most edges fall in the last
+                                                   tenth of the axis)
 
-``feature.txt`` is the transformer sinusoidal positional encoding of the NODE
-INDEX (row i = [sin(i / 10000^(2k/128)), cos(...)]): a time-invariant identity
-code, no content. It is what CLDG feeds its encoder, and it is what lets a GCN
-latent say *which* neighbours a node has -- without it the shared 8-dim graph
-statistics carry almost nothing about a research area or a patent class.
-On by default (``with_file_features``), switchable off for an ablation.
+``feature.txt`` is the transformer sinusoidal positional encoding of the node
+index (row i = [sin(i / 10000^(2k/128)), cos(...)]): a time-invariant identity
+code with no content. It is what CLDG feeds its encoder, and it lets a GCN
+latent encode which neighbours a node has. On by default
+(``with_file_features``), switchable off for an ablation.
 
 Both label sets are one class per node for the whole timeline, so the probe
 task is static multiclass node classification (``run_block_probe.py --task
-multiclass --label_source dataset``), scored with a NODE-level train/test
-split -- the same node with the same label must never sit on both sides.
+multiclass --label_source dataset``), scored with a node-level train/test
+split: the same node must never sit on both sides.
 
 Snapshotting choices (all env-overridable through ``_dataset_config.sh``):
 
   * dblp:   ``num_bins=0`` -> one snapshot per distinct timestamp (27 years,
-            the dataset's own granularity). Every year is well populated
-            (856 .. 26,104 edges).
-  * patent: ``num_bins=30, binning='equal_freq'`` -> quantile bins with
-            ~1,400 edges each. Equal-width bins would put 2 edges in the
-            first snapshot and 15,158 in the 29th.
-  * top_k:  the DTDG pipeline stores a DENSE (T, N, N) adjacency, so DBLP at
-            28k nodes (21 GB per timeline, 12 GB per window on the GPU) needs
-            the same top-K-by-activity subset the Reddit hyperlink graph uses.
-            Labels and file features are indexed down to the kept nodes; the
-            bin edges are always computed on the FULL stream so the snapshot
-            grid does not depend on K.
+            the dataset's own granularity).
+  * patent: ``num_bins=30, binning='equal_freq'`` -> quantile bins. Equal-width
+            bins would leave the early snapshots nearly empty.
+  * top_k:  the DTDG pipeline stores a dense (T, N, N) adjacency, so DBLP at
+            28k nodes needs a top-K-by-activity subset. Labels and file
+            features are indexed down to the kept nodes; the bin edges are
+            always computed on the full stream so the snapshot grid does not
+            depend on K.
 
 Only the CLDG-specific parsing lives here; binning primitives, graph
 features, windowing and splitting come from the universal DTDG pipeline.
@@ -121,7 +112,7 @@ def _parse_labels(path: Path, num_nodes: int) -> Tuple[np.ndarray, np.ndarray]:
 
 def _parse_features(path: Path, num_nodes: int) -> np.ndarray:
     """Whitespace-separated floats, one row per node -> (N, F) float32. Cached
-    as .npy (the 40 MB DBLP file takes ~15 s through loadtxt)."""
+    as .npy because loadtxt is slow on the DBLP file."""
     cache = path.with_suffix(".npy")
     if _fresh(cache, path):
         feats = np.load(cache)

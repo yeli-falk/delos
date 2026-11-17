@@ -26,7 +26,7 @@ _collapse/) plus each run's state_probe.json and history.json, and writes to
 Roles:
   --main        the DELOS arm the paper reports (blue). Default: the first
                 of jepa_ema_cos / jepa_ema / jepa_frozen that has results.
-  --collapsed   the positive control(s) expected to collapse (dark grey).
+  --collapsed   the positive control(s) expected to collapse.
                 Default: every jepa_naive* stem found.
 The view columns are documented in collapse_metrics.py. Seeds are whatever is
 on disk unless --seeds is given; every cell prints its own n.
@@ -59,8 +59,7 @@ REFS = [("ref_input", "Raw node features"),
         ("ref_pretrain", "Edge-mask pretrain (init)")]
 BLUE = COLORS["jepa_ema"]
 # color=None means "take the next colour from matplotlib's default cycle"
-# (resolved once in _resolve_colors): the controls and the collapsed arms were
-# drawn in grey before, and text / spines / the grid used a charcoal palette.
+# (resolved once in _resolve_colors).
 CTRL = None
 # Other DELOS arms share the JEPA hue and differ by line style + marker
 # (fixed order, as in plot_horizon.py).
@@ -74,9 +73,7 @@ PANEL_TITLES = True
 COMBINED_TITLES = ("(a) spectrum", "(b) rank vs probe")
 
 
-# ---------------------------------------------------------------------------
-# loading
-# ---------------------------------------------------------------------------
+# --- loading ---
 def _json(path: Path):
     if not path.exists():
         return None
@@ -160,9 +157,7 @@ def get(c, path):
     return c
 
 
-# ---------------------------------------------------------------------------
-# table
-# ---------------------------------------------------------------------------
+# --- table ---
 # (key, txt header, LaTeX header, path in collapse.json or callable, precision, in LaTeX table)
 def columns(probe_name):
     last_h = lambda c: max((k for k in c.get("forecast", {}) if k.startswith("h")),  # noqa: E731
@@ -247,9 +242,7 @@ def write_table(cols, table, order, names, out: Path, latex: bool):
         print(f"[saved] {out / 'collapse_table.tex'}")
 
 
-# ---------------------------------------------------------------------------
-# figures
-# ---------------------------------------------------------------------------
+# --- figures ---
 def style_of(stem, main, collapsed, jepa_others):
     if stem == main:
         return dict(color=BLUE, ls="-", marker="o", lw=2.4)
@@ -290,9 +283,8 @@ def _resolve_colors(plt, sty, order):
 
 
 def _axis(ax, xlabel=None, ylabel=None):
-    # sizes come from the rcParams paper_style sets, as in plot_horizon;
-    # hard-coding them here made these labels 9pt next to the horizon
-    # figure's 7pt in the same paper
+    # Font sizes come from the rcParams that paper_style sets, as in
+    # plot_horizon, so both figures match in the paper.
     if xlabel:
         ax.set_xlabel(xlabel)
     if ylabel:
@@ -427,8 +419,7 @@ def _dot_panel(ax, stems, cells, names, main, collapsed, xlabel, vline=None, sty
     y = np.arange(len(stems))[::-1]
     for yi, s in zip(y, stems):
         c = cells[s]
-        # the per-series colour resolved in _resolve_colors (BLUE for the main
-        # arm); the controls were drawn grey before.
+        # the per-series colour resolved in _resolve_colors (BLUE for the main arm)
         color = sty[s]["color"] if sty else (BLUE if s == main else None)
         ax.errorbar(c[0], yi, xerr=c[1], fmt="o", color=color,
                     ms=(7 if s == main else 5.5) * PH.SCALE, elinewidth=1.4 * PH.SCALE,

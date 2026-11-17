@@ -1,9 +1,9 @@
-"""Unified DELOS trainer (Block 3 entry point).
+"""Unified DELOS trainer.
 
-Pick the predictor masking scheme and the downstream task; the data source flows through the universal loader and the readout flows
-through the task-adjustable probe (Block 4):
-
-  --mask_scheme     node_mask | future_forecast | trajectory_block
+Pick the predictor masking scheme and the downstream task; the data source
+flows through the universal loader and the readout through the
+task-adjustable probe:
+  --mask_scheme     node_mask | future_forecast | mlp_forecast | gru_forecast | trajectory_block
   --downstream_task link_pred | regression | none
 
   node_mask / future_forecast + link_pred  -> DBLP / JODIE / Reddit
@@ -12,7 +12,7 @@ through the task-adjustable probe (Block 4):
 
 
 Run:
-    python src/train/train_delos.py --data_source dblp --synthetic \
+    python src/train/train_delos.py --data_source dblp --data_path dataset/dblp/edges_top2k.csv \
         --mask_scheme node_mask --downstream_task link_pred --encoder_ckpt ...
     python src/train/train_delos.py --data_source metr_la --metr_la_synthetic \
         --mask_scheme node_mask --downstream_task regression --history_size 12 --num_preds 12
@@ -61,9 +61,8 @@ from src.world_models.trajectory_jepa import (
 # Node-signal forecasting sources. All of them run the unified regression path
 # (run_regression_dynamic): England COVID and synthetic_dyn carry per-snapshot
 # adjacency, METR-LA resolves to its single static graph inside
-# probes.graph_inputs. Sharing the path is what puts them in one table — it is
-# also the only way METR-LA gets the encoder-training variants (frozen / naive /
-# EMA / VICReg), which the legacy fixed-topology loop does not implement.
+# probes.graph_inputs. The shared path is the only one that gives METR-LA the
+# encoder-training variants (frozen / naive / EMA / VICReg).
 DYNAMIC_REGRESSION_SOURCES = {"england_covid", "synthetic_dyn", "metr_la"}
 
 
@@ -161,13 +160,12 @@ def build_ema(args, encoder, device, steps_per_epoch):
     """EMA target encoder, or None. ``--ema_schedule cosine`` anneals the
     momentum from --ema_momentum to --ema_momentum_end over
     ``--ema_anneal_epochs`` epochs (0 = the whole ``--epochs`` budget, the
-    I-JEPA / V-JEPA convention); ``const`` is the legacy fixed momentum.
+    I-JEPA / V-JEPA convention); ``const`` is a fixed momentum.
 
-    The horizon matters under early stopping: with patience 20 the MOOC EMA
-    runs stop at 85-240 of 300 epochs, so a whole-run anneal from 0.996 had
-    only reached ~0.997 when the checkpoint was taken -- the cosine arm was
-    the constant arm under another name. A horizon shorter than a typical run
-    lets the schedule finish (target frozen at --ema_momentum_end) while the
+    The horizon matters under early stopping: a whole-run anneal barely
+    moves the momentum before the run stops, so the cosine arm degenerates
+    to the constant one. A horizon shorter than a typical run lets the
+    schedule finish (target frozen at --ema_momentum_end) while the
     predictor still trains. The anneal clock counts encoder updates, so it
     starts when --encoder_freeze_epochs ends."""
     if not args.ema_target:
@@ -186,9 +184,8 @@ def build_ema(args, encoder, device, steps_per_epoch):
 def smoke_done(args, train_ds=None):
     """End a ``--smoke`` run with the peak GPU memory and the window geometry.
 
-    A full run OOMs in the backward pass long after the queue has given it a
-    card, so sizing the batch by resubmitting is expensive. Three steps are
-    enough to reach the peak, and the dominant term is predictable: a
+    Three steps are enough to reach the peak, which is cheaper than sizing
+    the batch by resubmitting a full run. The dominant term is predictable: a
     dynamic-topology window carries a dense ``(B, T, N, N)`` adjacency plus its
     normalised float32 copy, so memory is linear in the batch AND in
     ``T = history_size + num_preds``. The printed estimate is that term alone;
@@ -218,9 +215,7 @@ def set_encoder_frozen(args, epoch, encoder, ema):
     target neither updates nor advances its anneal clock. The predictor
     therefore first fits a FIXED, pretrained target, and the encoder only
     starts moving once the predictor's gradients carry signal rather than
-    its initial noise. Motivation (MOOC, 2026-09-23): raising the encoder lr
-    lowered the JEPA loss and the copy-last AUROC together without improving
-    the forecast, i.e. the early encoder updates were reshaping the latents
+    its initial noise; otherwise early encoder updates reshape the latents
     to be easier to predict, not more informative. Returns True while frozen.
     """
     k = getattr(args, "encoder_freeze_epochs", 0)
@@ -280,10 +275,8 @@ def _append_history(out_dir, record):
     """Append one epoch's losses to ``history.json``.
 
     ``best.ckpt`` records only the single best val loss, which cannot show
-    whether a run converged, plateaued or DIVERGED -- the difference between
-    "needs more epochs" and "the LR is too high" is the whole loss trajectory,
-    and it was previously only recoverable by scraping SLURM logs. Rewritten in
-    full each epoch so a killed job still leaves a readable file.
+    whether a run converged, plateaued or DIVERGED. Rewritten in full each
+    epoch so a killed job still leaves a readable file.
     """
     path = out_dir / "history.json"
     hist = []
@@ -302,10 +295,9 @@ def _ckpt_payload(predictor, encoder, epoch, val_loss, args, ema=None):
     """best.ckpt / snapshot schema. ``encoder`` is the ONLINE encoder (what
     every probe reads). With an EMA target the predictor was trained to emit
     the TARGET encoder's latents, so that encoder is saved too
-    (``ema_encoder``, 2026-10-05): the latent-error diagnostic scores the
-    forecast against it, since online and target drift apart in some seeds and
-    the online encoder is then the wrong yardstick for the predictor's
-    objective. Older checkpoints simply lack the key."""
+    (``ema_encoder``): the latent-error diagnostic scores the forecast
+    against it, since online and target can drift apart. Older checkpoints
+    lack the key."""
     out = {"predictor": predictor.state_dict(), "encoder": encoder.state_dict(),
            "epoch": epoch, "val_loss": val_loss, "args": vars(args)}
     if ema is not None and getattr(ema, "target", None) is not None:
@@ -364,16 +356,14 @@ def init_linear_skip_ridge(predictor, encoder, loader, history_size, device, lam
     the flattened history latents [z_{t-H+1} .. z_t] (plus bias) to the
     displacement z_{t+k} - z_t, in the encoder's own latent space.
 
-    Why: on the synthetic showcase a ridge of exactly this form reaches a
-    latent-error ratio of 0.47-0.60 vs copy-last while the trained predictor
-    plateaus at 0.68-0.88, and a zero-initialised skip trained by gradient
-    descent never caught up before early stopping. Solving it exactly puts the
-    predictor AT the linear floor before the first step; the transformer then
-    only has to learn the nonlinear / structural residual. Valid for a frozen
-    encoder (the latents are fixed); with --train_encoder it is a warm start
-    that goes stale as the encoder moves. ``lam`` is relative to the mean
-    diagonal of X^T X so it is scale-free. Masked nodes are irrelevant here:
-    the skip is applied to visible-history nodes only at run time.
+    A zero-initialised skip trained by gradient descent does not reach this
+    linear floor before early stopping. Solving it exactly puts the predictor
+    AT the floor before the first step; the transformer then only has to
+    learn the nonlinear / structural residual. Valid for a frozen encoder
+    (the latents are fixed); with --train_encoder it is a warm start that
+    goes stale as the encoder moves. ``lam`` is relative to the mean diagonal
+    of X^T X so it is scale-free. Masked nodes are irrelevant here: the skip
+    is applied to visible-history nodes only at run time.
     """
     skip = getattr(predictor, "skip", None)
     if skip is None:
@@ -505,7 +495,7 @@ def run_link_pred(args, device, out_dir):
                   f"{no_improve} epochs", flush=True)
             break
 
-    # Block 4: downstream probe stage (fit + evaluate + report).
+    # Downstream probe stage (fit + evaluate + report).
     # --probe_split val during a hyperparameter sweep, so configurations are
     # ranked without ever reading the test split; test for the final table.
     if args.downstream_task == "none":
@@ -574,7 +564,7 @@ def run_regression(args, device, out_dir):
                   f"{no_improve} epochs", flush=True)
             break
 
-    # Block 4: downstream probe stage (fit + evaluate + report).
+    # Downstream probe stage (fit + evaluate + report).
     probe_stage.probe_regression(predictor, encoder, train_loader, test_loader,
                                  adj_dense, adj_norm, args, device, out_dir)
 
@@ -659,9 +649,7 @@ def run_regression_dynamic(args, device, out_dir):
                   f"{no_improve} epochs", flush=True)
             break
 
-    # Block 4: downstream probe stage (fit + evaluate + report).
-    # --probe_split val during a hyperparameter sweep, so configurations are
-    # ranked without ever reading the test split; test for the final table.
+    # Downstream probe stage (fit + evaluate + report).
     eval_loader = val_loader if args.probe_split == "val" else test_loader
     probe_stage.probe_regression_dynamic(predictor, encoder, train_loader,
                                          eval_loader, args, device, out_dir)
@@ -822,7 +810,7 @@ def main():
                         "gradient, no EMA update) for the first K epochs so "
                         "the predictor fits the pretrained target before the "
                         "encoder starts moving. 0 = off.")
-    # JEPA variants (all off by default => legacy behaviour is reproducible)
+    # JEPA variants (all off by default)
     p.add_argument("--mask_encoder_input", action="store_true",
                    help="Hide the masked nodes from the ONLINE encoder too "
                         "(features zeroed, incident edges dropped for t>=1), "

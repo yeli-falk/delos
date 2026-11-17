@@ -30,7 +30,7 @@ event stream, with three mechanisms (all kept here, matching the reference):
   (batch, n_users) one-hots. The "no previous item" case uses padding_idx
   (a frozen zero row), matching the reference's null previous item.
 
-Remaining deviation from the reference (document in the paper): standard
+Remaining deviation from the reference: standard
 nn.RNNCell initialisation instead of the reference's custom NormalLinear.
 
 The objective is self-supervised (state labels are never seen), so JODIE
@@ -79,10 +79,9 @@ class JODIE(nn.Module):
         nn.init.normal_(self.project_w.weight, std=0.02)
         nn.init.zeros_(self.project_w.bias)
 
-        # Prediction head, reference-faithful. The dense part consumes the two
-        # dynamic embeddings; the one-hot parts are Embedding lookups
-        # (== Linear-on-one-hot columns). n_items + 1 rows: last row is the
-        # frozen-zero "no previous item" token.
+        # Prediction head. The dense part consumes the two dynamic embeddings;
+        # the one-hot parts are Embedding lookups. n_items + 1 rows: the last
+        # row is the frozen-zero "no previous item" token.
         self.predict_dyn = nn.Linear(2 * emb_dim, out_dim)
         self.predict_ustat = nn.Embedding(n_users, out_dim)
         self.predict_istat = nn.Embedding(n_items + 1, out_dim,

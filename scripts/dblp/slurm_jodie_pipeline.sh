@@ -50,9 +50,9 @@ JEPA_EPOCHS=${JEPA_EPOCHS:-50}
 PROBE_EPOCHS=${PROBE_EPOCHS:-3}
 ENC_LR=${ENC_LR:-1e-3}
 JEPA_LR=${JEPA_LR:-5e-4}
-# Subset / binning / encoder / window / seed / early-stop from the shared
-# config (TASK=link_pred), so this JEPA row and the CLDG / DDGCL / IDOL /
-# heuristic rows of the link-prediction table describe the same experiment.
+# Binning / encoder / window / seed / early-stop come from the shared config
+# (TASK=link_pred), so this row and the baseline rows of the link-prediction
+# table describe the same experiment.
 TASK=link_pred
 # Sourcing normalises DATASET to the --data_source spelling
 # (reddit -> jodie_reddit); SHORT keeps the bare name for file paths.
@@ -88,15 +88,11 @@ echo "[stage 0] $CSV size=$(du -h "$CSV" | cut -f1)"
 ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
-# pretrain_encoder.py writes encoder_<src>_<kind>_<pretext>.ckpt, NOT
-# encoder.ckpt — reference that exact templated name everywhere below.
-# (encoder_kind comes from the shared config; pretext=edge_mask is pinned in
-# the stage-1 command.)
+# pretrain_encoder.py writes encoder_<src>_<kind>_<pretext>.ckpt, not
+# encoder.ckpt (pretext=edge_mask is pinned in the stage-1 command).
 ENC_CKPT="$ENC_DIR/encoder_${DATASET}_${ENC_KIND}_edge_mask.ckpt"
 
-# -----------------------------------------------------------------------------
 # Stage 1: encoder pretraining via edge masking
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_CKPT" ]]; then
     echo
     echo "================================================================="
@@ -118,9 +114,7 @@ else
     echo "[stage 1] $ENC_CKPT already exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training (baseline configuration)
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -139,9 +133,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: representation diagnostic
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

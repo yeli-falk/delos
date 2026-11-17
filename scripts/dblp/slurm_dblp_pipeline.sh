@@ -9,23 +9,21 @@
 #SBATCH --time=10:00:00
 #SBATCH --partition=gpu
 #
-# DBLP coauthorship pipeline (encoder pretrain -> DELOS -> diagnostic).
-# Mirrors slurm_reddit_pipeline.sh but for DBLP. Used here primarily for
-# cross-dataset verification of the long-training rank-gap result.
+# DBLP coauthorship pipeline (encoder pretrain -> DELOS -> diagnostic),
+# the DBLP counterpart of slurm_reddit_pipeline.sh.
 #
 # Data:
 #   - Looks for dataset/dblp/edges.csv (the parsed coauthorship dump).
-#   - Falls back to synthetic DBLP if SYNTHETIC=1 (smoke / sanity only).
+#   - Uses synthetic DBLP if SYNTHETIC=1 (smoke / sanity only).
 #
-# Long-training (the verification sweep):
+# Submit defaults:
+#   SEED=42 sbatch scripts/dblp/slurm_dblp_pipeline.sh
+# Long-training multi-seed sweep:
 #   for S in 42 43 44 45 46; do
 #     SEED=$S TAG=dblp_long_s$S \
 #       ENC_EPOCHS=100 JEPA_EPOCHS=300 PROBE_EPOCHS=20 PATIENCE=20 \
 #       sbatch --time=12:00:00 scripts/dblp/slurm_dblp_pipeline.sh
 #   done
-#
-# Submit defaults (50 ep, matches the original 5-seed numbers):
-#   SEED=42 sbatch scripts/dblp/slurm_dblp_pipeline.sh
 
 set -uo pipefail
 mkdir -p logs outputs
@@ -74,9 +72,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
 # Stage 1: encoder pretraining (edge-masking pretext)
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -99,9 +95,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -121,9 +115,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: diagnostic (with Louvain block probe)
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

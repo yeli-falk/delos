@@ -14,9 +14,8 @@ once and matches DELOS:
     early-stopping rule as ``train_delos._update_best`` (an improvement must
     beat the running best by more than ``min_delta``).
 
-Without these the baselines selected on *train* loss (or simply kept the final
-epoch) while DELOS selected on val — an asymmetry that flatters the JEPA
-independently of representation quality.
+Selecting the baselines on train loss while DELOS selects on val would be an
+asymmetry that favours DELOS independently of representation quality.
 """
 from __future__ import annotations
 
@@ -35,22 +34,15 @@ Snapshots = Tuple[np.ndarray, np.ndarray, np.ndarray]
 class ConstantAdjacency:
     """A (T, N, N) snapshot adjacency for a graph that never changes.
 
-    METR-LA is fixed-topology: one 207x207 adjacency shared by all ~24k 5-minute
-    snapshots. The baselines index it as if it were a per-snapshot stack, and
-    every way of giving them a real stack is wrong here:
+    METR-LA is fixed-topology: one adjacency shared by every snapshot. The
+    baselines index it as a per-snapshot stack, but materialising that stack
+    is too large, and an ``np.broadcast_to`` view makes CLDG's span reduction
+    (``adj[s:e].any(axis=0)``) walk every zero-stride snapshot.
 
-    * materialising it costs ~1 GB at bool precision, per split;
-    * ``np.broadcast_to`` is a free view but CLDG reduces over a span
-      (``adj[s:e].any(axis=0)``), and numpy walks all ``e-s`` zero-stride
-      snapshots to do it -- ~250M element-ops per view, thousands of times per
-      run.
-
-    So this exposes the same tiny surface the baselines actually use
-    (``.shape``, ``len``, integer and slice indexing, ``.any(axis=0)``) and
-    answers each in O(1) by returning the single underlying matrix. That is
-    what lets the contrastive baselines run at METR-LA's native 5-minute
-    resolution -- the same snapshots DELOS sees -- rather than a subsampled
-    timeline that would make their columns incomparable.
+    This exposes the surface the baselines use (``.shape``, ``len``, integer
+    and slice indexing, ``.any(axis=0)``) and answers each in O(1) from the
+    single underlying matrix, so the baselines run at METR-LA's native
+    resolution, on the same snapshots DELOS sees.
     """
 
     def __init__(self, adj: np.ndarray, length: int):
@@ -121,9 +113,7 @@ def split_snapshots(ds, method: str, args=None) -> Tuple[Snapshots, Snapshots]:
     * **fixed topology** (metr_la) -- the wrapper is already per-split and
       carries no global view, so the val range comes from building the val
       split through ``args``. Passing ``args`` is therefore required for those
-      datasets; without it there is no way to reach the same val snapshots
-      DELOS selects on, and silently re-splitting the *train* range instead
-      would give the baselines a different selection signal than the JEPA arms.
+      datasets, so the baselines select on the same val snapshots as DELOS.
     """
     inner = getattr(ds, "_ds", None)
     if inner is None or getattr(inner, "_mode", None) != "global":

@@ -9,24 +9,20 @@
 #SBATCH --time=08:00:00
 #SBATCH --partition=gpu
 #
-# DELOS VARIANTS on MOOC state prediction: how the encoder is trained.
+# DELOS variants on MOOC state prediction: how the encoder is trained.
 #
-#   frozen  encoder frozen, predictor only.  The targets are fixed, so latent
-#           collapse is impossible by construction. This is the reference arm.
-#   ema     --train_encoder --ema_target.  I-JEPA: the online encoder builds the
-#           context, an EMA copy builds the targets. The standard way to train
-#           end-to-end in latent space without collapsing.
-#   naive   --train_encoder alone.  Targets come from the SAME encoder being
-#           optimised, so mapping everything to one point is a global optimum.
-#           This arm exists to show whether EMA is load-bearing — without it a
-#           reader cannot tell whether `ema` beat `frozen` because of EMA or
-#           merely because the encoder was unfrozen.
-#   vicreg  --train_encoder + VICReg variance/covariance on the predictor output.
-#           Anti-collapse WITHOUT a target network: does any collapse penalty do
-#           the job, or is the EMA target specifically what matters?
+#   frozen  encoder frozen, predictor only. The targets are fixed, so latent
+#           collapse is impossible. This is the reference arm.
+#   ema     --train_encoder --ema_target. I-JEPA style: the online encoder
+#           builds the context, an EMA copy builds the targets.
+#   naive   --train_encoder alone. Targets come from the encoder being
+#           optimised, so collapse is a global optimum. This control shows
+#           whether the EMA target, not just unfreezing, is what matters.
+#   vicreg  --train_encoder + VICReg variance/covariance on the predictor
+#           output: anti-collapse without a target network.
 #
-# All four start from the SAME pretrained encoder and the SAME tuned predictor
-# hyperparameters (BASE_HP), so the only difference is the encoder-training rule.
+# All four start from the same pretrained encoder and the same predictor
+# hyperparameters (BASE_HP), so only the encoder-training rule differs.
 #
 # Two modes:
 #   MODE=search  one seed, small per-variant grid, probes the VAL split.
@@ -45,11 +41,11 @@ set -uo pipefail
 MODE=${MODE:-search}
 SEEDS_FINAL=${SEEDS_FINAL:-"42 43 44"}
 
-# Predictor hyperparameters shared by every arm — paste the winner from
-# aggregate_mooc_hparam.py so the variants differ ONLY in encoder training.
+# Predictor hyperparameters shared by every arm (paste the winner from
+# aggregate_mooc_hparam.py).
 BASE_HP=${BASE_HP:-"--lr 1e-3 --change_weight 2.0 --num_masked_nodes 30"}
 
-# Variant name -> the flags that DEFINE it. Names are lowercase letters only so
+# Variant name -> the flags that define it. Names are lowercase letters only so
 # aggregate_mooc_hparam.py's <method>_<slug>_s<seed> parser groups them.
 arm_flags() {
     case "$1" in
@@ -57,8 +53,8 @@ arm_flags() {
         ema)    echo "--train_encoder --ema_target" ;;
         naive)  echo "--train_encoder" ;;
         vicreg) echo "--train_encoder --vicreg_cov 1.0" ;;
-        # NOTE: `exit` here would only leave the $( ) subshell, so callers
-        # must check the result — see the guard after sourcing the config.
+        # `exit` here would only leave the $( ) subshell, so the caller checks
+        # for this sentinel instead.
         *) echo "__UNKNOWN__" ;;
     esac
 }
@@ -66,8 +62,7 @@ arm_flags() {
 build_grid() {
     GRID=()
     if [[ "$MODE" == "search" ]]; then
-        # frozen has no encoder-side knob left to tune (BASE_HP already covers
-        # the predictor), so it contributes a single reference cell.
+        # frozen has no encoder-side knob to tune, so it is a single cell.
         GRID+=("frozen|")
         # Unfreezing makes the encoder LR the dominant knob: too high and the
         # targets move faster than the predictor can track.
@@ -119,11 +114,8 @@ source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 STATE_MODE=${STATE_MODE:-state}
 BATCH=${BATCH:-8}
 NW=${SLURM_CPUS_PER_TASK:-8}
-# 30 epochs was a hard cap, not convergence: the pretrain val loss was
-# still falling at epoch 30 (best val landed ON the last epoch), and with
-# PATIENCE=20 early stopping cannot fire inside 30 epochs. pretrain_encoder
-# restores best-val weights, so a high cap is monotone-safe — it can only
-# find an equal or better checkpoint. Let PATIENCE decide when to stop.
+# The epoch cap is deliberately high: pretrain_encoder restores best-val
+# weights, so PATIENCE decides when to stop.
 ENC_EPOCHS=${ENC_EPOCHS:-300}
 JEPA_EPOCHS=${JEPA_EPOCHS:-50}
 
@@ -142,7 +134,7 @@ else
 fi
 
 # Sourcing _dataset_config.sh clobbers any variable it also uses (it sets
-# VARIANT=${DATASET#jodie_}), so re-derive the arm flags AFTER it and verify.
+# VARIANT=${DATASET#jodie_}), so derive the arm flags after it and verify.
 VFLAGS=$(arm_flags "$ARM")
 if [[ "$VFLAGS" == "__UNKNOWN__" ]]; then
     echo "[FATAL] arm '$ARM' is not one of frozen/ema/naive/vicreg — a sourced" >&2
@@ -156,7 +148,7 @@ echo "[cell $IDX] flags='$VFLAGS $HP_ARGS'  base='$BASE_HP'"
 echo "[cell $IDX] out=$OUT"
 
 # --- shared pretrained encoder (same file the method search uses) ------------
-# Every arm starts from THIS encoder; `frozen` keeps it, the others fine-tune a
+# Every arm starts from this encoder; `frozen` keeps it, the others fine-tune a
 # copy. flock because concurrent array cells would otherwise all pretrain it.
 ENC_DIR="outputs/mooc_hp/_shared_encoder_s${SEED}"
 ENC_CKPT="$ENC_DIR/encoder_${DATASET}_${ENC_KIND}_edge_mask.ckpt"
@@ -194,9 +186,8 @@ srun --export=ALL python scripts/dblp/run_block_probe.py --jepa_ckpt "$OUT/best.
     --probe_split "$PROBE_SPLIT" --task binary --state_label_mode "$STATE_MODE" \
     --device cuda --batch_size 4 --num_workers "$NW"
 
-# Collapse check for the unfrozen arms. If the encoder collapsed, every node's
-# latent is (nearly) the same point: the probe cannot separate anything and the
-# forecast column sits at chance no matter how good the training loss looked.
+# Collapse check for the unfrozen arms: a collapsed encoder puts the forecast
+# column at chance no matter how good the training loss looked.
 if [[ "$ARM" != "frozen" ]]; then
     srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
         --link_sources jepa $DATA_ARG $WINDOW_ARG \

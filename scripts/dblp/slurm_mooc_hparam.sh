@@ -9,23 +9,19 @@
 #SBATCH --time=06:00:00
 #SBATCH --partition=gpu
 #
-# Hyperparameter search for the MOOC state-prediction table — DELOS AND
-# every baseline, on ONE flat SLURM array so each method gets a comparable
-# tuning budget. Tuning only the proposed method and leaving baselines at their
-# defaults is the single most common way a comparison table flatters itself.
+# Hyperparameter search for the MOOC state-prediction table: DELOS and every
+# baseline on one flat SLURM array, so each method gets a comparable tuning
+# budget.
 #
-# SELECTION IS ON VAL, NEVER TEST.
-#   Each cell probes with `--probe_split val`, which builds the probe rows from
-#   the VAL windows and writes state_probe_val.json. The test file is never
-#   read or written here. Ranking on state_probe.json would be selecting on the
-#   number you are about to report.
+# Selection is on val, never test: each cell probes with `--probe_split val`
+# and writes state_probe_val.json. The test file is never read or written here.
 #
-# One seed (SEED, default 42) — a search is for picking a configuration, not
-# for measuring it. Re-run the winners across 3 seeds afterwards, on test.
+# One seed (SEED, default 42): the search picks a configuration. Re-run the
+# winners across several seeds afterwards, on test.
 #
-# Cost: 58 cells. DELOS cells reuse ONE pretrained encoder per seed (the
-# predictor knobs do not affect it), so only the predictor is retrained.
-# The contrastive baselines tune encoder knobs, so each cell retrains its own.
+# Cost: 58 cells. DELOS cells reuse one pretrained encoder per seed, so only
+# the predictor is retrained. The baselines tune encoder knobs, so each cell
+# retrains its own.
 #
 # Submit everything, 6 concurrent:
 #     sbatch --array=0-57%6 scripts/dblp/slurm_mooc_hparam.sh
@@ -37,10 +33,8 @@
 
 set -uo pipefail
 
-# =============================================================================
-# GRID — one line per cell: "<method>|<extra args for that method's trainer>"
-# =============================================================================
-# Keep the arrays here in sync with --array=0-N above: N = (number of lines) - 1.
+# Grid: one entry per cell, "<method>|<extra args for that method's trainer>".
+# Keep it in sync with --array=0-N above: N = (number of cells) - 1.
 build_grid() {
     GRID=()
     # --- DELOS predictor knobs (18) -------------------------------------
@@ -124,28 +118,23 @@ source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 STATE_MODE=${STATE_MODE:-state}
 BATCH=${BATCH:-8}
 NW=${SLURM_CPUS_PER_TASK:-8}
-# 30 epochs was a hard cap, not convergence: the pretrain val loss was
-# still falling at epoch 30 (best val landed ON the last epoch), and with
-# PATIENCE=20 early stopping cannot fire inside 30 epochs. pretrain_encoder
-# restores best-val weights, so a high cap is monotone-safe — it can only
-# find an equal or better checkpoint. Let PATIENCE decide when to stop.
+# The epoch cap is deliberately high: pretrain_encoder restores best-val
+# weights, so PATIENCE decides when to stop.
 ENC_EPOCHS=${ENC_EPOCHS:-300}
 JEPA_EPOCHS=${JEPA_EPOCHS:-50}
 BASE_EPOCHS=${BASE_EPOCHS:-100}
 JODIE_EPOCHS=${JODIE_EPOCHS:-30}
-# JODIE is by far the heaviest cell: its t-batch loop is ~78k sequential GPU
-# steps per epoch on full MOOC, ~390x the next method, and the val pass is a
-# second full stream pass on top. Scoring val every 5th epoch keeps the search
-# affordable; the final run can use VAL_EVERY=1.
+# JODIE is by far the heaviest cell: its t-batch loop is sequential over the
+# whole stream and the val pass is a second full pass. Scoring val every 5th
+# epoch keeps the search affordable; the final run can use VAL_EVERY=1.
 VAL_EVERY=${VAL_EVERY:-5}
 
 # A slug of the HP args, so each cell owns its directory.
 SLUG=$(echo "$HP_ARGS" | sed 's/--//g; s/[ .]/_/g; s/__*/_/g; s/^_//; s/_$//')
 OUT="outputs/mooc_hp/${METHOD}_${SLUG}_s${SEED}"
 mkdir -p "$OUT"
-# Record the EXACT flag string. The directory slug mangles dots and dashes, so
-# it cannot be turned back into flags; the aggregator reads this file to print
-# a config you can paste straight into the final run.
+# Record the exact flag string: the slug cannot be turned back into flags, and
+# the aggregator reads this file to print a pasteable config.
 printf '%s\n' "$HP_ARGS" > "$OUT/hp_args.txt"
 echo "[cell $IDX] method=$METHOD  hp='$HP_ARGS'  seed=$SEED"
 echo "[cell $IDX] out=$OUT"
@@ -158,14 +147,10 @@ probe() {   # $1 = flag name (--jepa_ckpt|--encoder_ckpt|--jodie_ckpt), $2 = ckp
 
 case "$METHOD" in
   jepa)
-    # ONE shared encoder per seed across every JEPA cell: predictor knobs do
-    # not touch it, so retraining it 18x would only burn GPU hours.
-    #
-    # The array runs cells CONCURRENTLY and cells 0..17 are all jepa, so a bare
-    # `if [[ ! -f ckpt ]]` lets every concurrent cell pretrain into this one
-    # directory at once — six processes torch.save()-ing the same path, which
-    # wastes GPUs and can leave a torn checkpoint. flock serialises it: the
-    # first holder pretrains, the rest block, then find the file and skip.
+    # One shared encoder per seed across every JEPA cell: predictor knobs do
+    # not touch it. The array runs cells concurrently, so flock serialises the
+    # pretrain: the first holder trains, the rest block, then find the file
+    # and skip. Without it several cells would write the same checkpoint.
     ENC_DIR="outputs/mooc_hp/_shared_encoder_s${SEED}"
     ENC_CKPT="$ENC_DIR/encoder_${DATASET}_${ENC_KIND}_edge_mask.ckpt"
     mkdir -p "$ENC_DIR"

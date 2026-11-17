@@ -142,9 +142,8 @@ class EHRshotHeteroDataset(Dataset):
             raise ValueError(f"No patients in split={split!r}.")
 
         self.patient_ids = keep
-        # Store per-patient visit codes as plain Python lists; we expand to
-        # edge tensors in __getitem__ (cheaper than storing dense T×N masks
-        # for every patient).
+        # Store per-patient visit codes as plain Python lists and expand to
+        # edge tensors in __getitem__ (cheaper than dense T×N masks).
         self._patient_visits: List[List[List[int]]] = []
         self.starts: list = []
         rng = np.random.default_rng(seed)
@@ -196,23 +195,20 @@ class EHRshotHeteroDataset(Dataset):
         T = self.window
         H = self.history_size
 
-        # Build (2, E_full) edge tensor for ALL T visits. v in [0, T), c in [0, N).
-        # We index visits LOCALLY in the window (so the encoder doesn't see
-        # patient-specific absolute time).
+        # Build (2, E_full) edge tensor for all T visits. v in [0, T), c in [0, N).
+        # Visits are indexed locally in the window, so the encoder does not
+        # see patient-specific absolute time.
         src_v_full, dst_c_full = [], []
         for t in range(T):
             for c in codes_per_visit[t_start + t]:
                 src_v_full.append(t); dst_c_full.append(int(c))
         # Visible edges = those whose visit index < H.
         history_mask = np.array([v < H for v in src_v_full], dtype=bool)
-        # Edge tensors.
         full_edge = np.array([src_v_full, dst_c_full], dtype=np.int64)         # (2, E_full)
         hist_edge = full_edge[:, history_mask]                                  # (2, E_hist)
 
-        # HeteroData with VISIBLE (history-only) edges. The future edges are
-        # encoded implicitly via the dense (T, N) target_mask, which PyG
-        # treats as a per-visit-node feature -- it batches cleanly into
-        # (B*T, N) without any custom __cat_dim__ override.
+        # HeteroData with visible (history-only) edges. The future edges are
+        # carried by the dense (T, N) target_mask below.
         data = HeteroData()
         data["visit"].x = torch.from_numpy(self._visit_pos)                     # (T, F_v)
         data["code"].x = torch.from_numpy(self._code_feats)                     # (N, F_c)
@@ -220,16 +216,13 @@ class EHRshotHeteroDataset(Dataset):
         # Reverse edge for bidirectional message passing in HeteroConv.
         data["code", "rev_records", "visit"].edge_index = torch.from_numpy(
             hist_edge[[1, 0]].copy())
-        # Dense (T, N) ground-truth of which codes are at which visit (all T
-        # visits, including the masked future ones). Per-visit-node tensor;
-        # PyG batches it to (B*T, N).
+        # Dense (T, N) ground truth of which codes are at which visit (all T
+        # visits, including the masked future ones). PyG batches it to (B*T, N).
         target_mask = np.zeros((T, self.num_nodes), dtype=bool)
         for t in range(T):
             target_mask[t, codes_per_visit[t_start + t]] = True
         data["visit"].target_mask = torch.from_numpy(target_mask)               # (T, N)
-        # Scalar per-item bookkeeping (concatenated into (B,) tensors). The
-        # window length T is a constant, but storing it makes batched access
-        # ergonomic in the train loop.
+        # Scalar per-item bookkeeping (concatenated into (B,) tensors).
         data.history_size = torch.tensor([H], dtype=torch.long)
         data.window = torch.tensor([T], dtype=torch.long)
         return data

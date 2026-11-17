@@ -51,9 +51,7 @@ from src.train import cli
 from src.train.engine import set_deterministic, setup_output_dir
 
 
-# ---------------------------------------------------------------------------
-# Event preparation (mirrors bin_bipartite's node ids + bin edges EXACTLY)
-# ---------------------------------------------------------------------------
+# -- Event preparation (mirrors bin_bipartite's node ids + bin edges EXACTLY) --
 def load_events(args):
     """Return time-sorted dense-indexed events + bin metadata.
 
@@ -117,9 +115,7 @@ def tbatch_groups(u: np.ndarray, i: np.ndarray, n_users: int, n_items: int):
     return np.split(order, bounds)
 
 
-# ---------------------------------------------------------------------------
-# One pass over an event range (shared by train / frozen replay)
-# ---------------------------------------------------------------------------
+# -- One pass over an event range (shared by train / frozen replay) --
 def run_stream(model, ev, sel, device, args, train=False, opt=None,
                snapshot_bins=None, loss_from_bin=0):
     """Process events ``sel`` (a boolean mask over ev) bin by bin, t-batched.

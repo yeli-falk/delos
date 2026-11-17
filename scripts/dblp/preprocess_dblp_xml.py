@@ -78,8 +78,8 @@ def stream_publications(xml_path: str, include_tags: tuple, min_year: int,
             # attached to the root. DBLP interleaves millions of <www>/<book>/
             # <proceedings> entries we don't yield callbacks for; those pile up
             # on the root and must be dropped here or memory + parse time blow
-            # up. getprevious()/del parent[0] are O(1) in lxml (linked list);
-            # the old parent.index(elem) scan was O(n) -> O(n^2) total.
+            # up. getprevious()/del parent[0] are O(1) in lxml (linked list),
+            # whereas a parent.index(elem) scan would be O(n) per element.
             elem.clear()
             while elem.getprevious() is not None:
                 del elem.getparent()[0]

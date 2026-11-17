@@ -11,24 +11,24 @@
 #
 # Tier-2 (predictor-mechanism) ablation on JODIE-MOOC dropout (state task).
 #
-# Question: is the win the MASKED GRAPH predictor, or just having ANY forecaster
-# on top of the frozen encoder? Four predictor heads, ONE shared frozen encoder
-# per seed (so encoder_last / copy-last is identical across heads and the only
-# thing that varies is the predictor):
+# Question: is the win the masked graph predictor, or just having any
+# forecaster on top of the frozen encoder? Four predictor heads share one
+# frozen encoder per seed, so encoder_last (copy-last) is identical across
+# heads and only the predictor varies:
 #
 #   node_mask        the model      (masked spacetime transformer)
-#   future_forecast  same transformer, masking OFF   (isolates masking)
+#   future_forecast  same transformer, masking off   (isolates masking)
 #   mlp_forecast     graph-free per-node MLP          (isolates the whole design)
 #   gru_forecast     graph-free per-node GRU          (recurrent generic head)
 #
-# All use the locked recipe: tgcn + edge features + residual_head + change_weight 2,
-# frozen encoder (TRAIN_ENC=0). Bars to beat live in every state_probe.json:
-# encoder_last (copy-last / dygjepa_persistence) and degree_history (trend).
+# All use the shared-config encoder with edge features, residual_head and
+# change_weight CHANGE_W (default 2.0) on a frozen encoder. The reference
+# columns (encoder_last, degree_history) are in every state_probe.json.
 #
 # Submit (compute):     sbatch scripts/dblp/slurm_mooc_tier2.sh
 # Merge only (no GPU):  bash   scripts/dblp/slurm_mooc_tier2.sh merge
 #
-# Resumable: every stage skips if its output exists — just resubmit on walltime.
+# Resumable: every stage skips if its output exists.
 
 set -uo pipefail
 mkdir -p logs outputs dataset/jodie
@@ -44,18 +44,14 @@ fi
 
 # --- config (env-overridable) -----------------------------------------------
 SCHEMES=${SCHEMES:-"node_mask future_forecast mlp_forecast gru_forecast"}
-# Dataset subset, binning, edge features, encoder, window geometry, seeds and
-# early-stopping come from the shared config — the SAME values the baseline
-# comparison (slurm_state_probe_jodie_all.sh) and the JODIE baseline
-# (slurm_jodie_baseline.sh) use, so all three tables can be merged.
+# Binning, edge features, encoder, window geometry, seeds and early stopping
+# come from the shared config, the same values slurm_state_probe_jodie_all.sh
+# and slurm_jodie_baseline.sh use, so the three tables can be merged.
 DATASET=mooc
 TASK=state_probe
 BATCH=${BATCH:-8}
-# 30 epochs was a hard cap, not convergence: the pretrain val loss was
-# still falling at epoch 30 (best val landed ON the last epoch), and with
-# PATIENCE=20 early stopping cannot fire inside 30 epochs. pretrain_encoder
-# restores best-val weights, so a high cap is monotone-safe — it can only
-# find an equal or better checkpoint. Let PATIENCE decide when to stop.
+# The epoch cap is deliberately high: pretrain_encoder restores best-val
+# weights, so PATIENCE decides when to stop.
 ENC_EPOCHS=${ENC_EPOCHS:-300}
 JEPA_EPOCHS=${JEPA_EPOCHS:-50}
 JEPA_PROBE_EPOCHS=${JEPA_PROBE_EPOCHS:-3}
@@ -71,9 +67,7 @@ enc_dir() { echo "outputs/${PREFIX}_enc_s$1"; }
 enc_ckpt() { echo "$(enc_dir "$1")/encoder_jodie_mooc_${ENC_KIND}_edge_mask.ckpt"; }
 jepa_dir() { echo "outputs/${PREFIX}_$2_s$1"; }   # $1=seed $2=scheme
 
-# ============================================================================
-# MERGE-ONLY MODE
-# ============================================================================
+# --- merge-only mode ---------------------------------------------------------
 merge() {
     echo; echo "===== MERGE: MOOC Tier-2 (state=$STATE_MODE) ====="
     $PY - "$PREFIX" <<'PYEOF'
@@ -190,9 +184,7 @@ PYEOF
 
 if [[ "${1:-}" == "merge" ]]; then merge; exit 0; fi
 
-# ============================================================================
-# COMPUTE
-# ============================================================================
+# --- compute -----------------------------------------------------------------
 if command -v nvidia-smi >/dev/null 2>&1; then
     nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 fi

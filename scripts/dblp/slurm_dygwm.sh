@@ -56,9 +56,7 @@ WINDOW=${WINDOW:-0}
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  EMA=$EMA  LR=$LR  WINDOW=$WINDOW"
 
-# -----------------------------------------------------------------------------
 # Stage 1: pre-train the DyG-WM encoder
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/dygwm_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -81,9 +79,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping DyG-WM pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the DyG-WM encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/dygwm_${TAG}_probe"
 echo
 echo "================================================================="

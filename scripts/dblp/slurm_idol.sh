@@ -15,19 +15,15 @@
 #   1) train the IDOL encoder with GGD group discrimination over PPR-propagated
 #      features (the ppr_gcn encoder = dense analogue of InstantGNN's dynamic PPR)
 #   2) freeze it and fit the SAME link-prediction probe DELOS uses
-#      (ablations_dblp --mode pretrained_probe)
 #
 # Outputs:
 #   outputs/idol_<TAG>/encoder.ckpt
-#   outputs/idol_<TAG>_probe/test_metrics.json
+#   outputs/idol_<TAG>_probe/analysis.json
 #
 # Run:    DATASET=dblp sbatch scripts/dblp/slurm_idol.sh
 # Knobs:  DATASET=reddit_body  SEED=43  TAG=<name>  ENC_KIND=ppr_gcn
 #         Link-pred datasets: dblp, jodie_reddit, jodie_wikipedia, reddit_body,
 #         reddit_title (or synthetic). Stage 1 + stage 2 share these flags.
-#
-# Note: IDOL's native encoder is ppr_gcn (personalised-PageRank propagation).
-# For an apples-to-apples comparison, run DELOS with the same --encoder_kind.
 
 set -uo pipefail
 mkdir -p logs outputs
@@ -47,21 +43,18 @@ DATASET=${DATASET:-dblp}
 # Seed is part of TAG so a multi-seed sweep does not reuse seed 42's checkpoints.
 TAG=${TAG:-${DATASET}_s${SEED:-42}}
 
-# Link-prediction datasets only: these baselines need a global DTDG snapshot
-# sequence (stage 1) + a link-pred probe (stage 2). Sets DATA_ARG / WINDOW_ARG /
-# ENCODER_ARG / EARLY_STOP_ARG / SEED from the shared config, so both stages —
-# and every other method — construct an identical node set.
+# Link-prediction datasets only. Sets DATA_ARG / WINDOW_ARG / ENCODER_ARG /
+# EARLY_STOP_ARG / SEED from the shared config, so both stages and every other
+# method construct an identical node set.
 #
-# NOTE: the shared config pins ENC_KIND=gcn for every method. IDOL's native
-# encoder is `ppr_gcn` (dynamic PPR propagation); run `ENC_KIND=ppr_gcn
-# sbatch ...` for the faithful-IDOL ablation, but then it is no longer
-# encoder-matched to the other rows of the table.
+# The shared config sets ENC_KIND=gcn for every method. IDOL's native encoder
+# is `ppr_gcn` (dynamic PPR propagation); run `ENC_KIND=ppr_gcn sbatch ...`
+# for the faithful-IDOL ablation, which is then no longer encoder-matched to
+# the other rows of the table.
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG"
 
-# -----------------------------------------------------------------------------
 # Stage 1: train the IDOL encoder (GGD group discrimination on PPR features)
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/idol_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -81,9 +74,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping IDOL pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the IDOL encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/idol_${TAG}_probe"
 echo
 echo "================================================================="

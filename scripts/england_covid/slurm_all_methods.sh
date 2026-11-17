@@ -21,8 +21,8 @@
 #
 # Multi-seed sweep:
 #   for SEED in 42 43 44; do SEED=$SEED sbatch scripts/england_covid/slurm_all_methods.sh; done
-# Recipe / geometry knobs (defaults = the validated recipe):
-#   RESIDUAL=1 CHANGE_W=2.0 PERSIST_RES=1 TRAIN_ENC=1 HS=8 NP=6 SEED=42 sbatch ...
+# Recipe / geometry knobs (env), with their defaults:
+#   RESIDUAL=1 CHANGE_W=2.0 PERSIST_RES=1 TRAIN_ENC=0 HS=8 NP=3 SEED=42 TAG=""
 
 set -uo pipefail
 mkdir -p logs
@@ -46,14 +46,13 @@ NW="${SLURM_CPUS_PER_TASK:-4}"
 TAG="${TAG:-}"
 SUF="${TAG:+_$TAG}_s${SEED}"
 
-# --- DELOS predictor recipe (the validated fix, ported to regression) ---
+# --- DELOS predictor recipe ---
 RESIDUAL="${RESIDUAL:-1}"
 CHANGE_W="${CHANGE_W:-2.0}"
 PERSIST_RES="${PERSIST_RES:-1}"
 # Frozen encoder by default: ec_dygjepa and ec_dygjepa_encoder then share the
-# SAME frozen encoder, so their difference isolates the predictor rollout (the
-# clean claim). TRAIN_ENC=1 is now a real ablation (joint encoder fine-tuning),
-# not a silent no-op as it used to be in the regression path.
+# SAME frozen encoder, so their difference isolates the predictor rollout.
+# TRAIN_ENC=1 is the joint encoder fine-tuning ablation.
 TRAIN_ENC="${TRAIN_ENC:-0}"
 JEPA_EXTRA=""
 [[ "$RESIDUAL" == "1" ]]    && JEPA_EXTRA="$JEPA_EXTRA --residual_head"
@@ -88,17 +87,13 @@ IDOL_DIR="outputs/ec_idol${SUF}"
 mkdir -p "$JEPA_DIR" "$JEPA_ENC_DIR" "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" \
     outputs/england_covid_baselines
 
-# =============================================================================
-# 0. parameter-free baselines (persistence / window_mean / historical_mean)
-# =============================================================================
+# --- 0. parameter-free baselines (persistence / window_mean / historical_mean) ---
 echo; echo "=== parameter-free baselines ==="
 srun --export=ALL python scripts/regression/run_baselines.py \
     --history_size $HS --num_preds $NP \
     --out_dir outputs/england_covid_baselines || echo "[warn] baselines failed"
 
-# =============================================================================
-# 1. DELOS: encoder pretrain (masked_signal) -> JEPA predictor (recipe)
-# =============================================================================
+# --- 1. DELOS: encoder pretrain (masked_signal) -> JEPA predictor (recipe) ---
 if [[ ! -f "$JEPA_ENC_CKPT" ]]; then
     echo; echo "=== DELOS 1/2: encoder pretrain -> $JEPA_ENC_DIR ==="
     srun --export=ALL python src/train/pretrain_encoder.py $DATA_ARG \
@@ -126,9 +121,7 @@ echo; echo "=== DELOS-enc control (encoder-only, no predictor) ==="
 srun --export=ALL python scripts/regression/probe_encoder_regression.py \
     --encoder_ckpt "$JEPA_ENC_CKPT" $PROBE_ARGS || echo "[warn] jepa-enc probe failed"
 
-# =============================================================================
-# 2. contrastive baselines: pretrain encoder -> encoder-only forecast head
-# =============================================================================
+# --- 2. contrastive baselines: pretrain encoder -> encoder-only forecast head ---
 if [[ ! -f "$CLDG_DIR/encoder.ckpt" ]]; then
     echo; echo "=== CLDG pretrain -> $CLDG_DIR ==="
     srun --export=ALL python -m src.baselines.cldg.train_cldg $DATA_ARG $ENC_ARGS \
@@ -137,14 +130,14 @@ if [[ ! -f "$CLDG_DIR/encoder.ckpt" ]]; then
         --node_batch_size 128 --steps_per_epoch 20 --val_steps 10 \
         --epochs 100 --lr 4e-3 \
         --device cuda --seed "$SEED" --out_dir "$CLDG_DIR"
-    # Hard-fail: a warn left the method absent from the table, which reads as
-    # "not applicable" rather than "this run crashed".
+    # Hard-fail: a method absent from the table would read as "not
+    # applicable" rather than "this run crashed".
     [[ -f "$CLDG_DIR/encoder.ckpt" ]] || { echo "[FATAL] CLDG pretrain failed" >&2; exit 13; }
 fi
 if [[ ! -f "$DDGCL_DIR/encoder.ckpt" ]]; then
     echo; echo "=== DDGCL pretrain -> $DDGCL_DIR ==="
     # `--tau` IS the debias class prior (the reference's tau_plus, default
-    # 0.01). Passing `--tau_plus` here aborted the stage with an argparse error.
+    # 0.01); the trainer has no `--tau_plus` flag.
     srun --export=ALL python -m src.baselines.ddgcl.train_ddgcl $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --max_gap 4 --time_dim 32 --tau 0.01 --beta 1.5 \
@@ -171,9 +164,7 @@ for D in "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR"; do
     fi
 done
 
-# =============================================================================
-# 3. summary table (forecast MAE vs persistence, overall + inflection subset)
-# =============================================================================
+# --- 3. summary table (forecast MAE vs persistence, overall + inflection subset) ---
 echo; echo "================================================================="
 echo "  ENGLAND COVID forecast comparison (seed $SEED, HS=$HS NP=$NP)"
 echo "================================================================="

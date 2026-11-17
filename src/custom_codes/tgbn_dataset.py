@@ -1,15 +1,12 @@
 """TGB node property prediction: tgbn-trade (Huang et al., NeurIPS'23 D&B).
 
-The one public dynamic-graph benchmark whose NODE LABEL is genuinely
-time-varying: for nation ``u`` in year ``t`` the label is the vector of
-``u``'s export shares to every other nation in year ``t`` (sums to one).
-Evaluation is NDCG@10 of the predicted shares against the true ones
-(``sklearn.metrics.ndcg_score(y_true, y_pred, k=10)`` in TGB's evaluator;
-:func:`src.train.analyze_jepa.ndcg_at_k` reimplements it without the
-dependency). The label at ``t`` is predicted from everything observed before
-``t`` -- exactly the "target step after the history window" geometry of the
-DTDG pipeline. TGB's own persistence baseline ("this year's shares hold next
-year") is strong, and it maps onto the ``label_persistence`` column.
+The node label is time-varying: for nation ``u`` in year ``t`` it is the
+vector of ``u``'s export shares to every other nation in year ``t`` (sums to
+one). Evaluation is NDCG@10 of the predicted shares against the true ones
+(:func:`src.train.analyze_jepa.ndcg_at_k` reimplements TGB's evaluator). The
+label at ``t`` is predicted from everything observed before ``t``, which is
+the "target step after the history window" geometry of the DTDG pipeline.
+TGB's persistence baseline maps onto the ``label_persistence`` column.
 
 Raw files (fetch with ``scripts/dblp/fetch_tgbn_trade.sh`` ->
 ``dataset/tgb/tgbn-trade/``):
@@ -17,18 +14,14 @@ Raw files (fetch with ``scripts/dblp/fetch_tgbn_trade.sh`` ->
     tgbn-trade_edgelist.csv     year,nation,trading nation,weight   1986..2016
     tgbn-trade_node_labels.csv  year,nation,trading nation,weight   1987..2016
 
-Measured 2026-09-24: 255 nations, 468,245 weighted directed edges over 31
-years (9.3k .. 19.4k per year), label rows for 201..233 nations per year.
-The label file IS the edge file for the same year (identical weights), so
-``label(t)`` is the row-normalised weighted out-adjacency at ``t``. The
-snapshot adjacency the encoders see is the usual symmetric bool graph; the
-weights survive in two places: the label tensor and the optional per-node
-weight features.
+255 nations, 31 years. The label file is the edge file for the same year
+(identical weights), so ``label(t)`` is the row-normalised weighted
+out-adjacency at ``t``. The snapshot adjacency the encoders see is the usual
+symmetric bool graph; the weights survive in the label tensor and the
+optional per-node weight features.
 
-Snapshots are the native years (T = 31; 1986 has edges but no label, so its
-rows are marked invalid). N = 255 fits the dense pipeline without any
-subset. Node ids are nations in SORTED name order (TGB numbers them by first
-appearance; the choice is irrelevant to every metric).
+Snapshots are the native years (1986 has edges but no label, so its rows are
+marked invalid). Node ids are nations in sorted name order.
 
 Exposed for the probe (``run_block_probe.py --task ranking``):
 
@@ -210,44 +203,31 @@ class TGBNTradeDataset(Dataset):
         return self.feat_dim
 
 
-# ===========================================================================
+# ---------------------------------------------------------------------------
 # tgbn-genre / tgbn-reddit / tgbn-token: weekly user -> item interaction labels
-# ===========================================================================
-# TGB's three other node-property datasets (same paper). Each is a BIPARTITE
-# interaction stream user -> class (music genre / subreddit / token) with a
-# weight, and the node label of user ``u`` at label time ``L`` is the vector
-# of ``u``'s interaction weight over the classes during the FOLLOWING WEEK
-# [L, L + 7d) -- "rank with which genres / subreddits / tokens a user will
-# interact the most over the course of the next week" (tgb.complexdatalab.com
-# /docs/nodeprop). Labels are weekly; edges have unix-second timestamps.
+# ---------------------------------------------------------------------------
+# Each is a bipartite interaction stream user -> class (music genre /
+# subreddit / token) with a weight. The label of user ``u`` at label time
+# ``L`` is the vector of ``u``'s interaction weight over the classes during
+# the following week [L, L + 7d). Edges have unix-second timestamps.
 #
-# That geometry is the trade one: bin the stream into 7-day snapshots whose
-# starts are label days, and label(b, u) describes user ``u``'s interactions
-# in snapshot ``b``, predicted from the snapshots before ``b``. The loader
-# measures how far the label is from the snapshot's own weighted class
-# distribution and prints it (``label/snapshot NDCG@10 agreement``).
-# MEASURED 2026-09-29 on tgbn-genre: labels are DAILY (1,569 label days at
-# local midnight, each covering the next 7 days); the loader keeps the label
-# at each bin's first day, which is the best-aligned choice, and the
-# agreement is 0.66 -- no window (1/7/14 d), offset (-7..+7 d) or weighting
-# (edge weights vs counts) reproduces the label from the released edgelist
-# (max 0.664 at exactly the bin). TGB builds the label from information the
-# edgelist does not carry, so 0.66 is the ceiling of this diagnostic on
-# genre, not a binning error; the label file is the ground truth, as in TGB.
+# The stream is binned into 7-day snapshots whose starts are label days, so
+# label(b, u) describes user ``u``'s interactions in snapshot ``b`` and is
+# predicted from the snapshots before ``b``. On tgbn-genre the labels are
+# daily, each covering the next 7 days; the loader keeps the label at each
+# bin's first day. The loader prints how well the label agrees with the
+# snapshot's own weighted class distribution (``label/snapshot NDCG@10
+# agreement``). The agreement is well below 1 on genre because TGB builds the
+# label from information the edgelist does not carry; this is not a binning
+# error, and the label file is the ground truth.
 #
-# TGB's own floors (leaderboard, test NDCG@10): persistence 0.357 / 0.369 /
-# 0.430 and moving average 0.509 / 0.559 / 0.508 on genre / reddit / token;
-# the learned models (TGN, DyRep, DyGFormer) sit at or below persistence on
-# every one. The probe reports both floors (``label_persistence``,
-# ``label_moving_average``); the moving average is the one to beat.
+# The probe reports TGB's two floors (``label_persistence`` and
+# ``label_moving_average``); the moving average is the stronger one.
 #
-# Sizes (TGB): genre 1,505 nodes / 17.9M edges / ~4 years; reddit 11,766
-# nodes / 27.2M edges / 2005-2019 (~730 weeks); token 61,756 nodes / 72.9M
-# edges. The DENSE (T, N, N) snapshot pipeline fits genre outright (~200
-# weekly snapshots of 1.5k nodes); reddit needs a TIME CUT (``max_bins``:
-# keep the last K labelled weeks and only the nodes seen in them, e.g. 104
-# -> ~14 GB of bool adjacency at full N, less after compaction); token does
-# not fit dense at any cut and is wired for completeness only.
+# The dense (T, N, N) snapshot pipeline fits genre (1,505 nodes) outright.
+# Reddit (11,766 nodes, ~730 weeks) needs a time cut (``max_bins``: keep the
+# last K labelled weeks and only the nodes seen in them). Token (61,756
+# nodes) does not fit dense at any cut and is wired for completeness only.
 #
 # Raw CSVs (``bash scripts/dblp/fetch_tgbn.sh <genre|reddit|token>``), all
 # with a header row, columns by POSITION as py-tgb reads them
@@ -325,12 +305,11 @@ def parse_tgbn_interaction(data_dir: Path, name: str, bin_days: int = 7,
 
     Binning: ``delta = bin_days`` days; the origin is one bin before the first
     label time, so bin 0 is the unlabelled lead-in (edges older than that are
-    folded into it). A bin's label is the label row whose time is the
-    EARLIEST label time inside the bin -- for the weekly TGB labels with
-    ``bin_days=7`` that is every label; with a coarser bin it is the label
-    queried at the bin start (which still spans one week, so the alignment
-    diagnostic drops). ``max_bins > 0`` keeps only the last ``max_bins``
-    labelled bins plus the lead-in and drops nodes never seen in them.
+    folded into it). A bin's label is the label row with the earliest label
+    time inside the bin; with a bin coarser than 7 days that label still spans
+    one week, so the alignment diagnostic drops. ``max_bins > 0`` keeps only
+    the last ``max_bins`` labelled bins plus the lead-in and drops nodes never
+    seen in them.
     """
     if name not in TGBN_SPECS or name == "trade":
         raise ValueError(f"parse_tgbn_interaction: name must be genre, reddit or "

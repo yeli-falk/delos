@@ -1,13 +1,9 @@
 """Train the GRACE baseline (STATIC graph SSL), then save a standard encoder
 checkpoint.
 
-GRACE is encoder-only self-supervised learning on ONE static graph (see
-``grace.py``). On a snapshot sequence it runs under the standard
-static-method protocol: every training snapshot is an independent static
-graph, each step draws one uniformly and contrasts two augmented views of
-it. No history is aggregated and no two snapshots are ever compared, so the
-objective carries no temporal signal -- that is the point of the row. The
-encoder is saved as ``encoder.ckpt`` in the same schema as
+GRACE is encoder-only self-supervised learning on ONE static graph; the
+method and its static per-snapshot protocol are described in ``grace.py``.
+The encoder is saved as ``encoder.ckpt`` in the same schema as
 ``pretrain_encoder.py`` so it evaluates through the identical probe, which
 reads the encoder at the LAST history snapshot ("static SSL, last frame"):
 
@@ -26,9 +22,7 @@ reads the encoder at the LAST history snapshot ("static SSL, last frame"):
 Supports the global dynamic-graph datasets (dblp / jodie / reddit /
 england_covid) and fixed-topology signal datasets (metr_la: one shared
 graph, so the edge-dropping view differs per step only through its random
-mask while the feature view carries that step's readings). The encoder
-consumes the pipeline's node features, so its input matches DELOS exactly
--- only the SSL objective differs.
+mask while the feature view carries that step's readings).
 """
 from __future__ import annotations
 

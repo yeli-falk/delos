@@ -1,19 +1,17 @@
 """CTDG event stream -> DTDG snapshot binning.
 
-Consolidates the near-identical binning code that was copy-pasted between
-``jodie_dataset`` (bipartite user x item) and ``reddit_dataset`` (homogeneous
-subreddit x subreddit). Both:
+Shared by ``jodie_dataset`` (bipartite user x item) and ``reddit_dataset``
+(homogeneous subreddit x subreddit). Both:
 
-  1. select a top-K active node subset,
+  1. select the node vocabulary (all nodes, or a top-K active subset),
   2. remap surviving events to dense node ids,
   3. bin event timestamps into ``num_bins`` equal-width snapshots,
   4. OR-reduce events per bin into a symmetric bool adjacency + active mask,
   5. (optionally) mean-pool per-edge features onto (bin, node) positions.
 
 Steps 3-4 are shared (:func:`equal_width_bins`, :func:`scatter_snapshots`);
-the only real difference is the top-K / remap step, captured by the two
-public entry points :func:`bin_bipartite` and :func:`bin_homogeneous`.
-Numerics are identical to the originals.
+the vocabulary / remap step differs between the two public entry points
+:func:`bin_bipartite` and :func:`bin_homogeneous`.
 """
 from __future__ import annotations
 
@@ -77,11 +75,10 @@ def equal_frequency_bins(times_k: np.ndarray, num_bins: int,
     The interior edges are the ``k/num_bins`` quantiles of ``reference``
     (default ``times_k``). Tied timestamps always land in the same bin (an
     event equal to an edge goes to the later bin), so a snapshot never splits
-    one instant in two -- at the cost of unequal bin populations when the
-    stream has heavy ties. For a stream whose events pile up at the end
-    (the CLDG patent citations: 83% of edges in the last tenth of the time
-    axis) equal-width bins leave most snapshots nearly empty; this keeps every
-    snapshot populated.
+    one instant in two, at the cost of unequal bin populations when the
+    stream has heavy ties. Use it for a stream whose events pile up at one
+    end (the CLDG patent citations), where equal-width bins would leave most
+    snapshots nearly empty.
     """
     ref = times_k if reference is None else reference
     edges = np.quantile(ref, np.linspace(0.0, 1.0, num_bins + 1)[1:-1])
@@ -94,8 +91,8 @@ def native_bins(times_k: np.ndarray,
     """One bin per DISTINCT timestamp of ``reference`` (default ``times_k``).
 
     For a stream that is already discrete (the CLDG DBLP yearly co-authorship
-    graph has exactly 27 distinct timestamps) this reproduces the dataset's own
-    snapshots. Returns ``(bin_idx, num_bins)``.
+    graph) this reproduces the dataset's own snapshots. Returns
+    ``(bin_idx, num_bins)``.
     """
     ref = times_k if reference is None else reference
     uniq = np.unique(ref)

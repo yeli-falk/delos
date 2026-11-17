@@ -24,22 +24,17 @@ memory work -- never changes to the objective:
 
   * ``timm.trunc_normal_`` -> ``torch.nn.init.trunc_normal_`` (identical).
   * ``DiscreteGraphLearning`` looked up ``num_nodes``, ``train_length``,
-    ``dim_fc`` and ``dim_fc_mean`` in per-dataset dicts keyed by "METR-LA",
-    "PEMS04", ... and read the node features off a BasicTS pickle path. All four
-    are now derived from the data that is actually passed in, so the module
-    works on any dataset -- which is the whole point of adding it as a baseline
-    here. ``dim_fc`` in particular is just the conv output width, and the
-    reference's own comment links to an issue thread about computing it.
+    ``dim_fc`` and ``dim_fc_mean`` in per-dataset dicts and read the node
+    features off a BasicTS pickle path. All four are derived here from the
+    data that is passed in, so the module works on any dataset (``dim_fc`` is
+    the conv output width).
   * ``rel_rec`` / ``rel_send`` were ``(N*N, N)`` one-hot matrices multiplied
-    into the node features to build every ordered pair. At N=207 that is 71 MB
-    of constants and a 137 MB intermediate per stream. They are exactly
+    into the node features to build every ordered pair. They are exactly
     ``repeat_interleave`` and ``repeat``, which is what is used here.
-  * the global node embedding is recomputed every forward in the reference
-    (it does not depend on the batch, but its weights change every step). That
-    is kept for training; under ``no_grad`` it is cached for the pass, which is
-    exactly equivalent -- frozen weights, BatchNorm in eval mode -- and turns an
-    otherwise dominant cost into one evaluation.
-  * ``GraphWaveNet`` moved to :mod:`src.baselines.graphwavenet`, shared with
+  * the global node embedding is recomputed every forward in the reference.
+    That is kept for training; under ``no_grad`` it is cached for the pass
+    (see :meth:`DiscreteGraphLearning._global_feat`).
+  * ``GraphWaveNet`` lives in :mod:`src.baselines.graphwavenet`, shared with
     STD-MAE (both papers ship near-identical forks of it).
 
 Note the reference has ALREADY disabled the dynamic (TSFormer-derived) half of
@@ -70,9 +65,7 @@ __all__ = ["TSFormer", "DiscreteGraphLearning", "STEP", "step_loss",
            "GraphWaveNet", "masked_mae", "random_walk_supports"]
 
 
-# ---------------------------------------------------------------------------
-# TSFormer
-# ---------------------------------------------------------------------------
+# -- TSFormer --
 class PositionalEncoding(nn.Module):
     """STEP's LEARNED positional table (STD-MAE uses a 2-D sin/cos one).
 
@@ -208,9 +201,7 @@ class TSFormer(nn.Module):
         return hidden                                               # B, N, P, d
 
 
-# ---------------------------------------------------------------------------
-# discrete graph learning
-# ---------------------------------------------------------------------------
+# -- discrete graph learning --
 def batch_cosine_similarity(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     l2_x = torch.norm(x, dim=2, p=2) + 1e-7
     l2_y = torch.norm(y, dim=2, p=2) + 1e-7
@@ -332,9 +323,7 @@ class DiscreteGraphLearning(nn.Module):
         hidden_states = tsformer(long_term_history[..., [0]])
 
         # Every ordered pair (i, j): receivers repeat each node N times,
-        # senders tile the node list N times. This is what the reference's
-        # one-hot rel_rec / rel_send matmuls compute, without materialising
-        # them.
+        # senders tile the node list N times.
         receivers = node_feat.repeat_interleave(num_nodes, dim=1)
         senders = node_feat.repeat(1, num_nodes, 1)
         edge_feat = torch.relu(self.fc_out(torch.cat([senders, receivers], dim=-1)))
@@ -365,9 +354,7 @@ def random_walk_supports(adj: torch.Tensor) -> List[torch.Tensor]:
     return [rw(adj), rw(adj.transpose(-1, -2))]
 
 
-# ---------------------------------------------------------------------------
-# the full model + loss
-# ---------------------------------------------------------------------------
+# -- the full model + loss --
 class STEP(nn.Module):
     """Frozen TSFormer + a learned discrete graph feeding Graph WaveNet."""
 

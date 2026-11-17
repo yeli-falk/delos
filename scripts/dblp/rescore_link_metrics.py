@@ -81,10 +81,8 @@ def main():
         saved_args["probe_epochs"] = args.probe_epochs
     ns = _ns_from_dict(saved_args)
 
-    # Determinism: match training-time seeding so probe init is identical
-    # across reruns of this script (numbers will still differ slightly from
-    # test_metrics.json because the original probe was fit with a different
-    # RNG state at the end of training).
+    # Seed as in training so the probe init is identical across reruns of
+    # this script.
     set_deterministic(getattr(ns, "seed", 42))
 
     train_ds = build_dynamic_dataset(ns, split="train")

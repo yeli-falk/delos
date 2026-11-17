@@ -17,11 +17,9 @@ evaluates through the identical probe:
         --data_path dataset/dblp/edges.csv \
         --encoder_ckpt outputs/ddgcl_dblp/encoder.ckpt
 
-The dynamic regime is realised by sampling, per step, a node's two temporal
-views as two nearby TRAIN snapshots ``t1 < t2`` (gap up to ``--max_gap``); the
-time gap conditions the time-aware projection. Supports the global dynamic-graph
-datasets (dblp / jodie / reddit). The encoder consumes the pipeline's node
-features, so its input matches DELOS exactly — only the SSL objective differs.
+Each step samples two nearby TRAIN snapshots ``t1 < t2`` (gap up to
+``--max_gap``) as a node's two temporal views. Supports the global
+dynamic-graph datasets (dblp / jodie / reddit).
 """
 from __future__ import annotations
 

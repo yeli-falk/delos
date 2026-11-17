@@ -14,7 +14,6 @@
 #       probes for degree / PageRank / k-core / is-hub on encoder vs JEPA), and
 #   (2) the downstream link-prediction ablation across four representation
 #       sources (random / encoder / jepa / supervised), MRR + Hits@k per horizon.
-# Replaces the former slurm_diagnose.sh + slurm_ablations.sh.
 #
 # Dataset-agnostic: defaults to the local DBLP edges if present, else a
 # synthetic smoke graph. Point it at any dataset via env vars / extra flags.

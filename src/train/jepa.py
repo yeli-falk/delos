@@ -1,17 +1,15 @@
 """Shared DELOS training/eval loops.
 
-:func:`train_jepa_epoch` / :func:`evaluate_jepa` handle EVERY data source —
-dynamic-graph (DBLP / JODIE / Reddit / EHRshot / England COVID) and
-fixed-topology (METR-LA) alike. They resolve the graph through
-``probes.graph_inputs``, which reads per-snapshot adjacency when the batch
-carries it and falls back to the dataset's single static graph when it does not.
+:func:`train_jepa_epoch` / :func:`evaluate_jepa` handle every data source,
+dynamic-graph and fixed-topology (METR-LA) alike. They resolve the graph
+through ``probes.graph_inputs``, which reads per-snapshot adjacency when the
+batch carries it and falls back to the dataset's single static graph when it
+does not.
 
 :func:`train_jepa_epoch_fixed` / :func:`evaluate_jepa_fixed` are the older
-METR-LA-only loops. They are kept for the legacy per-dataset trainers, but they
-support NONE of the encoder-training variants (no EMA target, no VICReg, no
-``--train_encoder``, no change-weighting), so METR-LA runs through them could
-only ever produce the frozen-encoder arm. New code should use the unified pair
-above; ``train_delos.py`` does.
+METR-LA-only loops. They support none of the encoder-training variants (no
+EMA target, no VICReg, no ``--train_encoder``, no change-weighting); new code
+should use the unified pair above.
 """
 from __future__ import annotations
 
@@ -33,20 +31,16 @@ class EMAEncoder:
     Provides a stable target for the JEPA predictor that decouples
     target-encoder gradients from the predictor's optimisation. Without this
     asymmetry the trivial fixed point (encoder + predictor both collapse to
-    one direction) minimises the loss, which is exactly what we saw on DBLP
-    (eff_rank 1.02). See I-JEPA / V-JEPA / BYOL for the canonical setup.
+    one direction) minimises the loss. See I-JEPA / V-JEPA / BYOL.
 
     Momentum schedule:  theta_target <- m * theta_target + (1 - m) * theta_online
 
     ``momentum_end`` + ``total_steps`` turn on the I-JEPA / V-JEPA cosine
     anneal of m from ``momentum`` to ``momentum_end`` (canonically 1.0) over
-    ``total_steps`` updates; the target is noisy early, when the online
-    encoder moves fast, and frozen late, when the predictor should converge on
-    a fixed target. ``total_steps`` must be a horizon the run actually
-    reaches: under early stopping the whole-run horizon is rarely reached and
-    the momentum never leaves its start value (train_delos's
-    ``--ema_anneal_epochs``). Leaving both unset keeps the legacy constant
-    momentum.
+    ``total_steps`` updates. ``total_steps`` must be a horizon the run
+    actually reaches: under early stopping the whole-run horizon is rarely
+    reached and the momentum never leaves its start value (train_delos's
+    ``--ema_anneal_epochs``). Leaving both unset keeps a constant momentum.
     """
 
     def __init__(self, online_encoder: torch.nn.Module, momentum: float = 0.996,
@@ -170,8 +164,8 @@ def sample_community_mask(community_labels: np.ndarray,
 
 def encode_window(encoder, x, adj_norm, train_encoder: bool = False):
     """Encode (B, T, N, F) -> (B, T, N, D). If `train_encoder` is True the
-    encoder's parameters receive gradients; otherwise we wrap in no_grad so
-    the autograd graph stops at the encoder (the historical default)."""
+    encoder's parameters receive gradients; otherwise the call is wrapped in
+    no_grad so the autograd graph stops at the encoder."""
     if train_encoder:
         return encoder(x, adj_norm)
     with torch.no_grad():
@@ -220,8 +214,8 @@ def _sample_hidden_edges_for_jepa(adj, active, mask_rate, neg_per_pos):
     B, T, N, _ = adj.shape
     triu = torch.triu(torch.ones(N, N, device=device, dtype=torch.bool), diagonal=1)
     pos_mask = adj & triu.view(1, 1, N, N)
-    # Per-(b,t) Bernoulli on real edges, drawn ONLY over the existing edges: a
-    # dense rand over (B, T, N, N) is two ~3 GB float tensors at full-N MOOC.
+    # Per-(b,t) Bernoulli on real edges, drawn ONLY over the existing edges:
+    # a dense rand over (B, T, N, N) does not fit in memory on large graphs.
     eb, et, ei, ej = pos_mask.nonzero(as_tuple=True)
     keep = torch.rand(eb.numel(), device=device) < mask_rate
     pos_hidden = torch.zeros_like(pos_mask)
@@ -287,8 +281,8 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
                      sigreg_knots: int = 17):
     """One JEPA training epoch over per-batch dynamic adjacency.
 
-    JEPA variants (all default off, so legacy runs are bit-for-bit
-    reproducible -- when off, none of them touches the RNG stream):
+    JEPA variants (all default off; when off, none of them touches the RNG
+    stream):
 
     * ``mask_encoder_input`` -- sample the node mask BEFORE encoding and hide
       those nodes from the online encoder (:func:`mask_encoder_context`).
@@ -326,10 +320,8 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
             break
         x_hist = batch["x_hist"].to(device, non_blocking=True)
         x_fut = batch["x_fut"].to(device, non_blocking=True)
-        # Dynamic datasets carry per-snapshot adjacency; fixed-topology ones
-        # (METR-LA) resolve to the dataset's single graph. See
-        # probes.graph_inputs — routing both through it is what lets METR-LA use
-        # this loop, and hence honour --train_encoder / --ema_target / VICReg.
+        # probes.graph_inputs resolves per-snapshot adjacency for dynamic
+        # datasets and the dataset's single graph for fixed-topology ones.
         adj, adj_norm, active = graph_inputs(
             batch, loader.dataset, device, history_size, x_fut.shape[1])
 
@@ -353,8 +345,7 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
             encoder, x_ctx, adj_norm_ctx, train_encoder=train_encoder,
         )
         # Target: EMA copy if available, otherwise the online encoder under
-        # no_grad. The historical default (target == online) is recoverable by
-        # passing ema_target=None and train_encoder=False.
+        # no_grad.
         x_full = torch.cat([x_hist, x_fut], dim=1)
         if decoder is not None:
             # Observation-space target: the raw features themselves. No encoder
@@ -371,10 +362,8 @@ def train_jepa_epoch(predictor, encoder, loader, optimizer, history_size,
             z_target = encode_window(encoder, x_full, adj_norm,
                                      train_encoder=False).detach()
 
-        # Optional edge-masking term: hide a fraction of edges, ask the
+        # Optional edge-masking term: hide a fraction of edges and ask the
         # predictor's edge head to identify them against random non-edges.
-        # This gives the predictor a direct structural-prediction signal
-        # alongside the latent-MSE JEPA loss.
         hidden_edges = edge_labels = None
         if use_edge_loss:
             hidden_edges, edge_labels = _sample_hidden_edges_for_jepa(

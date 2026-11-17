@@ -12,9 +12,8 @@
 #
 # Hyperparameter search for DELOS (src/train/train_delos.py).
 #
-# A SLURM array job that sweeps a Cartesian grid over the four most impactful
-# DELOS knobs. The array task id is decoded into one grid cell, each cell
-# lands in its own outputs/ directory, and a companion aggregator ranks them.
+# A SLURM array job that sweeps a Cartesian grid over four DELOS knobs. Each
+# array task id is decoded into one grid cell with its own outputs/ directory.
 #
 #   LRS      : optimiser learning rate          (--lr)
 #   MASKS    : number of masked target nodes    (--num_masked_nodes)
@@ -22,19 +21,15 @@
 #   DROPOUTS : predictor dropout                  (--dropout)
 #
 # Grid size = |LRS| * |MASKS| * |DEPTHS| * |DROPOUTS| = 3*3*2*2 = 36.
-# IMPORTANT: if you edit the value arrays below, recompute the product and
-# update `#SBATCH --array=0-<product-1>` above (or override with
-# `sbatch --array=0-N`).
+# If you edit the value arrays below, update `#SBATCH --array=0-<product-1>`
+# above (or override with `sbatch --array=0-N`).
 #
 # Submit all:        sbatch scripts/dblp/slurm_hparam_search.sh
 # Submit one cell:   sbatch --array=7 scripts/dblp/slurm_hparam_search.sh
-# Throttle to 4 at a time (spare the queue):
-#                    sbatch --array=0-35%4 scripts/dblp/slurm_hparam_search.sh
-# Watch:             squeue -u $USER
-# After it finishes, rank the runs:
-#                    python scripts/dblp/aggregate_hparam_search.py outputs/dyg_hparam
+# Throttle to 4:     sbatch --array=0-35%4 scripts/dblp/slurm_hparam_search.sh
+# Rank the runs:     python scripts/dblp/aggregate_hparam_search.py outputs/dyg_hparam
 #
-# Override knobs from the command line, e.g. a 25-epoch run on real edges:
+# Fixed knobs are env-overridable, e.g.:
 #   EPOCHS=25 sbatch scripts/dblp/slurm_hparam_search.sh
 
 set -uo pipefail
@@ -50,9 +45,7 @@ if [[ -d "$HOME/.conda/envs/cjepa" ]]; then
 fi
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 
-# -----------------------------------------------------------------------------
-# Grid definition -- edit these, then update --array=0-N above accordingly.
-# -----------------------------------------------------------------------------
+# --- grid definition ----------------------------------------------------------
 # Same shared --lr grid as scripts/{classification,linkpred,regression}/slurm_hparam_search.sh.
 LRS=(1e-4 1e-3 1e-2)
 MASKS=(20 30 50)
@@ -70,10 +63,8 @@ NODE_DIM=${NODE_DIM:-128}
 BATCH_SIZE=${BATCH_SIZE:-8}
 SWEEP_ROOT=${SWEEP_ROOT:-outputs/dyg_hparam}
 
-# -----------------------------------------------------------------------------
 # Decode the flat array task id into a (lr, mask, depth, dropout) grid cell.
 # Mixed-radix: fastest-varying dimension is DROPOUTS, slowest is LRS.
-# -----------------------------------------------------------------------------
 N_DROP=${#DROPOUTS[@]}
 N_DEPTH=${#DEPTHS[@]}
 N_MASK=${#MASKS[@]}
@@ -104,28 +95,22 @@ echo "[config] lr=$LR  num_masked_nodes=$MASK  depth=$DEPTH  dropout=$DROPOUT"
 echo "[paths] out_dir=$OUT_DIR  seed=$SEED  epochs=$EPOCHS"
 echo "[slurm] repo_root=$REPO_ROOT  node=$(hostname)"
 
-# -----------------------------------------------------------------------------
 # Data source: real edges if present, else the synthetic DBLP generator.
-# -----------------------------------------------------------------------------
 DATA_ARG="--synthetic --synthetic_nodes 500 --synthetic_years 30"
 if [[ -f dataset/dblp/edges.csv ]]; then
     DATA_ARG="--data_path dataset/dblp/edges.csv"
     echo "[data] using dataset/dblp/edges.csv"
 fi
 
-# Reuse a pretrained encoder if one exists (otherwise the encoder is random/
-# trained from scratch by the entry point's defaults).
+# Reuse a pretrained encoder if one exists.
 ENC_ARG=""
 if [[ -f outputs/dblp_encoder/encoder.ckpt ]]; then
     ENC_ARG="--encoder_ckpt outputs/dblp_encoder/encoder.ckpt"
     echo "[encoder] loading outputs/dblp_encoder/encoder.ckpt"
 fi
 
-# -----------------------------------------------------------------------------
-# Train this grid cell. --no_attention_mask reproduces the historical DBLP
-# attention-mask behaviour (see scripts/dblp/slurm_train.sh and the refactor
-# note in memory).
-# -----------------------------------------------------------------------------
+# Train this grid cell. --no_attention_mask matches the other DBLP launchers
+# (see scripts/dblp/slurm_train.sh).
 srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG $ENC_ARG \
     --history_size 3 --num_preds 1 \
     --encoder_kind tgcn --encoder_hidden "$ENCODER_HIDDEN" --node_dim "$NODE_DIM" \

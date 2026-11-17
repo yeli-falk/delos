@@ -1,8 +1,7 @@
 """Factory for the DTDG datasets used in this project.
 
-Centralises the `--data_source` dispatch so each of the four entry-point
-scripts (pretrain, train_cjepa, diagnose, ablations) gets a single call
-site instead of branching on data source.
+Centralises the `--data_source` dispatch so every entry-point script gets a
+single call site instead of branching on data source.
 
 Data sources:
   - "dblp":            DBLPDynamicGraphDataset (real CSV at data_path)
@@ -55,8 +54,7 @@ from src.custom_codes.tgbn_dataset import TGBNInteractionDataset, TGBNTradeDatas
 def add_dataset_cli_flags(p) -> None:
     """Attach the `--data_source` family of flags to an ArgumentParser.
 
-    Keeps the four scripts in sync — adding a new dataset only touches this
-    function and the dispatch below."""
+    Adding a new dataset only touches this function and the dispatch below."""
     p.add_argument("--data_source", default="dblp",
                    choices=["dblp", "jodie_reddit", "jodie_wikipedia",
                             "jodie_mooc", "reddit_body", "reddit_title",
@@ -280,9 +278,9 @@ def add_dataset_cli_flags(p) -> None:
                         "snapshot loses.")
     p.set_defaults(tgbn_weight_features=True)
     # --- synthetic_dyn generator knobs -------------------------------------
-    # The experiment sweeps --synth_node_noise (observation noise, which the
-    # model cannot predict) while holding --synth_ou_sigma LOW (so the latent
-    # CAUSE stays predictable). Raising both at once cancels the effect out.
+    # The noise experiment sweeps --synth_node_noise (observation noise, which
+    # the model cannot predict) while holding --synth_ou_sigma low (so the
+    # latent cause stays predictable). Raising both at once cancels the effect.
     p.add_argument("--synth_nodes", type=int, default=200)
     p.add_argument("--synth_steps", type=int, default=300)
     p.add_argument("--synth_feat_dim", type=int, default=16)
@@ -600,9 +598,8 @@ def _build_dynamic_dataset(args, split: str):
         data_dir = getattr(args, "metr_la_data_dir", "dataset/metr_la")
         synthetic = getattr(args, "metr_la_synthetic", False)
         # MetrLADataset falls back to a 50-node synthetic graph when it finds
-        # neither layout in data_dir. That fallback must be explicit: a missing
-        # download would otherwise produce a complete, plausible-looking results
-        # table computed on fabricated traffic data.
+        # neither layout in data_dir. That fallback must be explicit, so that a
+        # missing download cannot silently produce results on synthetic data.
         if not synthetic:
             d = Path(data_dir).expanduser()
             if not ((d / "train.parquet").exists() or (d / "metr-la.h5").exists()):

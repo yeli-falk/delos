@@ -9,26 +9,19 @@
 #SBATCH --partition=gpu
 #SBATCH --array=0-5
 #
-# LR RANGE PROBE -- run this BEFORE the hyperparameter search.
+# LR range probe: run this before the hyperparameter search on METR-LA.
 #
-# Why: on METR-LA at lr=5e-4 the predictor's TRAIN loss (not just val) starts
-# RISING from epoch 3, with a frozen encoder and therefore static targets. That
-# is optimiser divergence, not overfitting. 5e-4 is the LOWEST value in the
-# search grid {5e-4, 1e-3, 2e-3}, so the whole grid may sit above the stable
-# range -- in which case the search would rank "which LR diverges least" and
-# every downstream number would inherit a bad optimum.
+# With a frozen encoder the targets are static, so a rising train loss is
+# optimiser divergence. This probe finds the highest stable learning rate so
+# that the search grid can be centred below it.
 #
-# This probe finds where that boundary is, so the grid can be re-centred.
-#
-# Design choices that make it a clean LR test:
-#   * --lr_min_ratio 1.0 disables the cosine decay, so the LR is CONSTANT after
-#     warmup. With decay on, a too-high LR can be rescued late by the ramp-down
-#     and the run looks stable for the wrong reason.
-#   * stride 1 and batch 64, matching the real runs exactly. LR stability is
-#     batch-size dependent, so a cheaper small-batch probe would not transfer.
-#   * ~4 epochs: the observed divergence appeared by epoch 3-4, and a constant
-#     LR surfaces it at least as early.
-#   * one shared pretrained encoder, frozen, for every cell.
+# Design choices:
+#   * --lr_min_ratio 1.0 disables the cosine decay, so the LR is constant after
+#     warmup; with decay on, a too-high LR can be rescued late by the ramp-down.
+#   * Stride 1 and batch 64 as in the real runs, because LR stability depends
+#     on the batch size.
+#   * A few epochs are enough for a constant LR to show divergence.
+#   * One shared pretrained encoder, frozen, for every cell.
 #
 # Usage:
 #   DATASET=metr_la sbatch scripts/regression/slurm_lr_probe.sh
@@ -54,7 +47,7 @@ NW="${SLURM_CPUS_PER_TASK:-8}"
 PROBE_EPOCHS="${PROBE_EPOCHS:-0}"     # no probe: this measures the JEPA loss only
 EPOCHS="${EPOCHS:-4}"
 
-# Log-spaced ladder spanning two decades below the current grid's floor.
+# Log-spaced ladder reaching well below the default search grid.
 read -r -a LR_LIST <<< "${LRS:-1e-5 3e-5 1e-4 3e-4 5e-4 1e-3}"
 IDX="${SLURM_ARRAY_TASK_ID:-0}"
 if (( IDX >= ${#LR_LIST[@]} )); then

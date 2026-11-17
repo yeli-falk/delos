@@ -56,16 +56,13 @@ REPLACE_RATE=${REPLACE_RATE:-0.05}
 GAMMA=${GAMMA:-2}
 TARGET=${TARGET:-all}
 
-# Link-prediction datasets only: these baselines need a global DTDG snapshot
-# sequence (stage 1) + a link-pred probe (stage 2). Sets DATA_ARG / WINDOW_ARG /
-# ENCODER_ARG / EARLY_STOP_ARG / SEED from the shared config, so both stages —
-# and every other method — construct an identical node set.
+# Link-prediction datasets only. Sets DATA_ARG / WINDOW_ARG / ENCODER_ARG /
+# EARLY_STOP_ARG / SEED from the shared config, so both stages and every other
+# method construct an identical node set.
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  MASK_RATE=$MASK_RATE  REPLACE_RATE=$REPLACE_RATE  GAMMA=$GAMMA  TARGET=$TARGET"
 
-# -----------------------------------------------------------------------------
 # Stage 1: train the GraphMAE encoder (static masked-feature AE, one snapshot/step)
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/graphmae_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -87,9 +84,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping GraphMAE pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the GraphMAE encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/graphmae_${TAG}_probe"
 echo
 echo "================================================================="

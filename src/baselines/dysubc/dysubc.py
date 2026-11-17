@@ -138,13 +138,10 @@ def sample_temporal_subgraphs(
     padded with the centre id and masked out), and the hop distance to the
     centre (``0`` for the centre itself).
 
-    Hop by hop: every node adjacent to the current frontier and not yet
-    selected is a candidate. If the candidates fit in the remaining room
-    they are all taken; otherwise the ``room`` with the largest importance
-    ``S_j = S_time + alpha * S_structure`` are (Eq. 1-2), where ``S_time`` is
-    the latest-time weight of the edge that reaches ``j`` from the frontier
-    (max over frontier nodes) and ``S_structure`` is ``j``'s degree. Both
-    cases are one ``topk`` over the candidate scores.
+    Hop by hop, every unselected node adjacent to the frontier is a
+    candidate. ``S_time`` is the latest-time weight of the edge that reaches
+    ``j`` from the frontier (max over frontier nodes). Taking all candidates
+    or only the highest-scoring ones is one ``topk`` over the scores.
     """
     device = g.W.device
     M, N = int(centres.shape[0]), g.num_nodes

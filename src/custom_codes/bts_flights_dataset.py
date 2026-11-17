@@ -1,16 +1,12 @@
 """BTS airport delay-propagation dataset: an evolving flight network with a
-RECURRING per-airport delay state.
+recurring per-airport delay state.
 
-Why this dataset (2026-09-29): every standard dynamic-graph node benchmark
-fails one of the criteria the node-state claim needs -- JODIE labels are
-absorbing (a ban never reverts), DBLP / Patent / Brain labels are static, the
-TGB node-property labels are smoothed summaries of the node's own edges. Here
-the graph is the flights actually flown in each bin (it changes with the
-schedule, the season and cancellations), and the label is whether an airport
-is in a DELAYED state in the bin: a state of the node that switches on and off
-many times per season and propagates along the current graph (aircraft
-rotations, downstream congestion). It is derived from the flights' delay
-fields, not from how many edges the node has.
+The graph is the flights flown in each bin (it changes with the schedule, the
+season and cancellations), and the label is whether an airport is in a delayed
+state in the bin: a state of the node that switches on and off many times per
+season and propagates along the current graph (aircraft rotations, downstream
+congestion). It is derived from the flights' delay fields, not from the
+node's degree.
 
 Raw data: the Bureau of Transportation Statistics "Reporting Carrier On-Time
 Performance (1987-present)" monthly files,
@@ -21,10 +17,9 @@ FlightDate, CRSDepTime (local hhmm), Origin, Dest, DepDelayMinutes, DepDel15,
 ArrDelayMinutes, ArrDel15, Cancelled, Diverted.
 
 Binning: ``bin_hours`` (default 24 = one snapshot per calendar day, from
-FlightDate; sub-daily bins use the SCHEDULED LOCAL departure hour, i.e. each
-airport's own clock, which is the right clock for a per-airport state).
-Nodes: every airport code seen (Origin or Dest), sorted; N ~ 350-380 for a
-recent year. Edges: flown (not cancelled) flights origin -> dest in the bin,
+FlightDate; sub-daily bins use the scheduled local departure hour, i.e. each
+airport's own clock). Nodes: every airport code seen (Origin or Dest),
+sorted. Edges: flown (not cancelled) flights origin -> dest in the bin,
 symmetrised to the pipeline's bool snapshot. Active: any flown flight.
 
 Per-(bin, airport) operational counts (``ops``, cached):
@@ -39,13 +34,12 @@ Features: the 8 graph statistics + (unless ``with_ops_features=False``)
     [log1p n_dep, log1p n_arr, share dep del15, mean dep delay / 60,
      share arr del15, mean arr delay / 60, cancellation rate,
      sin / cos day-of-week, sin / cos hour-of-day (sub-daily bins only)].
-    The delay state of the OBSERVED bins is therefore visible to every
-    method, as it should be (the label at t+1 is forecast from the state at
-    t); the target bin is seen by the oracle column only.
+    The delay state of the observed bins is therefore visible to every
+    method (the label at t+1 is forecast from the state at t).
 ``node_signal`` (T, N) float32 keeps the continuous share-delayed for a
 regression variant. The loader prints the label audit on construction:
 positive rate, share of airports whose state reverts, persistence accuracy,
-switch rate -- the criteria a node-state dataset has to pass.
+switch rate.
 """
 from __future__ import annotations
 
@@ -243,13 +237,12 @@ def label_audit(labels: np.ndarray, active: np.ndarray) -> dict:
 
 
 def structure_audit(adj: np.ndarray) -> dict:
-    """How dynamic the STRUCTURE is, from the bool snapshots alone: mean
+    """How dynamic the structure is, from the bool snapshots alone: mean
     Jaccard overlap of consecutive snapshots' edge sets, mean share of a
     snapshot's edges absent from the previous snapshot (edges that "come"),
     mean share of the previous snapshot's edges absent from the current one
     (edges that "go"), and the share of the all-time edge set present in an
-    average snapshot. A recurring schedule gives high Jaccard on daily bins;
-    the same audit on a social interaction graph gives a low one."""
+    average snapshot."""
     T = adj.shape[0]
     iu = np.triu_indices(adj.shape[1], k=1)
     E = adj[:, iu[0], iu[1]]                      # (T, n_pairs) bool

@@ -23,41 +23,23 @@ Baselines are encoder-only, so they have no ``jepa`` column: their
 Two things are reported, because they answer different questions:
 
   AUROC / AUPRC   the headline per-method numbers, comparable to the literature.
-                  ~3% positive rate here, so accuracy is meaningless and AUPRC
-                  is the harder of the two.
-  gap             ``jepa - encoder_last``, PAIRED within a seed. This is the
-                  claim: a forecast that beats copy-last. Pairing matters --
-                  both columns come from ONE encoder within a seed, so the
-                  difference has far less variance than either column alone, and
-                  it can resolve differences the raw columns cannot.
+                  The positive class is rare, so accuracy is meaningless.
+  gap             ``jepa - encoder_last``, paired within a seed: a forecast
+                  that beats copy-last. Both columns come from one encoder
+                  within a seed, so the difference has far less variance than
+                  either column alone.
 
 Higher is better for every metric here (unlike the regression table).
 
 Usage:
     python scripts/classification/aggregate_classification.py \
         --dataset mooc --seeds 42 43 44 --latex
-    python scripts/classification/aggregate_classification.py \
-        --dataset mooc --seeds 42 43 44 --metrics auroc_test auprc_test acc_test
-    # binary F1 (positive class, cut fitted on the train rows; needs a re-probe
-    # of runs whose state_probe.json predates the f1_test key)
-    python scripts/classification/aggregate_classification.py \
-        --dataset mooc --seeds 42 43 44 --metrics auroc_test auprc_test f1_test --latex
-    # synthetic_dyn multiclass state: accuracy overall and on the switch rows
+    # Other tasks pick their metrics explicitly ("<subset>.<metric>" for subsets):
     python scripts/classification/aggregate_classification.py \
         --dataset synthetic_dyn --seeds 42 43 44 \
         --metrics acc_test subset_switch.acc_test subset_stay.acc_test
-    # tgbn_trade: per-step ranking of export shares, NDCG@10 (persistence floor
-    # printed under shared controls)
     python scripts/classification/aggregate_classification.py \
         --dataset tgbn_trade --seeds 42 43 44 --metrics ndcg10_test --latex
-    # cldg_dblp / cldg_patent: STATIC node classes on held-out nodes
-    python scripts/classification/aggregate_classification.py \
-        --dataset cldg_dblp --seeds 42 43 44 --metrics acc_test macro_f1_test --latex
-    # CHASE: chase_dblp_s / chase_gossipcop are binary (AUROC / AUPRC as MOOC);
-    # chase_music is a 5-class dynamic state, read like synthetic_dyn
-    python scripts/classification/aggregate_classification.py \
-        --dataset chase_music --seeds 42 43 44 \
-        --metrics acc_test macro_f1_test subset_switch.acc_test --latex
 """
 from __future__ import annotations
 
@@ -338,12 +320,10 @@ def main():
     print("  Baselines are encoder-only, so copy-last IS their prediction (no gap).")
 
     # --- multi-horizon guard ---------------------------------------------------
-    # With num_preds > 1 the rows above come from ONE probe pooled over all
-    # horizons: copy-last is handed the same latent for every horizon and
-    # cannot tell which one (or, on sub-daily bins, which time of day) it is
-    # answering, while the forecast latent is horizon-specific. The pooled gap
-    # is therefore inflated by construction (bts_flights at 6 h: pooled +0.093,
-    # per-horizon ~0). The per-horizon heads (subset_h<k>, fitted separately
+    # With num_preds > 1 the rows above come from one probe pooled over all
+    # horizons: copy-last is handed the same latent for every horizon, while
+    # the forecast latent is horizon-specific, so the pooled gap is inflated
+    # by construction. The per-horizon heads (subset_h<k>, fitted separately
     # for every column) are the comparison to read.
     ks = sorted({int(k[len("subset_h"):]) for _, _, _, _, _, runs in rows for r in runs
                  for k in (r.get(LAST_COL) or {}) if k.startswith("subset_h")

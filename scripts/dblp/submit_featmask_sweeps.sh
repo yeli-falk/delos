@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Submit both verification sweeps for the Reddit-Body + feature-mask
-# positive result:
+# Submit the Reddit hyperlinks + feature-mask sweeps
+# (slurm_featmask_reddit.sh):
 #
-#   1) Multi-seed at TOPK=1000  — 5 seeds, dispels single-seed-fluke doubts
-#   2) K-sweep at SEED=42       — does the win scale with subset size?
+#   1) Multi-seed at TOPK=1000  (5 seeds)
+#   2) K-sweep at SEED=42       (4 subset sizes)
+#   3) Reddit-Title control     (1 job)
 #
-# Total: 5 + 4 = 9 jobs. ~10 GPU-hours assuming ~1h per job. Each goes
-# to its own outputs/reddit_body_featmask_k${TOPK}_s${SEED}_{...} dir, so
-# nothing overwrites the original cell-3 result.
+# Total: 10 jobs. Each goes to its own
+# outputs/reddit_<variant>_featmask_k${TOPK}_s${SEED}_{...} directories.
 #
 # Run from the repo root on the cluster:
 #     bash scripts/dblp/submit_featmask_sweeps.sh

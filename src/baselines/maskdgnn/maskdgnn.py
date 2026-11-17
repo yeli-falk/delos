@@ -58,9 +58,7 @@ import torch.nn.functional as F
 from src.world_models.delos_encoder import normalize_adjacency
 
 
-# ---------------------------------------------------------------------------
-# Node activeness (eq. 2-5)
-# ---------------------------------------------------------------------------
+# -- Node activeness (eq. 2-5) --
 @torch.no_grad()
 def pagerank(adj: torch.Tensor, active: torch.Tensor, damping: float = 0.85,
              n_iter: int = 50, tol: float = 1e-6) -> torch.Tensor:
@@ -139,9 +137,7 @@ def node_activeness(adj_t: torch.Tensor, adj_prev: Optional[torch.Tensor],
     return alpha * _norm(D) + (1.0 - alpha) * _norm(S)
 
 
-# ---------------------------------------------------------------------------
-# Activeness-aware edge masking (eq. 6-8)
-# ---------------------------------------------------------------------------
+# -- Activeness-aware edge masking (eq. 6-8) --
 @torch.no_grad()
 def activeness_edge_mask(adj_t: torch.Tensor, activeness: torch.Tensor,
                          mask_ratio: float,
@@ -205,9 +201,7 @@ def sample_negative_pairs(adj_target: torch.Tensor, active: torch.Tensor,
     return torch.stack([ri[ok], rj[ok]], dim=-1)
 
 
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
+# -- Model --
 class EdgeMLP(nn.Module):
     """Eq. 15: ``y_uv = MLP(concat(h_u, h_v))``. Broadcasts over leading dims,
     so it doubles as the ``probe(z_i, z_j)`` callable of the shared link

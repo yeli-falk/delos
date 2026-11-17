@@ -129,7 +129,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--jepa_ckpt", required=True,
                    help="Trajectory-JEPA best.ckpt produced by "
-                        "train_trajectory_jepa.py")
+                        "train_delos.py --mask_scheme trajectory_block")
     p.add_argument("--history_size", type=int, default=20)
     p.add_argument("--num_preds", type=int, default=4)
     p.add_argument("--split", choices=["val", "test"], default="test")

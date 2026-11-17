@@ -10,15 +10,9 @@
 #SBATCH --partition=gpu
 #
 # JODIE-Reddit / JODIE-Wikipedia + feature-mask pretext + LIWC features.
-# Parametrised by SEED, VARIANT — drives:
-#   B) multi-seed on Reddit (jepa-vs-encoder gap stability)
-#   C) Wikipedia variant (cross-dataset replication)
-#
-# Usage examples:
-#   # Reddit default (seed swept by caller):
-#   SEED=43 sbatch scripts/dblp/slurm_featmask_jodie.sh
-#   # Wikipedia, seed 42:
-#   VARIANT=wikipedia sbatch scripts/dblp/slurm_featmask_jodie.sh
+# Parametrised by SEED and VARIANT (also BINS, TAG):
+#   Reddit, one seed:     SEED=43 sbatch scripts/dblp/slurm_featmask_jodie.sh
+#   Wikipedia, seed 42:   VARIANT=wikipedia sbatch scripts/dblp/slurm_featmask_jodie.sh
 
 set -uo pipefail
 mkdir -p logs outputs dataset/jodie
@@ -56,9 +50,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
 # Stage 1: feature-mask encoder pretraining
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -81,9 +73,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/4: DELOS train ($TAG) -> $DELOS_DIR"
@@ -102,9 +92,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
-# Stage 3: representation diagnostic (Louvain block probe optional)
-# -----------------------------------------------------------------------------
+# Stage 3: representation diagnostic (with Louvain block probe)
 echo
 echo "================================================================="
 echo "  Stage 3/4: diagnostic ($TAG) -> $DIAG_DIR"
@@ -117,9 +105,7 @@ srun --export=ALL python src/train/diagnose_jepa_dblp.py $DATA_ARG \
     --device cuda --block_probe louvain \
     --out_dir "$DIAG_DIR"
 
-# -----------------------------------------------------------------------------
-# Stage 4: state-label probe (the headline external-label experiment)
-# -----------------------------------------------------------------------------
+# Stage 4: state-label probe
 echo
 echo "================================================================="
 echo "  Stage 4/4: state-label probe ($TAG)"

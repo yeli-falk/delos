@@ -12,10 +12,9 @@
 # JODIE baseline (Kumar et al. 2019) on JODIE-MOOC dropout, 3 seeds, then a
 # mean+-std report of the standard state-probe columns.
 #
-# JODIE has its OWN forecaster (the temporal projection operator), so it fills
-# the jepa column too -- comparable to DELOS head-to-head, not just at the
-# persistence level like the contrastive encoders. All columns come from the
-# SAME dataset + SAME deterministic CPU probe as every other method.
+# JODIE has its own forecaster (the temporal projection operator), so it fills
+# the jepa column too and compares to DELOS head-to-head. All columns come from
+# the same dataset and the same deterministic probe as every other method.
 #
 # Submit (compute):     sbatch scripts/dblp/slurm_jodie_baseline.sh
 # Merge only (no GPU):  bash   scripts/dblp/slurm_jodie_baseline.sh merge
@@ -34,10 +33,9 @@ if [[ -d "$HOME/.conda/envs/cjepa" ]]; then
 fi
 
 # --- config (env-overridable) -----------------------------------------------
-# JODIE is BIPARTITE (user x item), so only the bipartite CTDG datasets apply:
+# JODIE is bipartite (user x item), so only the bipartite CTDG datasets apply:
 #   mooc | reddit | wikipedia   (any other bipartite stream in JODIE CSV format
 #   works too: drop it at dataset/jodie/<name>.csv and set DATASET=<name>).
-# Homogeneous graphs (dblp, reddit_body/title) have no user/item split -> N/A.
 DATASET=${DATASET:-mooc}
 case "$DATASET" in
     mooc)      URL="http://snap.stanford.edu/jodie/mooc.csv"      ;;
@@ -47,8 +45,8 @@ case "$DATASET" in
 esac
 CSV="dataset/jodie/${DATASET}.csv"
 
-# Subset, binning, edge features, window geometry, seeds and early-stopping come
-# from the shared config — identical to the DELOS runs this table is compared
+# Binning, edge features, window geometry, seeds and early stopping come from
+# the shared config, identical to the DELOS runs this table is compared
 # against (slurm_mooc_tier2.sh / slurm_state_probe_jodie_all.sh).
 TASK=state_probe
 EPOCHS=${EPOCHS:-30}
@@ -60,9 +58,8 @@ JODIE_HP=${JODIE_HP:-}
 # more than doubles the epoch; raise this if you hit the walltime.
 VAL_EVERY=${VAL_EVERY:-1}
 # HORIZONS>1 re-probes existing checkpoints at steps 1..HORIZONS (no retraining;
-# all per-bin embeddings are stored). Kept separate from NPRED, which the shared
-# config pins to the trained window geometry — overloading one variable for both
-# meant the "did the user ask for a curve?" test was always true.
+# all per-bin embeddings are stored). It is separate from NPRED, which the
+# shared config always sets to the trained window geometry.
 HORIZONS=${HORIZONS:-}
 STATE_MODE=${STATE_MODE:-state}
 NW=${SLURM_CPUS_PER_TASK:-8}
@@ -74,9 +71,7 @@ source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 
 out_dir() { echo "outputs/${PREFIX}_s$1"; }
 
-# ============================================================================
-# MERGE-ONLY MODE
-# ============================================================================
+# --- merge-only mode ---------------------------------------------------------
 merge() {
     echo; echo "===== JODIE-MOOC baseline (state=$STATE_MODE) ====="
     $PY - "$PREFIX" <<'PYEOF'
@@ -166,9 +161,7 @@ PYEOF
 
 if [[ "${1:-}" == "merge" ]]; then merge; exit 0; fi
 
-# ============================================================================
-# COMPUTE
-# ============================================================================
+# --- compute -----------------------------------------------------------------
 if command -v nvidia-smi >/dev/null 2>&1; then
     nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 fi
@@ -202,8 +195,8 @@ for SEED in $SEEDS; do
         echo "[skip] $OD/jodie.ckpt exists"
     fi
 
-    # With HORIZONS set we ALWAYS re-probe (to pick up the requested horizons);
-    # otherwise skip if the single-horizon probe already ran.
+    # With HORIZONS set, always re-probe; otherwise skip if the single-horizon
+    # probe already ran.
     PROBE_EXTRA=""; [[ -n "$HORIZONS" ]] && PROBE_EXTRA="--num_preds $HORIZONS"
     if [[ -n "$HORIZONS" || ! -f "$OD/state_probe.json" ]]; then
         echo "=== [seed $SEED] state probe ${HORIZONS:+(horizons 1..$HORIZONS)} ==="

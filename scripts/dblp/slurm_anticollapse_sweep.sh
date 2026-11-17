@@ -11,21 +11,19 @@
 #SBATCH --array=0-3
 #
 # 2x2 ablation: {EMA target encoder} x {VICReg var+cov regularization}.
-# Tests whether the rank-1 collapse diagnosed in outputs/diagnostic_dblp/
-# (eff_rank 1.02 for predictor, 1.14 for encoder) is undone by the canonical
-# anti-collapse machinery from I-JEPA / V-JEPA / VICReg.
+# Tests whether latent rank collapse on DBLP is undone by the anti-collapse
+# machinery from I-JEPA / V-JEPA / VICReg.
 #
 # Array indices:
-#   0: baseline           — current behavior (online == target, no VICReg)
-#   1: EMA only           — EMA target encoder, no VICReg
-#   2: VICReg only        — frozen encoder + variance/covariance on predictor
-#   3: full               — EMA + VICReg (canonical setup, expected best)
+#   0: baseline           (frozen encoder, no VICReg)
+#   1: EMA only           (EMA target encoder, no VICReg)
+#   2: VICReg only        (frozen encoder + variance/covariance on predictor)
+#   3: full               (EMA + VICReg)
 #
-# All four reuse the same pretrained encoder ckpt at outputs/dblp_encoder/.
-# Cells 1 and 3 enable --train_encoder so the EMA momentum has a target to
-# move toward; cells 0 and 2 keep the encoder frozen. After training, each
-# cell runs the diagnostic so we can plot eff_rank, CKA, and probe scores
-# in a 2x2 grid.
+# All four reuse the same pretrained encoder ckpt (ENC_DIR, default
+# outputs/dblp_encoder/). Cells 1 and 3 enable --train_encoder so the EMA
+# target has something to track; cells 0 and 2 keep the encoder frozen. Each
+# cell then runs the diagnostic (eff_rank, CKA, probe scores).
 #
 # Submit:    sbatch scripts/dblp/slurm_anticollapse_sweep.sh
 # Single:    sbatch --array=3 scripts/dblp/slurm_anticollapse_sweep.sh
@@ -66,9 +64,7 @@ if [[ -f dataset/dblp/edges.csv ]]; then
     DATA_ARG="--data_path dataset/dblp/edges.csv"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 1: DELOS training under this cell's anti-collapse configuration.
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 1/2: DELOS train ($TAG) -> $DELOS_DIR"
@@ -83,9 +79,7 @@ srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG 
     --device cuda --epochs 50 --lr 5e-4 --probe_epochs 3 \
     --seed "$SEED" --out_dir "$DELOS_DIR"
 
-# -----------------------------------------------------------------------------
 # Stage 2: representation diagnostic on the resulting checkpoint.
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/2: diagnostic ($TAG) -> $DIAG_DIR"

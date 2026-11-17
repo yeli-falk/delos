@@ -35,9 +35,7 @@ if [[ -d "$HOME/.conda/envs/cjepa" ]]; then
     conda activate cjepa
 fi
 
-# -----------------------------------------------------------------------------
 # Sweep configuration -- edit and update --array=0-N at the top if you change.
-# -----------------------------------------------------------------------------
 SEEDS=(42 43 44 45 46)
 MODES=(cjepa probe)
 ENCODER_CKPT=outputs/dblp_encoder/encoder.ckpt
@@ -64,9 +62,7 @@ if [[ -f dataset/dblp/edges.csv ]]; then
     DATA_ARG="--data_path dataset/dblp/edges.csv"
 fi
 
-# -----------------------------------------------------------------------------
 # Dispatch
-# -----------------------------------------------------------------------------
 case $MODE in
     cjepa)
         OUT_DIR="outputs/dblp_cjepa_s${SEED}"

@@ -1,28 +1,23 @@
 """Trajectory-window tokenisation for V-JEPA-style dynamic-graph SSL.
 
-Replaces the per-(timestep, node) tokens used by the current DELOS
-predictor with per-(window, node) tokens, where a window is W contiguous
-timesteps. This yields K = T // W tokens per node along the time axis
-(instead of T) -- each token summarises a node's evolution over W
-timesteps rather than its state at one instant.
+Replaces the per-(timestep, node) tokens used by the DELOS predictor with
+per-(window, node) tokens, where a window is W contiguous timesteps. This
+yields K = T // W tokens per node along the time axis (instead of T): each
+token summarises a node's evolution over W timesteps rather than its state
+at one instant.
 
-Why this matters
-----------------
 Per-(timestep, node) tokens admit a degree shortcut: predicting a single
-timestep's adjacency is solvable by degree-ordering, and our multi-task
-experiments show the JEPA predictor in that setting consistently mirrors
-the encoder rather than enriching it. Per-window tokens force the model
-to encode HOW a node's neighbourhood evolves (rate, direction, pattern
-of new connections) -- not a 1D quantity, and not recoverable from degree
-alone.
+timestep's adjacency is solvable by degree-ordering. Per-window tokens force
+the model to encode HOW a node's neighbourhood evolves (rate, direction,
+pattern of new connections), which is not recoverable from degree alone.
 
 Two pieces here:
   - `TrajectoryWindowPooler`:    (B, T, N, D) -> (B, K, N, D)
   - `sample_trajectory_mask_blocks`:  V-JEPA-style multi-block mask in the
                                        (K, N) grid.
 
-A third piece (the trajectory-aware predictor) will live in
-src/delos_predictor.py as a variant of MaskedNodePredictor, in step 2.
+The trajectory-aware predictor is ``TrajectoryJEPAPredictor`` in
+src/delos_predictor.py.
 """
 from __future__ import annotations
 

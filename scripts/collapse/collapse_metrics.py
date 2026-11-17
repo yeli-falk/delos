@@ -27,8 +27,8 @@ Metrics per view (Z = rows x D, at most --max_rows rows, fixed subsample):
                 centred Z (Garrido et al., ICML'23). 1 = one direction,
                 D = isotropic. Centred, so a large shared mean vector does not
                 count as "the" direction; a point collapse is caught by spread.
-  eff_rank_cov  the same with s^2 (Roy & Vetterli; the number the older
-                diagnostics in src/train/analyze_jepa.py printed)
+  eff_rank_cov  the same with s^2 (Roy & Vetterli; the eff_rank that
+                src/train/analyze_jepa.py reports)
   spectrum      s / s[0], all D values (the log-spectrum figure)
   spread        ||Z - mean||_F / ||Z||_F in [0, 1]: share of the embedding
                 energy that is NOT the common mean. 0 = every row is the same
@@ -93,9 +93,7 @@ RUN_RE = re.compile(r"^(?P<stem>.+)_s(?P<seed>\d+)$")
 SPLIT_SUFFIX = {"test": "", "val": "_val"}
 
 
-# ---------------------------------------------------------------------------
-# metrics
-# ---------------------------------------------------------------------------
+# --- metrics ---
 def _subsample(n: int, max_rows: int, rng) -> np.ndarray:
     return np.arange(n) if n <= max_rows else np.sort(rng.choice(n, max_rows, replace=False))
 
@@ -195,9 +193,7 @@ def run_metrics(lat: dict, rng, max_rows: int, spectrum: bool = True) -> dict:
     return res
 
 
-# ---------------------------------------------------------------------------
-# checkpoint loading (mirrors run_block_probe.run_one / run_one_encoder)
-# ---------------------------------------------------------------------------
+# --- checkpoint loading (mirrors run_block_probe.run_one / run_one_encoder) ---
 def build_data(saved: dict, split: str, batch_size: int, num_workers: int, device: str):
     args = _make_args_namespace(saved)
     args.device, args.batch_size, args.num_workers, args.split = device, batch_size, num_workers, split
@@ -269,9 +265,7 @@ def collect_input(loader) -> dict:
                 horizon=np.zeros(n, dtype=np.int64))
 
 
-# ---------------------------------------------------------------------------
-# per-run drivers
-# ---------------------------------------------------------------------------
+# --- per-run drivers ---
 def _write(path: Path, blob) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:

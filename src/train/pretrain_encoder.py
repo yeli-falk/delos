@@ -16,10 +16,10 @@ the static adjacency is taken from the dataset and normalised once. Dynamic
 graphs normalise the per-batch adjacency.
 
 After training, only the encoder weights + rebuild metadata are saved to
-``<out_dir>/encoder_<data_source>_<encoder_kind>_<pretext>.ckpt`` (the name is
+``<out_dir>/encoder_<data_source>_<encoder_kind>_<pretext>.ckpt``. The name is
 templated on the run config so multiple encoders can coexist in one out_dir;
-schema unchanged, so existing ``--encoder_ckpt`` consumers keep loading — but
-they must be pointed at that templated filename, NOT a plain ``encoder.ckpt``).
+``--encoder_ckpt`` consumers must be pointed at that templated filename, not
+a plain ``encoder.ckpt``.
 
 Run:
     python -m src.train.pretrain_encoder --data_path dataset/dblp/edges.csv \

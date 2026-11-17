@@ -1,24 +1,16 @@
-"""Frozen node encoders for DELOS.
+"""Node encoders for DELOS.
 
-Fixed encoder so its outputs can serve as
-prediction targets without the predictor finding shortcuts in encoder space.
+Every encoder maps ``x: (B, T, N, F_in)`` (plus an optional adjacency) to
+``z: (B, T, N, D)``. Encoders register themselves in ``ENCODER_REGISTRY`` via
+``@register_encoder``; ``build_encoder`` looks the kind up there, so a new
+architecture only needs to subclass :class:`EncoderBase` and be decorated.
 
-  - LinearNodeEncoder: per-node, per-time MLP. Ignores graph structure.
-    Cheap baseline; lets you confirm the predictor is wiring history -> future.
-  - GCNNodeEncoder:    2-hop normalised GCN over the fixed adjacency. Adds
-    spatial mixing and is the closer analogue of "object-centric encoder".
+Registered kinds: ``linear``, ``gcn``, ``gcn_root``, ``tgcn``, ``ppr_gcn``,
+``maskdgnn``, ``maskdgnn_root``, ``dysat``, ``dygwm``, ``dygwm_root``,
+``dyg2vec``.
 
-Both modules expose the same forward signature:
-    encoder(x, adj=None) -> z  with x: (B, T, N, F_in) and z: (B, T, N, D)
-and are constructed with `requires_grad_(False)` so callers can freeze.
-
-A small `LinearProbe` decoder is also provided for the standard "predict
-embeddings, regress speeds via a linear map fit on train" eval protocol.
-
-Encoders register themselves in ``ENCODER_REGISTRY`` via ``@register_encoder``,
-so adding a new architecture (GAT, GraphSAGE, a temporal transformer) is a
-one-file drop-in: subclass :class:`EncoderBase`, decorate it, done — no edit
-to ``build_encoder`` needed.
+The file also holds the ``LinearProbe`` and ``LinkPredictionProbe`` readout
+heads and the link-ranking metrics.
 """
 from __future__ import annotations
 
@@ -28,8 +20,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Pretext heads / samplers used to live here; re-export for backward compat
-# so `from ...delos_encoder import EdgePretrainer` keeps working.
+# Pretext heads / samplers live in pretrainers.py; re-exported here so
+# `from ...delos_encoder import EdgePretrainer` keeps working.
 from src.world_models.pretrainers import (  # noqa: F401
     EdgePretrainer,
     EncoderPretrainer,
@@ -46,12 +38,9 @@ def normalize_adjacency(adj: torch.Tensor, add_self_loops: bool = True) -> torch
     a single static graph (N, N), per-timestep (T, N, N), per-batch (B, N, N),
     or per-(batch,time) (B, T, N, N).
     """
-    # ONE full-size (..., N, N) float tensor, updated in place. The previous
-    # form (``adj + eye`` then ``adj * d_i * d_j``) materialised three extra
-    # N^2 temporaries; at full-N MOOC (N=7144, B=8, T=4) each is 6 GB, which
-    # is what OOMed the JEPA arm on a 32 GB V100. Values are unchanged: the
-    # diagonal add equals ``+ eye`` and the two in-place multiplies apply the
-    # same factors in the same order.
+    # ONE full-size (..., N, N) float tensor, updated in place: adding ``eye``
+    # and multiplying by ``d_i * d_j`` out of place would materialise three
+    # extra N^2 temporaries, which does not fit in GPU memory on large graphs.
     out = adj.float() if adj.dtype != torch.float32 else adj.clone()
     if add_self_loops:
         out.diagonal(dim1=-2, dim2=-1).add_(1.0)
@@ -167,14 +156,12 @@ class GCNRootNodeEncoder(EncoderBase):
     Why: with the shared normalised adjacency (self-loops included) a node's
     own features enter each layer with weight ~1/(deg+1), so two layers of
     plain GCN return a neighbourhood average. Per-node signals that are
-    independent across neighbours -- on the synthetic generator the hidden
-    velocity, i.e. the part of the dynamics only the trajectory reveals --
-    are averaged away: measured on raw linear-readout features, a linear
-    probe recovers R^2 0.99 of the velocity from two snapshots, 0.37 after
-    one mean aggregation, 0.34 after two, at any edge density. Keeping the
-    node's own features on a separate path restores 0.99. The root path
-    carries the per-node signal, the aggregation path the structural context,
-    and the encoder learns the mix instead of the degree fixing it.
+    independent across neighbours (on the synthetic generator the hidden
+    velocity, i.e. the part of the dynamics only the trajectory reveals) are
+    averaged away. Keeping the node's own features on a separate path
+    preserves them: the root path carries the per-node signal, the
+    aggregation path the structural context, and the encoder learns the mix
+    instead of the degree fixing it.
 
     Same interface, same hidden / output sizes as ``gcn``; two extra linear
     maps. Selectable everywhere via ``--encoder_kind gcn_root`` (ENC_KIND).
@@ -782,9 +769,9 @@ def link_ranking_metrics(
     neg_scores: (P, K_neg)   logits for K_neg negatives sharing the source
     """
     # Rank of the positive among (positive + negatives).
-    # NaN guard: torch sorts NaN as the LARGEST value, so a NaN positive (a
-    # diverged encoder, e.g. DyG2Vec at a high lr) would rank FIRST and score
-    # MRR = 1. Treat NaN as -inf and give a NaN positive the worst rank.
+    # NaN guard: torch sorts NaN as the LARGEST value, so a NaN positive (from
+    # a diverged encoder) would rank FIRST and score MRR = 1. Treat NaN as
+    # -inf and give a NaN positive the worst rank.
     all_scores = torch.cat([pos_scores.unsqueeze(-1), neg_scores], dim=-1)
     pos_nan = torch.isnan(pos_scores)
     if pos_nan.any():

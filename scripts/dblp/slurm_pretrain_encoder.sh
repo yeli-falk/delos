@@ -10,7 +10,7 @@
 #SBATCH --partition=gpu
 #
 # GraphMAE-style encoder pretraining, parameterised over --data_source.
-# Produces outputs/<dataset>_encoder/encoder_<...>.ckpt for slurm_train.sh.
+# Produces outputs/encoders/<dataset>_encoder/encoder_<...>.ckpt for slurm_train.sh.
 #
 # Pick the dataset with the DATASET env var (default: dblp), e.g.
 #   sbatch --export=ALL,DATASET=metr_la      scripts/dblp/slurm_pretrain_encoder.sh

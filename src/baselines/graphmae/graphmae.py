@@ -40,8 +40,7 @@ repo's own masked-feature pretext): that one masks only the semantic channels
 (past ``--graph_feat_dim``), uses no mask token, does not re-mask, decodes
 with an MLP and minimises MSE. GraphMAE masks whole node vectors, re-masks,
 decodes with a GNN and uses SCE -- the design choices the paper attributes
-its gains to. Keep both: the pretext is the JEPA encoder's pretraining, this
-is a published baseline.
+its gains to.
 
 The *dynamic-graph protocol* is the same as GRACE's: every training snapshot
 is an independent static graph; a step draws one uniformly and applies

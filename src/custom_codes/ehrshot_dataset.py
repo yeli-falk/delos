@@ -6,20 +6,16 @@ Snapshots = the patient's visits, sorted chronologically.
 
 The adjacency at visit t is the intersection of (a) a static PMI top-K
 co-occurrence skeleton precomputed on the training cohort and (b) the
-outer product of the active-code mask at that visit. So edges only appear
-for clinically meaningful pairs that are *both* present at the current
-visit. Without the PMI skeleton the adjacency would be a full clique over
-active codes, making the graph layer redundant with the active mask -- a
-GCN over a clique just mean-pools. The skeleton is stored in the
-preprocessed pickle under key 'pmi_topk_adj'; legacy pickles without it
-fall back to clique adjacency (with a one-time warning).
+outer product of the active-code mask at that visit. Without the PMI skeleton
+the adjacency would be a full clique over active codes, which makes the graph
+layer redundant with the active mask. The skeleton is stored in the
+preprocessed pickle under key 'pmi_topk_adj'; pickles without it fall back to
+clique adjacency (with a one-time warning).
 
 The dataset slides windows of (history_size + num_preds) consecutive visits
 over each patient's full visit sequence; windows are concatenated across
-patients via the universal :class:`DTDGDataset` per-entity engine.
-
-Returned dict matches the other DTDG datasets so this drops into the unified
-train / pretrain scripts unchanged.
+patients via the universal :class:`DTDGDataset` per-entity engine. The
+returned dict matches the other DTDG datasets.
 
 The preprocessor at scripts/dblp/preprocess_ehrshot.py produces the input
 pickle. See its docstring for vocabulary and filter details.

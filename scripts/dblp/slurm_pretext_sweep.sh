@@ -20,14 +20,14 @@
 # feature_mask cells supervise the encoder to reconstruct them.
 #
 # Cells:
-#   0: jodie_reddit  + edge_mask     (current baseline)
-#   1: jodie_reddit  + feature_mask  (does the new pretext help?)
-#   2: reddit_body   + edge_mask     (current baseline)
-#   3: reddit_body   + feature_mask  (does the new pretext help?)
+#   0: jodie_reddit  + edge_mask
+#   1: jodie_reddit  + feature_mask
+#   2: reddit_body   + edge_mask
+#   3: reddit_body   + feature_mask
 #
 # Submit (all 4):
 #     sbatch scripts/dblp/slurm_pretext_sweep.sh
-# Submit (just the new feature_mask cells):
+# Submit (just the feature_mask cells):
 #     sbatch --array=1,3 scripts/dblp/slurm_pretext_sweep.sh
 
 set -uo pipefail
@@ -68,16 +68,13 @@ if [[ ! -f "$CSV" ]]; then
     exit 10
 fi
 
-# Data flags: every cell loads with edge features (the dataset is the same
-# regardless of pretext; only the training objective differs).
+# Every cell loads with edge features: only the training objective differs.
 case "$DATASET" in
     jodie_reddit) DATA_ARG="--data_source jodie_reddit --jodie_data_path $CSV $ARGS --with_edge_features" ;;
     reddit_body)  DATA_ARG="--data_source reddit_body  --reddit_data_path $CSV $ARGS --with_edge_features" ;;
 esac
 
-# -----------------------------------------------------------------------------
 # Stage 1: encoder pretraining (pretext-dependent)
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -100,9 +97,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt already exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training (same in both cells; only the encoder differs)
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -121,9 +116,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: representation diagnostic — eff_rank is the headline measurement
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

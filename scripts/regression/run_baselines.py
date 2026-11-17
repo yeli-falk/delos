@@ -7,11 +7,6 @@ output JSON has an identical schema — MAE / RMSE / MAPE, the persistence
 reference, and the inflection subset — and drops straight into the comparison
 table next to DELOS, CLDG, DDGCL and IDOL.
 
-Reusing those helpers rather than re-deriving the sums is deliberate. The
-earlier England-COVID-only version computed its own MAE and had no inflection
-columns, so its rows could not be placed beside the learned ones without a
-reader assuming the two shared a protocol they did not.
-
 Baselines:
   - persistence      : every future step = the last observed step. The canonical
                        no-change forecaster, and the reference every learned

@@ -18,7 +18,7 @@ fraction grows.
 
 Usage:
     python scripts/analysis/missing_history_mooc.py \
-        --jepa_ckpt outputs/jodie_mooc_tgcn_ef_res_cw2_u3000i97_s42_cjepa/best.ckpt \
+        --jepa_ckpt outputs/<TAG>_cjepa/best.ckpt \
         --state_label_mode state --fracs 0 0.25 0.5 0.75
 """
 from __future__ import annotations

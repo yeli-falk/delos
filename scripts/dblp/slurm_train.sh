@@ -73,10 +73,10 @@ case "$DATASET" in
         ;;
 esac
 
-# Auto-detect a pretrained encoder in the new location. slurm_pretrain_encoder.sh
-# writes outputs/encoders/<dataset>_encoder/encoder_<src>_<kind>_<pretext>.ckpt.
+# Auto-detect a pretrained encoder. slurm_pretrain_encoder.sh writes
+# outputs/encoders/<dataset>_encoder/encoder_<src>_<kind>_<pretext>.ckpt.
 # The trainer reads the encoder kind/dims back from the ckpt, so match any kind
-# (newest wins). 
+# (newest wins).
 ENC_DIR="outputs/encoders/${DATASET}_encoder"
 ENC_ARG=""
 ENC_CKPT=$(ls -t "$ENC_DIR"/encoder_*.ckpt 2>/dev/null | head -1)

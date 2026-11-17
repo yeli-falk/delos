@@ -329,12 +329,12 @@ def train_epoch(encoder, predictor, head, loader, opt, sched, Y_t, user_mask_t,
             continue
         opt.zero_grad(set_to_none=True)
         loss.backward()
-        # Clip each part (head / predictor / encoder) on its OWN norm. One
-        # global norm let the encoder's JEPA gradient set the clip factor for
-        # everything, which (a) scaled the head's BCE gradient to ~0 and (b)
-        # made the aux weight irrelevant: after clipping, w * g_jepa has unit
-        # norm whatever w is. Pre-clip norms are logged per group so the
-        # weight sweep can be read off the balance between the terms.
+        # Clip each part (head / predictor / encoder) on its OWN norm. A
+        # single global norm lets the encoder's JEPA gradient set the clip
+        # factor for everything, which scales the head's BCE gradient to
+        # about zero and makes the aux weight irrelevant (after clipping,
+        # w * g_jepa has unit norm whatever w is). Pre-clip norms are logged
+        # per group so the balance between the terms can be read off.
         max_norm = args.clip_norm if args.clip_norm > 0 else float("inf")
         for grp in opt.param_groups:
             gn = torch.nn.utils.clip_grad_norm_(grp["params"], max_norm)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Submit the JODIE follow-up sweeps for the state-label result (full datasets):
+# Submit the JODIE feature-mask sweeps (slurm_featmask_jodie.sh, full datasets):
 #   B) Multi-seed JODIE-Reddit feature_mask (jepa-vs-encoder gap stability)
 #   C) JODIE-Wikipedia feature_mask (cross-dataset replication)
 #

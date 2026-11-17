@@ -94,9 +94,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
 # Stage 1: encoder pretraining via edge masking
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -119,9 +117,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt already exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -141,9 +137,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: representation diagnostic
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

@@ -108,7 +108,7 @@ def test_real_tgbn_trade():
     ds = TGBNTradeDataset(split="test")
     assert ds.num_nodes == 255 and ds.node_label_dist.shape[0] == 31
     assert not ds.label_valid[0].any() and ds.label_valid[1:].sum(1).min() >= 200
-    # persistence floor is high on this benchmark (TGB reports ~0.85)
+    # persistence floor is high on this benchmark
     L, V = ds.node_label_dist, ds.label_valid
     rows = V[30] & V[29]
     assert ndcg_at_k(L[30][rows], L[29][rows], 10).mean() > 0.7

@@ -1,6 +1,6 @@
-"""Task-adjustable linear probes for DELOS (Block 4).
+"""Task-adjustable linear probes for DELOS.
 
-One interface, three downstream tasks. ``build_probe(task, in_dim, ...)``
+One interface, four readout heads. ``build_probe(task, in_dim, ...)``
 returns the right readout head; ``fit_probe`` / ``evaluate_probe`` dispatch to
 the task-specific train/eval loop:
 
@@ -12,11 +12,6 @@ the task-specific train/eval loop:
   - ``node_class``  per-node multiclass (latent -> logits); cross-entropy;
                     reports accuracy. (structural / community probes.)
   - ``bilinear``    z_i^T W z_j edge readout (for heterogeneous visit-code).
-
-The pairwise/regression fit+eval bodies are the proven implementations that
-used to live in ``train_cjepa_dblp`` / ``train_cjepa_metr_la``; they are moved
-here unchanged so the unified trainer and the (legacy) per-dataset trainers
-share one source of truth.
 """
 from __future__ import annotations
 
@@ -175,15 +170,15 @@ def build_probe(task: str, in_dim: int, out_dim: int = 1, hidden_dim: int = 64):
 
 
 # ---------------------------------------------------------------------------
-# Link prediction (DBLP / JODIE / Reddit) — moved verbatim from train_cjepa_dblp
+# Link prediction (DBLP / JODIE / Reddit)
 # ---------------------------------------------------------------------------
 def score_negatives_chunked(probe, z: torch.Tensor, src: torch.Tensor,
                             neg_dst: torch.Tensor, max_elems: int = 1 << 26
                             ) -> torch.Tensor:
     """``probe(z[src][:, None], z[neg_dst])`` -> (P, k), scored in chunks of
     positives. The probe concatenates [z_i, z_j, z_i*z_j], i.e. P*k*3D floats
-    at once: on a GossipCop snapshot (~150k edges, k=99, D=128) that single
-    tensor is 22 GB and OOMs a 32 GB card. ``max_elems`` bounds it (256 MB)."""
+    at once, which runs out of GPU memory on large snapshots. ``max_elems``
+    bounds that tensor (256 MB)."""
     P, k = neg_dst.shape
     D = z.shape[-1]
     step = max(1, max_elems // max(k * 3 * D, 1))
@@ -343,7 +338,7 @@ def evaluate_link_prediction(predictor, encoder, probe, loader, history_size,
 
 
 # ---------------------------------------------------------------------------
-# Regression (METR-LA) — moved verbatim from train_cjepa_metr_la
+# Regression (METR-LA)
 # ---------------------------------------------------------------------------
 def fit_regression_probe(predictor, encoder, train_loader, adj_dense, adj_norm,
                          history_size, num_preds, device, epochs=3, lr=1e-3,
@@ -457,15 +452,9 @@ def graph_inputs(batch, dataset, device, history_size, num_preds):
       carries its own ``adj`` (B, T_total, N, N) and ``active`` (B, T_total, N).
     * **fixed topology** (METR-LA) -- the graph never changes, so the dataset
       holds a single ``adj`` (N, N) and the item carries no ``adj`` at all.
-      Materialising the (T_total, N, N) copy per window would dominate collate
-      time and GPU memory (~4 MB/window at N=207, T=24) for no information.
 
-    Resolving that difference HERE, once, is what puts both datasets through
-    the identical probe, metric and persistence/inflection accounting. The
-    alternative -- a second regression probe for fixed graphs -- is what the
-    repo had, and it silently reported a different metric schema (no
-    ``MAE_persist``, no inflection subset), so METR-LA numbers could not be
-    placed in the same table as England COVID ones.
+    Resolving that difference here, once, puts both families through the
+    identical probe, metric and persistence/inflection accounting.
 
     The fixed branch expands with ``Tensor.expand`` (a stride-0 view, no copy)
     and caches the normalised adjacency on the dataset, so the per-batch cost
@@ -516,12 +505,10 @@ def _with_base(feats, base, mean, std, enabled):
     Why this exists: with a NOISY base, ``persist_residual`` alone pins the
     forecast to base + f(latent), which re-injects the base's own noise and
     makes it irreducible — the probe cannot subtract what it cannot see, so it
-    converges to outputting ~0 and lands EXACTLY on the persistence MAE no
-    matter how long it trains. Feeding it the base lets it learn the shrinkage
+    converges to outputting about 0 and lands on the persistence MAE no matter
+    how long it trains. Feeding it the base lets it learn the shrinkage
     between the noisy last observation and its latent-derived estimate (the
-    Kalman gain), which is the whole point of a filtering task. Measured at
-    node_noise=0.5 with a matched noisy base, best linear estimator vs
-    persistence: anchored -0.1%, base-blind 7.3%, base-visible 30.9%.
+    Kalman gain), which is the whole point of a filtering task.
     """
     if not enabled:
         return feats
@@ -543,15 +530,15 @@ def fit_regression_probe_dynamic(predictor, encoder, train_loader, history_size,
     observed value (signal[history_size-1]) rather than the absolute signal —
     so persistence is the zero-output floor and the probe only has to model
     the change. The regression analog of the latent residual head; without it
-    a learned latent→signal probe can (and historically did) land far below
-    persistence on this smooth, high-autocorrelation signal.
+    a learned latent→signal probe can land far below persistence on this
+    smooth, high-autocorrelation signal.
 
     The residual base comes from ``signal_obs`` when the dataset provides it
     (the NOISY observation of the history) and the target always comes from
     ``signal`` (the clean value). When the two differ, beating persistence
     requires denoising the base as well as forecasting — which is the point of
     an observation-noise sweep. Datasets without ``signal_obs`` fall back to
-    ``signal`` and behave exactly as before.
+    ``signal``.
     """
     probe = LinearProbe(in_dim=predictor.node_dim + int(probe_sees_base),
                         hidden_dim=hidden_dim).to(device)
@@ -613,10 +600,11 @@ def _accum_reg(s, est, true, last_obs, prev_obs, can_inflect, valid=None):
     true signal reverses its recent trend, so persistence is provably wrong.
 
     ``valid`` (B, N) selects which entries are scored. Callers on a
-    SIGNED target MUST pass one (normally the ``active`` mask): the legacy
-    default ``true > 0`` was written for England-COVID case counts, and on a
-    zero-mean target it silently drops ~60% of the test set and conditions the
-    metric on the outcome variable — which can flip the sign of the verdict.
+    SIGNED target MUST pass one (normally the ``active`` mask): the default
+    ``true > 0`` was written for England-COVID case counts, and on a
+    zero-mean target it silently drops a large part of the test set and
+    conditions the metric on the outcome variable — which can flip the sign
+    of the verdict.
     """
     valid = (true > 0).float() if valid is None else valid.float()
     diff = est - true
@@ -770,9 +758,7 @@ def fit_regression_probe_encoder_only(encoder, train_loader, history_size,
     separately would drift on normalisation, the persistence base or the valid
     mask, and then its gap to the SSL arms would not be attributable to
     pretraining. ``val_loader`` enables best-val-loss weight restoration and
-    early stopping, matching what every other trainer in the repo does -- an
-    end-to-end arm that kept its last epoch while the JEPA arms restored their
-    best-val weights would be handicapped for a reason unrelated to method.
+    early stopping, matching every other trainer in the repo.
     """
     encoder.train(train_encoder)
     for p_ in encoder.parameters():

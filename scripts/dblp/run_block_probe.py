@@ -1,17 +1,10 @@
-"""Run Louvain-community node classification on existing trained checkpoints.
+"""Frozen linear probes for node classification on trained checkpoints.
 
-This is the cheap pivot: instead of re-running the full structural diagnostic
-(eff_rank, CKA, degree/PageRank/k-core probes), we only fit a multi-class
-linear probe for community membership on the encoder and JEPA latents from
-already-trained checkpoints. Output goes to `<ckpt_dir>/block_probe.json`.
-
-The question this answers: "does the rank>1 representation produced by
-feature-mask pretraining (post-normalisation) actually help when the
-downstream task is multi-class node classification, not link prediction?"
-
-If encoder + multi-class probe and JEPA + multi-class probe both score low,
-the rank story doesn't translate. If JEPA scores higher, the linear-probe
-link-prediction eval was the bottleneck all along.
+Collects the encoder and predictor latents of a checkpoint and fits a linear
+probe per latent column. The task (--task) is Louvain-community multiclass,
+binary or multiclass node state, static node classes, or label ranking. The
+result goes to `<ckpt_dir>/block_probe.json` (communities) or
+`<ckpt_dir>/state_probe.json` (the state, static and ranking tasks).
 
 Usage:
     # one checkpoint
@@ -94,13 +87,8 @@ def _make_args_namespace(saved_args: dict) -> types.SimpleNamespace:
 @torch.no_grad()
 def collect_test_latents(encoder, predictor, loader, history_size, device):
     """Extract per-(node, window, future-step) latents for encoder + JEPA.
-    Slim version of analyze_jepa.collect_representations — drops the
-    expensive PageRank / k-core computation since we only need the latents.
-
-    Also collects per-row degree at the target timestep so callers can fit
-    a degree-only baseline probe alongside the learned-representation
-    probes (essential on the binary state-label task, where banned users
-    correlate with activity and we want to subtract out that confound).
+    A slim version of analyze_jepa.collect_representations without the
+    PageRank / k-core computation.
 
     Three latent columns per row:
       Z_enc  — encoder at the TARGET timestep with the full window visible:
@@ -110,11 +98,12 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
                to beat.
       Z_pred — the predictor's forecast latent at the target step.
 
-    Besides the single target-step degree, also collects deg_hist — the
-    node's degree at every history bin (rows, T_hist). A probe on deg_hist
-    is the activity-trend baseline: it sees the same raw temporal signal
-    the predictor does, minus any learned structure. The forecast has to
-    beat THIS, not just the static degree, to show learned dynamics.
+    Two degree controls per row:
+      degree   — degree at the target timestep, for the degree-only probe
+                 (labels such as bans correlate with activity).
+      deg_hist — degree at every history bin (rows, T_hist), for the
+                 activity-trend probe: the raw temporal signal without any
+                 learned structure.
     """
     enc_rows, last_rows, pred_rows, win_rows, node_rows = [], [], [], [], []
     prev_rows = []                        # latent at the second-to-last history step
@@ -147,9 +136,7 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
                 if act.sum() < 2:
                     continue
                 idx = act.nonzero(as_tuple=True)[0]
-                # Per-row degree at the target timestep, for the baseline probe.
                 deg_b = adj[b, t_global].float().sum(dim=-1)[idx].cpu()
-                # Degree at every HISTORY bin (activity-trend baseline).
                 dhist_b = adj[b, :history_size].float().sum(dim=-1)[:, idx].T.cpu()
                 enc_rows.append(z_enc_full[b, t_global, idx].cpu())
                 last_rows.append(z_hist[b, -1, idx].cpu())
@@ -182,13 +169,10 @@ def collect_test_latents(encoder, predictor, loader, history_size, device):
 @torch.no_grad()
 def collect_encoder_latents(encoder, loader, history_size, device):
     """Encoder-only variant of collect_test_latents for BARE encoder
-    checkpoints (baselines CLDG / DDGCL / IDOL, or any save_encoder_ckpt
-    output) that have no JEPA predictor. Extracts exactly the `encoder`
-    latents at the target (future) timesteps that DELOS's `encoder`
-    column uses, so the state probe compares the same representation across
-    every method. Also returns per-row degree for the degree-only baseline
-    and the copy-last column Z_last (last-history-step latent, the fair
-    no-future baseline).
+    checkpoints (the baselines, or any save_encoder_ckpt output) that have
+    no JEPA predictor. The rows, Z_enc, Z_last and the degree controls are
+    the same as there, so the probe compares the same representation across
+    every method.
     """
     enc_rows, last_rows, win_rows, node_rows = [], [], [], []
     prev_rows = []                        # latent at the second-to-last history step
@@ -330,8 +314,7 @@ def _binary_state_result(Z_enc, Z_last, degree, per_row_block, train, test,
     """Fit the binary state-label (ban prediction) probe on each latent
     column and the degree-only baseline. Shared by the full-ckpt (run_one)
     and bare-encoder (run_one_encoder) paths so both report identical fields.
-    Filters the -1 rows (users outside the top-K subset, which carry no valid
-    label) and reports AUROC + AUPRC.
+    Filters the rows labelled -1 (no valid label) and reports AUROC + AUPRC.
 
     Columns:
       encoder_oracle — encoder at the target step, full window visible
@@ -361,14 +344,12 @@ def _binary_state_result(Z_enc, Z_last, degree, per_row_block, train, test,
     if per_row_prev is not None:
         subsets["onset"] = (per_row_prev == 0) & valid_rows
     # Per-horizon results (multi-horizon runs only) are FITTED per horizon by
-    # _fit_per_horizon below, not scored from this pooled probe -- see there.
-    # Fit every probe on CPU: GPU AdamW kernels are nondeterministic, so on
-    # cuda the SAME frozen-encoder latents gave a different encoder_last per
-    # run (~0.005 AUROC jitter — the size of the effect we measure). On CPU the
-    # fit is byte-reproducible, so the four heads' shared encoder yields an
-    # identical encoder_last. The probes are tiny; the CPU cost is negligible.
-    # (`device` — the latent-collection device — is intentionally not the fit
-    # device.)
+    # _fit_per_horizon below, not scored from this pooled probe.
+    # Every probe is fit on CPU: GPU AdamW kernels are nondeterministic, and
+    # the run-to-run jitter on cuda is the size of the effect we measure. On
+    # CPU the fit is byte-reproducible, so runs that share a frozen encoder
+    # report an identical encoder_last. `device` (the latent-collection
+    # device) is intentionally not the fit device.
     kw = dict(device=torch.device("cpu"), test_subsets=subsets or None)
     enc_probe = train_node_probe(Z_enc, y, train_v, test_v, "binary", **kw)
     last_probe = train_node_probe(Z_last, y, train_v, test_v, "binary", **kw)
@@ -483,7 +464,7 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
                          CHANGE of the latent. Position alone predicts some of
                          it (mean reversion); the momentum part needs velocity,
                          which only a forecast can carry. Dense over all rows,
-                         so no 5%-of-rows statistics problem.
+                         unlike the small switch subset.
 
     Rows with no previous label (bin 0) are kept for the overall numbers but
     excluded from the subsets.
@@ -524,13 +505,11 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
     if Z_pred is not None:
         columns["jepa"] = (train_node_probe(Z_pred, y, train_v, test_v, "multiclass", **kw), Z_pred)
         if Z_prev is not None:
-            # jepa_plus_diff (2026-10-05): the rollout latent READ TOGETHER with the
-            # same encoder's [z_last, z_last - z_prev]. The Δlatent control beats the
-            # rollout at long horizons on the synthetic task even when the rollout
-            # embeds the same linear forecast (ridge-initialised skip), i.e. an
-            # MSE-optimal latent forecast loses label information that a head on the
-            # raw history keeps. This column asks whether the rollout adds anything
-            # BEYOND that linear information: jepa_plus_diff > encoder_diff = yes.
+            # jepa_plus_diff: the rollout latent READ TOGETHER with the same
+            # encoder's [z_last, z_last - z_prev]. An MSE-optimal latent forecast
+            # can lose label information that a head on the raw history keeps, so
+            # this column asks whether the rollout adds anything BEYOND that
+            # linear information: jepa_plus_diff > encoder_diff means yes.
             Z_pd = np.concatenate([Z_pred, _velocity_feature(Z_last, Z_prev)], axis=1)
             columns["jepa_plus_diff"] = (
                 train_node_probe(Z_pd, y, train_v, test_v, "multiclass", **kw), Z_pd)
@@ -553,10 +532,9 @@ def _multiclass_state_result(Z_enc, Z_last, per_row, per_row_prev, train, test,
             probe["latent_r2_test"] = _ridge_r2(Z, z_tgt, train_v, test_v)
             probe["delta_r2_test"] = _ridge_r2(Z, z_delta, train_v, test_v)
         if z_vel is not None:
-            # vel_r2_test: R^2 to the HIDDEN velocity at the last observed
-            # step -- horizon-independent, the sharpest "carries the
-            # dynamics" measure (delta_r2 grows with h through mean reversion,
-            # which position alone predicts).
+            # Unlike delta_r2 (which grows with the horizon through mean
+            # reversion, predictable from position alone), vel_r2 is
+            # horizon-independent.
             probe["vel_r2_test"] = _ridge_r2(Z, z_vel, train_v & vel_ok, test_v & vel_ok)
 
     # Horizon curve (num_preds > 1): a head per horizon on every column, and
@@ -723,9 +701,8 @@ def _ranking_state_result(Z_enc, Z_last, Y, valid, Yprev, prev_valid, train,
                          without a previous label are skipped for it.
       label_moving_average
                          not a probe: the mean of the label vectors over the
-                         history window -- TGB's moving-average baseline,
-                         which beats persistence and every learned model on
-                         the weekly interaction datasets; the floor to beat.
+                         history window -- TGB's moving-average baseline, the
+                         stronger floor on the weekly interaction datasets.
 
     The label changes every step, so the window split of the dynamic tasks
     applies (a node's rows at different years are different questions).
@@ -794,21 +771,19 @@ def _per_row_labels(ds, node_id, abs_bin, label_source, task, horizon=None):
 
     When the dataset exposes a DYNAMIC per-(bin, node) matrix (JODIE
     --jodie_state_label_mode event/state), each row is labelled at *its own*
-    snapshot via node_labels_dyn[abs_bin, node] — that's the whole point of
-    relabelling. Otherwise falls back to the static per-node
-    compute_block_labels. Returns (per_row, block_labels_or_None, eff_source);
-    block_labels is None in the dynamic case (multiclass never uses it there).
+    snapshot via node_labels_dyn[abs_bin, node]. Otherwise falls back to the
+    static per-node compute_block_labels. Returns (per_row,
+    block_labels_or_None, eff_source, per_row_prev); block_labels is None in
+    the dynamic case (multiclass never uses it there).
 
-    Also returns per_row_prev — each row's label at the LAST OBSERVED snapshot
-    (dynamic modes only, else None): abs_bin - 1 - horizon, i.e. the final
-    history bin of the row's window. For a single-horizon probe (horizon 0)
-    that is the previous bin, as before. For multi-horizon runs it is what a
-    forecaster can actually see, so label persistence, the onset / switch /
-    stay subsets and the change alarm are all defined against the same
-    observable state at every horizon. (Using abs_bin - 1 there would hand the
-    persistence floor the label ONE step before the target -- a future value
-    at any horizon beyond the first.) Rows whose last observed bin is < 0 get
-    -1, which excludes them from those subsets downstream.
+    per_row_prev is each row's label at the LAST OBSERVED snapshot (dynamic
+    modes only, else None): abs_bin - 1 - horizon, i.e. the final history bin
+    of the row's window. That is what a forecaster can actually see, so label
+    persistence, the onset / switch / stay subsets and the change alarm are
+    all defined against the same observable state at every horizon. (Using
+    abs_bin - 1 would hand the persistence floor a future value at any
+    horizon beyond the first.) Rows whose last observed bin is < 0 get -1,
+    which excludes them from those subsets downstream.
     """
     dyn = getattr(ds, "node_labels_dyn", None)
     mode = str(getattr(ds, "state_label_mode", ""))
@@ -845,11 +820,11 @@ def run_one_encoder(encoder_ckpt: Path, device: str = "cuda",
                     split: str = "test") -> tuple:
     """State-probe a BARE encoder checkpoint (no JEPA predictor).
 
-    Handles the baseline encoders (CLDG / DDGCL / IDOL) and any other
-    save_encoder_ckpt output, so node classification can be compared against
-    DELOS on the same footing. Only the encoder-latent column is probed
-    (plus the degree-only baseline). Writes <ckpt_dir>/state_probe.json
-    (binary) or <ckpt_dir>/block_probe.json (multiclass)."""
+    Handles the baseline encoders and any other save_encoder_ckpt output, so
+    node classification can be compared against DELOS on the same footing.
+    Only the encoder-latent columns are probed (plus the degree baselines).
+    Writes <ckpt_dir>/state_probe.json, or <ckpt_dir>/block_probe.json for
+    Louvain communities."""
     ckpt = torch.load(encoder_ckpt, map_location="cpu", weights_only=False)
     if "encoder" not in ckpt:
         raise ValueError(f"{encoder_ckpt} has no 'encoder' field — is this a "
@@ -920,8 +895,7 @@ def run_one_encoder(encoder_ckpt: Path, device: str = "cuda",
                                           abs_bin=abs_bin, ds=ds, Z_prev=Z_prev)
         out_path = Path(encoder_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
     elif eff_source == "dataset":
-        # Static per-node classes (cldg_dblp / cldg_patent): node-level split,
-        # same file and columns as the state probes.
+        # Static per-node classes (cldg_dblp / cldg_patent): node-level split.
         result = _multiclass_static_result(Z_enc, Z_last, per_row_block, node_id,
                                            eff_source, deg_hist=deg_hist,
                                            horizon=horizon, Z_prev=Z_prev)
@@ -1088,9 +1062,9 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
             with_state_labels: bool = False,
             state_label_mode: str = "ever",
             split: str = "test") -> dict:
-    """Block-probe one trained-cjepa directory. Returns the result dict and
-    also writes it to <ckpt_dir>/block_probe.json (multiclass) or
-    state_probe.json (binary).
+    """Probe one trained DELOS checkpoint. Returns (result dict, output path)
+    and writes the result to <ckpt_dir>/block_probe.json (Louvain
+    communities) or state_probe.json (every other task).
 
     Args:
       task: 'multiclass' (Louvain communities) or 'binary' (state_label,
@@ -1117,13 +1091,12 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
     args.jodie_state_label_mode = state_label_mode
     device = torch.device(args.device)
 
-    # Build dataset (handles all the synthetic / jodie / reddit_body cases)
     ds = build_dynamic_dataset(args, split=split)
     loader = DataLoader(ds, batch_size=batch_size, shuffle=False,
                         num_workers=num_workers, pin_memory=True)
 
-    # Encoder — prefer the JEPA-saved weights (post fine-tuning) over the
-    # raw pretrain ckpt, matching what we do in analyze_jepa.
+    # The encoder weights come from the JEPA checkpoint (post fine-tuning),
+    # not from the raw pretrain checkpoint, as in analyze_jepa.
     enc_kind = saved_args.get("encoder_kind", "tgcn")
     enc_hidden = saved_args.get("encoder_hidden", 128)
     node_dim = saved_args.get("node_dim", 128)
@@ -1159,8 +1132,6 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
     ).to(device)
     predictor.load_state_dict(ckpt["predictor"])
 
-    # Latents (+ per-row degree for the baseline probe, + absolute bin for
-    # dynamic labels).
     (Z_enc, Z_last, Z_pred, window, node_id, degree, deg_hist,
      abs_bin, horizon, Z_prev) = collect_test_latents(
         encoder, predictor, loader,
@@ -1185,11 +1156,6 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
         ds, node_id, abs_bin, label_source, task, horizon=horizon)
 
     if task == "binary":
-        # State-label probe: per-user binary (ban / no ban). Use AUROC +
-        # AUPRC since accuracy is uninformative on severely imbalanced
-        # labels. The degree-only baseline subtracts out the "banned users
-        # are more active" confound; encoder_last is the fair copy-last
-        # baseline; the jepa column is the actual forecast.
         result = _binary_state_result(Z_enc, Z_last, degree, per_row_block,
                                       train, test, node_id, eff_source,
                                       device, Z_pred=Z_pred,
@@ -1198,9 +1164,8 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
                                       Z_prev=Z_prev)
         out_path = Path(jepa_ckpt).parent / _state_probe_name(eff_source, split)
     elif block_labels is None:
-        # Dynamic multiclass state (synthetic_dyn community labels): every row
-        # is labelled at its own step, so this is a forecast task with copy-last
-        # as the floor — same file/columns as the binary state probe.
+        # Dynamic multiclass state: every row is labelled at its own step, so
+        # this is a forecast task with copy-last as the floor.
         result = _multiclass_state_result(Z_enc, Z_last, per_row_block,
                                           per_row_prev, train, test, node_id,
                                           eff_source, Z_pred=Z_pred,
@@ -1209,9 +1174,7 @@ def run_one(jepa_ckpt: Path, device: str = "cuda",
                                           abs_bin=abs_bin, ds=ds, Z_prev=Z_prev)
         out_path = Path(jepa_ckpt).parent / f"state_probe{_SPLIT_SUFFIX[split]}.json"
     elif eff_source == "dataset":
-        # Static per-node classes (cldg_dblp / cldg_patent): node-level split,
-        # same file and columns as the state probes, so the forecast column
-        # is compared with copy-last exactly as on the dynamic tasks.
+        # Static per-node classes (cldg_dblp / cldg_patent): node-level split.
         result = _multiclass_static_result(Z_enc, Z_last, per_row_block, node_id,
                                            eff_source, Z_pred=Z_pred,
                                            deg_hist=deg_hist, horizon=horizon,

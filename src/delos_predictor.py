@@ -275,7 +275,7 @@ class DELOSPredictor(nn.Module):
     Configurable masking scheme:
       - ``node_mask`` (default): hide ``num_masked_nodes`` whole nodes across
         history AND mask the future — the model reconstructs masked-history and
-        forecasts future latents (the original MaskedNodePredictor behaviour).
+        forecasts future latents.
       - ``future_forecast``: mask only the future (no node hiding); a pure
         causal forecaster. Equivalent to ``node_mask`` with 0 masked nodes.
 
@@ -570,26 +570,17 @@ class DELOSPredictor(nn.Module):
     @torch.no_grad()
     def inference(self, x, adj, active, times=None, intervention_idx=None,
                   cond=None):
-        """Predict future-step latents. By default no nodes are masked
-        (observational forecast). Pass `intervention_idx` (a 1-D LongTensor
-        of node indices) to force those nodes' trajectories past t=0 to be
-        replaced with the learned mask token -- a do(.) intervention. The
-        returned predictions are over *all* nodes including the intervened
-        ones; downstream eval typically restricts attention to un-intervened
-        nodes (those are the ones for which counterfactual predictions are
-        well-defined).
+        """Predict future-step latents with no nodes masked (observational
+        forecast). Pass `intervention_idx` (a 1-D LongTensor of node indices)
+        to replace those nodes' trajectories past t=0 with the learned mask
+        token, a do(.) intervention. Predictions are returned for all nodes,
+        including the intervened ones.
 
-        Future graph structure is withheld here: the adjacency and activity at
-        forecast steps (t >= history_frames) are overwritten with the LAST
-        history step's values, so the predictor conditions only on history
-        connectivity -- it can never peek at future edges regardless of the
-        --no_attention_mask flag. This is a provable no-op on the
-        no-attention-mask path (adj/active are unused inside forward there) and
-        for prepare_input (which only reads history steps), but makes the "no
-        future peek" guarantee structural rather than incidental for the
-        attention-mask variant. Known future *timestamps* (`times`) are left
-        intact -- you legitimately know when you are forecasting, just not the
-        graph."""
+        Future graph structure is withheld: adjacency and activity at forecast
+        steps (t >= history_frames) are overwritten with the last history
+        step's values, so the predictor can never peek at future edges
+        regardless of the --no_attention_mask flag. Known future timestamps
+        (`times`) are left intact."""
         H = self.history_frames
         if adj is not None and adj.shape[1] > H:
             adj = adj.clone()
@@ -655,25 +646,23 @@ def sigreg_loss(rows: torch.Tensor, num_slices: int = 256, knots: int = 17,
     (Balestriero & LeCun, 2025).
 
     Pushes the empirical distribution of ``rows`` toward an isotropic
-    standard Gaussian, which LeJEPA shows is the optimal embedding
-    distribution for a JEPA and which rules out every collapse mode
-    (total, dimensional, and the anisotropic ones VICReg's var/cov terms
-    miss). The test is one-dimensional: project onto ``num_slices`` random
-    unit directions and, per direction, compute the Epps-Pulley statistic
+    standard Gaussian, which rules out every collapse mode (total,
+    dimensional, and the anisotropic ones VICReg's var/cov terms miss).
+    The test is one-dimensional: project onto ``num_slices`` random unit
+    directions and, per direction, compute the Epps-Pulley statistic
 
         int |phi_n(t) - exp(-t^2/2)|^2 exp(-t^2/2) dt
 
     between the empirical characteristic function phi_n and that of N(0, 1),
     on a trapezoid grid of ``knots`` points over [0, t_max] (the integrand is
-    even, so the negative half is a constant factor). Because the target is
-    the *standard* normal the scale is pinned too -- no separate variance
-    floor is needed. Unlike VICReg it is invariant to which basis the
-    encoder happens to use.
+    even, so the negative half is a constant factor). The target is the
+    standard normal, so the scale is pinned and no separate variance floor
+    is needed.
 
-    Rows are sub-sampled to ``max_rows`` (a distributional test does not need
-    every token) and slices are chunked so the (n, M, K) cos/sin tensor never
-    exceeds ~64 MB. The classical n-factor on the statistic is dropped: the
-    caller's weight absorbs it and this keeps the loss batch-size-agnostic.
+    Rows are sub-sampled to ``max_rows`` and slices are chunked to bound the
+    (n, M, K) cos/sin tensor. The classical n-factor on the statistic is
+    dropped: the caller's weight absorbs it and this keeps the loss
+    batch-size-agnostic.
 
     Args:
       rows: (n, D) embeddings (predictor outputs and/or encoder latents).
@@ -707,7 +696,7 @@ def sigreg_loss(rows: torch.Tensor, num_slices: int = 256, knots: int = 17,
 class TrajectoryJEPAPredictor(nn.Module):
     """V-JEPA-style predictor over trajectory-window tokens.
 
-    Differs from MaskedNodePredictor in three ways:
+    Differs from DELOSPredictor in three ways:
       1. Token granularity is (window, node), not (timestep, node). The
          caller passes already-pooled (B, K, N, D) tokens from
          `TrajectoryWindowPooler`; this module just predicts.
@@ -717,8 +706,8 @@ class TrajectoryJEPAPredictor(nn.Module):
          already carry node identity via the encoder; we add learned
          window-position and node-position embeddings on top.
 
-    The transformer backbone is shared with MaskedNodePredictor
-    (GraphSpacetimeTransformer) so the per-layer compute is identical.
+    The transformer backbone (GraphSpacetimeTransformer) is shared with
+    DELOSPredictor.
     """
 
     def __init__(self, num_windows: int, num_nodes: int, node_dim: int,
@@ -727,19 +716,14 @@ class TrajectoryJEPAPredictor(nn.Module):
                  node_pos_mode: str = "off"):
         """
         node_pos_mode:
-          - "off"      (default): No per-node positional embedding. Node
-                        identity flows through the pooled tokens
-                        themselves -- the encoder's bidirectional GRU and
-                        the GCN already produce per-node-distinct values.
-                        Recommended for diagnostic interpretability.
-          - "learned"  : Free (N, D) lookup table. PROBLEMATIC: lets the
-                        model memorise per-node attributes (e.g. block ID
-                        in SBM) during training, contaminating downstream
-                        probes. Verified by zeroing test on the smoke run.
-          - "from_input": Project the encoder's first-window pooled token
-                          via a linear layer to produce the per-node
-                          anchor. Matches MaskedNodePredictor's approach.
-                          Adds D^2 parameters, all functional.
+          - "off" (default): no per-node positional embedding; node identity
+            flows through the pooled tokens themselves.
+          - "learned": free (N, D) lookup table. It lets the model memorise
+            per-node attributes (e.g. the block ID in an SBM) during training,
+            which contaminates downstream probes.
+          - "from_input": project the encoder's first-window pooled token
+            through a linear layer to produce the per-node anchor, as
+            DELOSPredictor does.
         """
         super().__init__()
         if node_pos_mode not in ("off", "learned", "from_input"):
@@ -808,47 +792,43 @@ class TrajectoryJEPAPredictor(nn.Module):
         if self.node_pos_mode == "learned":
             x = x + self.node_pos[:, :, :N]
         elif self.node_pos_mode == "from_input":
-            # First-window pooled token per node, projected.
             anchor = self.id_projector(tokens[:, 0])             # (B, N, D)
             x = x + anchor.unsqueeze(1)                          # broadcast over K
 
-        # Spacetime transformer over the flattened (K*N) token sequence.
-        # No attention mask in v1 -- every token attends to every other.
+        # Spacetime transformer over the flattened (K*N) token sequence, with
+        # no attention mask: every token attends to every other.
         x_flat = rearrange(x, "b k n d -> b (k n) d")
         h_flat = self.transformer(x_flat, attn_mask=None)
         h = rearrange(h_flat, "b (k n) d -> b k n d", k=K, n=N)
         return self.to_out(h)
 
 
-# Backward-compatible alias: the predictor used to be named MaskedNodePredictor.
+# Backward-compatible aliases for the predictor's earlier names.
 MaskedNodePredictor = DELOSPredictor
 DyGJEPAPredictor = DELOSPredictor
 
 
 class PlainForecaster(nn.Module):
-    """Graph-free, mask-free temporal forecaster -- the Tier-2 "generic
-    predictor" control for the masked spacetime transformer.
+    """Graph-free, mask-free temporal forecaster: the "generic predictor"
+    control for the masked spacetime transformer.
 
-    Answers the ablation reviewers actually ask: *is the win the masked graph
-    predictor, or just having ANY forecaster on top of the frozen encoder?*
-    It maps each node's history latents to its future latents INDEPENDENTLY --
-    no cross-node attention, no adjacency, no masking objective -- trained on
-    the identical future-latent-MSE loss (masked_idx is empty, so
+    It maps each node's history latents to its future latents independently
+    (no cross-node attention, no adjacency, no masking objective) and is
+    trained on the identical future-latent MSE loss (masked_idx is empty, so
     ``compute_graph_jepa_loss`` supervises only the future positions). Two
     backbones:
       - ``mlp`` : flatten the H history latents per node -> MLP -> P*D.
       - ``gru`` : GRU over the H history steps per node -> last hidden -> P*D.
 
     Capacity is set by ``mlp_dim`` (hidden width) and ``depth`` (layers),
-    reusing the SAME CLI flags as the transformer so param counts can be
-    matched for a fair ablation. Supports ``residual_head`` so, exactly like
-    DELOSPredictor, the forecast starts at copy-last -- keeping the two
-    predictors' training floor identical.
+    the same CLI flags as the transformer, so parameter counts can be
+    matched. ``residual_head`` makes the forecast start at copy-last, as in
+    DELOSPredictor.
 
     Drop-in for DELOSPredictor: same ``forward`` / ``inference`` signatures,
     returns ``(pred, empty_masked_idx, None)``. ``adj`` / ``active`` are
-    accepted for interface parity and DELIBERATELY IGNORED, so future graph
-    structure can never leak regardless of any attention-mask flag.
+    accepted for interface parity and deliberately ignored, so future graph
+    structure can never leak.
     """
 
     def __init__(self, num_nodes, node_dim, history_frames, pred_frames=1,
@@ -920,8 +900,8 @@ def predictor_flags_from_args(saved: "dict | None") -> dict:
     """Predictor constructor flags that a checkpoint's weights cannot recover.
 
     Every script that REBUILDS a trained predictor (state probe, analysis,
-    intervention eval, fine-tuning) must pass these, read from the training
-    ``args`` stored in the checkpoint:
+    fine-tuning) must pass these, read from the training ``args`` stored in
+    the checkpoint:
 
     * ``linear_skip`` adds the ``skip`` weights (linear-dynamics prior).
     * ``input_delta`` adds the ``delta_proj`` weights (velocity channel);
@@ -965,7 +945,7 @@ def build_predictor(mask_scheme: str, **cfg):
     - ``node_mask`` / ``future_forecast`` -> :class:`DELOSPredictor`
       (expects cfg: num_nodes, node_dim, history_frames, pred_frames, ...).
     - ``mlp_forecast`` / ``gru_forecast``  -> :class:`PlainForecaster`
-      (the graph-free Tier-2 ablation control; transformer-only cfg keys such
+      (the graph-free ablation control; transformer-only cfg keys such
       as heads/dim_head/use_attention_mask are accepted and ignored).
     - ``trajectory_block``                -> :class:`TrajectoryJEPAPredictor`
       (expects cfg: num_windows, num_nodes, node_dim, ...).
@@ -1021,17 +1001,15 @@ def compute_graph_jepa_loss(
 ):
     """Latent-MSE JEPA loss (masked-history + future) with optional extras.
 
-    horizon_norm (2026-09-29) divides every FUTURE step's squared error by the
-    copy-last squared error at that step (mean over the batch's active
-    future tokens of ||z_{T_hist-1} - z_t||^2 on the TARGET latents, no
-    gradient). Without it the summed future loss is dominated by the longest
-    horizons purely through their variance (on the synthetic showcase
-    copy-last's error is 0.5 at h=1 and 30 at h=12), most of which is
-    irreducible, so the MSE-optimal predictor shrinks its update toward the
-    mean at long horizons (diagnostic: displacement cosine ~0.5 but
-    magnitude ~0.5). With it every horizon contributes on the same scale and
-    the future loss reads as error RELATIVE TO PERSISTENCE: 1.0 = a zero
-    update, < 1 = better than copy-last. Masked-history terms are unchanged.
+    horizon_norm divides every FUTURE step's squared error by the copy-last
+    squared error at that step (mean over the batch's active future tokens of
+    ||z_{T_hist-1} - z_t||^2 on the TARGET latents, no gradient). Without it
+    the summed future loss is dominated by the longest horizons purely
+    through their variance, most of which is irreducible, so the MSE-optimal
+    predictor shrinks its update toward the mean at long horizons. With it
+    every horizon contributes on the same scale and the future loss reads as
+    error RELATIVE TO PERSISTENCE: 1.0 = a zero update, < 1 = better than
+    copy-last. Masked-history terms are unchanged.
 
     target_norm applies a parameter-free LayerNorm over the channel dim of
     the target (I-JEPA / V-JEPA) so no node/dim with a large latent norm can

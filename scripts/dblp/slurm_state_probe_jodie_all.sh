@@ -9,25 +9,23 @@
 #SBATCH --time=20:00:00
 #SBATCH --partition=gpu
 #
-# Node classification (JODIE-Reddit ban prediction, the `state_label` task)
-# for DELOS AND every learned baseline, on a matched encoder architecture.
+# Node classification (the JODIE `state_label` task, e.g. Reddit ban
+# prediction) for DELOS and the CLDG / DDGCL / IDOL baselines, on a matched
+# encoder architecture.
 #
 #   methods : delos, cldg, ddgcl, idol   (all --encoder_kind gcn)
-#   task    : per-user binary state_label (ever banned).  ~3% positive rate,
-#             so the headline metric is AUROC, NOT accuracy.
-#   probe   : frozen encoder latents -> linear probe (the encoder column is
-#             the common denominator; baselines have no JEPA predictor).
-#             DELOS additionally reports its JEPA-predictor latent column.
-#             A degree-only probe is fit alongside as the trivial baseline
-#             (banned users are simply more active).
+#   task    : per-user binary state_label. The positive rate is low, so the
+#             headline metric is AUROC, not accuracy.
+#   probe   : frozen encoder latents -> linear probe. DELOS additionally
+#             reports its JEPA-predictor latent column. A degree-only probe is
+#             fit alongside as the trivial baseline.
 #
 # Each stage is skipped if its checkpoint already exists, so the job is
-# resumable — just resubmit if it hits the walltime.
+# resumable: resubmit if it hits the walltime.
 #
 # Submit:            sbatch scripts/dblp/slurm_state_probe_jodie_all.sh
 # Wikipedia instead: DATASET=wikipedia sbatch scripts/dblp/slurm_state_probe_jodie_all.sh
-# MOOC (dropout, ~4k state events — the dense-label variant; only 97 items):
-#                    DATASET=mooc sbatch scripts/dblp/slurm_state_probe_jodie_all.sh
+# MOOC (dropout):    DATASET=mooc sbatch scripts/dblp/slurm_state_probe_jodie_all.sh
 # Event (sparse):    STATE_MODE=event sbatch scripts/dblp/slurm_state_probe_jodie_all.sh
 # Predictor fixes (use a distinct TAG so a fresh predictor is trained):
 #   RESIDUAL=1 CHANGE_W=2.0 TAG=jodie_mooc_gcn_full_res_cw2_s42 ... sbatch ...
@@ -48,50 +46,38 @@ echo "[slurm] repo_root=$REPO_ROOT  node=$(hostname)"
 
 # --- config -----------------------------------------------------------------
 DATASET=${DATASET:-reddit}          # reddit | wikipedia | mooc
-# Binning, edge features, encoder, window geometry, seed and
-# early-stopping all come from the shared config so this table and the
-# mooc_tier2 / jodie_baseline tables describe the SAME experiment. The dataset
-# is used at full size (all users x all items); the snapshot adjacency is dense
-# (T,N,N) so memory/compute grow ~N^2 with N. Drop BATCH via env if you OOM.
+# Binning, edge features, encoder, window geometry, seed and early stopping
+# all come from the shared config. The dataset is used at full size and the
+# snapshot adjacency is dense (T,N,N): lower BATCH via env if you OOM.
 TASK=state_probe
 BATCH=${BATCH:-8}
-# 30 epochs was a hard cap, not convergence: the pretrain val loss was
-# still falling at epoch 30 (best val landed ON the last epoch), and with
-# PATIENCE=20 early stopping cannot fire inside 30 epochs. pretrain_encoder
-# restores best-val weights, so a high cap is monotone-safe — it can only
-# find an equal or better checkpoint. Let PATIENCE decide when to stop.
+# The epoch cap is deliberately high: pretrain_encoder restores best-val
+# weights, so PATIENCE decides when to stop.
 ENC_EPOCHS=${ENC_EPOCHS:-300}
 JEPA_EPOCHS=${JEPA_EPOCHS:-50}
 JEPA_PROBE_EPOCHS=${JEPA_PROBE_EPOCHS:-3}
 BASE_EPOCHS=${BASE_EPOCHS:-100}
 NW=${SLURM_CPUS_PER_TASK:-8}
-# Node-classification label semantics: 'ever' (static, legacy), 'state'
-# (dynamic cumulative — denser, the practical default), 'event' (dynamic
-# instantaneous — faithful but very sparse on this subset).
+# Label semantics: 'ever' (static), 'state' (dynamic cumulative, the default),
+# 'event' (dynamic instantaneous, very sparse).
 STATE_MODE=${STATE_MODE:-state}
-# Predictor-objective fixes (see train_delos.py --help): RESIDUAL=1 turns
-# on the residual head (copy-last as the training floor); CHANGE_W>0 weights
-# the latent MSE toward transition-carrying nodes.
+# RESIDUAL=1 turns on the residual head (copy-last as the training floor);
+# CHANGE_W>0 weights the latent MSE toward transition-carrying nodes.
 RESIDUAL=${RESIDUAL:-0}
 CHANGE_W=${CHANGE_W:-0}
 # MASK_SCHEME=future_forecast drops the masked-history objective (pure
-# forecaster) — the masked-node reconstruction task competes with
-# forecasting in the shared transformer.
+# forecaster).
 MASK_SCHEME=${MASK_SCHEME:-node_mask}
-# TRAIN_ENC=1 unfreezes the encoder during JEPA training with an EMA target
-# (I-JEPA style). The lever for when objective tweaks plateau below the
-# oracle: the frozen encoder's latents cap what the predictor can express.
+# TRAIN_ENC=1 unfreezes the encoder during JEPA training with an EMA target.
 TRAIN_ENC=${TRAIN_ENC:-0}
-# BASELINES=0 skips the CLDG/DDGCL/IDOL stages entirely (pretrain + probe).
-# Use for DELOS-only ablations (predictor flags don't affect the
-# baselines, so retraining them per variant just duplicates rows).
+# BASELINES=0 skips the CLDG/DDGCL/IDOL stages (for DELOS-only ablations).
 BASELINES=${BASELINES:-1}
 # Per-method hyperparameter overrides, appended verbatim to that method's
 # trainer. Paste the winning strings printed by aggregate_mooc_hparam.py here:
 #   JEPA_HP="--lr 1e-3 --change_weight 2.0 --num_masked_nodes 50" \
 #   CLDG_HP="--tau 0.5 --snapshots 8 --lr 1e-3" ... sbatch ...
-# argparse honours the LAST occurrence of a flag, so these beat the defaults
-# hard-coded in the stage commands below.
+# argparse honours the last occurrence of a flag, so these beat the defaults
+# in the stage commands below.
 JEPA_HP=${JEPA_HP:-}
 CLDG_HP=${CLDG_HP:-}
 DDGCL_HP=${DDGCL_HP:-}
@@ -126,9 +112,8 @@ echo "[stage 0] $CSV size=$(du -h "$CSV" | cut -f1)"
 # Sourcing normalises DATASET to the --data_source spelling (mooc -> jodie_mooc).
 source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 SHORT=${DATASET#jodie_}
-# The seed is folded into TAG — without it a multi-seed sweep
-# finds seed 42's checkpoints, skips every training stage, and reports the same
-# run three times as if it were three seeds.
+# The seed is part of TAG so that a multi-seed sweep does not find another
+# seed's checkpoints and skip every training stage.
 TAG=${TAG:-jodie_${SHORT}_${ENC_KIND}_s${SEED}}
 echo "[config] TAG=$TAG STATE_MODE=$STATE_MODE JEPA_EXTRA='$JEPA_EXTRA'"
 
@@ -139,12 +124,9 @@ CLDG_DIR="outputs/cldg_${TAG}"
 DDGCL_DIR="outputs/ddgcl_${TAG}"
 IDOL_DIR="outputs/idol_${TAG}"
 
-# =============================================================================
-# DELOS: edge-mask encoder pretrain -> DELOS train (encoder + predictor)
-# =============================================================================
-# pretrain_encoder.py writes encoder_<src>_<kind>_<pretext>.ckpt (templated,
-# NOT encoder.ckpt) — reference that exact name in stages 2/3. --pretext is
-# pinned to edge_mask (jodie is dynamic-topology) so the filename is stable.
+# --- DELOS: edge-mask encoder pretrain -> DELOS train -------------------------
+# pretrain_encoder.py writes encoder_<src>_<kind>_<pretext>.ckpt (not
+# encoder.ckpt). --pretext is pinned to edge_mask so the filename is stable.
 JEPA_ENC_CKPT="$JEPA_ENC_DIR/encoder_${DATASET}_${ENC_KIND}_edge_mask.ckpt"
 if [[ ! -f "$JEPA_ENC_CKPT" ]]; then
     echo; echo "=== DELOS stage 1/2: encoder pretrain -> $JEPA_ENC_DIR ==="
@@ -173,10 +155,7 @@ else
     echo "[skip] $JEPA_DIR/best.ckpt exists"
 fi
 
-# =============================================================================
-# Baselines: contrastive encoder pretrain only (we probe the frozen encoder,
-# so the two-stage baselines' link-pred probe stage is not needed here).
-# =============================================================================
+# --- Baselines: contrastive encoder pretrain only (the frozen encoder is probed)
 if [[ "$BASELINES" != "1" ]]; then
     echo "[skip] BASELINES=0 — skipping CLDG/DDGCL/IDOL stages"
 elif [[ ! -f "$CLDG_DIR/encoder.ckpt" ]]; then
@@ -186,8 +165,8 @@ elif [[ ! -f "$CLDG_DIR/encoder.ckpt" ]]; then
         --snapshots 4 --views 2 --strategy random --tau 0.07 \
         --node_batch_size 256 --steps_per_epoch 20 --val_steps 10 --device cuda \
         --epochs "$BASE_EPOCHS" --lr 4e-3 --seed "$SEED" --out_dir "$CLDG_DIR" $CLDG_HP
-    # Hard-fail: a missing baseline used to render as an absent table row, which
-    # reads as "not applicable" rather than "this run crashed".
+    # Hard-fail: a missing baseline would otherwise render as an absent table
+    # row, which reads as "not applicable" rather than "this run crashed".
     [[ -f "$CLDG_DIR/encoder.ckpt" ]] || { echo "[FATAL] CLDG pretrain failed" >&2; exit 13; }
 else
     echo "[skip] $CLDG_DIR/encoder.ckpt exists"
@@ -197,8 +176,8 @@ if [[ "$BASELINES" != "1" ]]; then
     :
 elif [[ ! -f "$DDGCL_DIR/encoder.ckpt" ]]; then
     echo; echo "=== DDGCL pretrain -> $DDGCL_DIR ==="
-    # `--tau` IS the debias class prior (the reference's tau_plus, default
-    # 0.01). Passing `--tau_plus` here aborted stage 1 with an argparse error.
+    # `--tau` is the debias class prior (the reference's tau_plus, default
+    # 0.01); the trainer has no `--tau_plus` flag.
     srun --export=ALL python -m src.baselines.ddgcl.train_ddgcl $DATA_ARG \
         $ENCODER_ARG $WINDOW_ARG $EARLY_STOP_ARG \
         --max_gap 4 --time_dim 32 --tau 0.01 --beta 1.5 \
@@ -222,9 +201,7 @@ else
     echo "[skip] $IDOL_DIR/encoder.ckpt exists"
 fi
 
-# =============================================================================
-# State probe (node classification) on every checkpoint
-# =============================================================================
+# --- State probe (node classification) on every checkpoint -------------------
 echo; echo "=== state probe: DELOS (encoder + JEPA columns)  mode=$STATE_MODE ==="
 srun --export=ALL python scripts/dblp/run_block_probe.py \
     --jepa_ckpt "$JEPA_DIR/best.ckpt" \
@@ -243,9 +220,7 @@ if [[ "$BASELINES" == "1" ]]; then
     done
 fi
 
-# =============================================================================
-# Summary table
-# =============================================================================
+# --- Summary table ------------------------------------------------------------
 echo; echo "================================================================="
 echo "  NODE CLASSIFICATION (JODIE-$SHORT ban prediction, AUROC)  [mode=$STATE_MODE]"
 echo "================================================================="

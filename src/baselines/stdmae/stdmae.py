@@ -1,6 +1,6 @@
 """STD-MAE architecture, ported from https://github.com/Jimmy-7664/STD-MAE.
 
-Three pieces, kept structurally faithful to the reference so the numbers stay
+Two pieces, kept structurally faithful to the reference so the numbers stay
 attributable to the method rather than to a re-derivation:
 
   :class:`Mask`          the masked autoencoder. ``spatial=False`` masks whole
@@ -19,9 +19,8 @@ generalisations -- never changes to the objective:
   * ``positional_encodings.PositionalEncoding2D`` -> :class:`PositionalEncoding`
     below, a line-for-line reimplementation of that package's 2-D sin/cos
     table, cached per (grid, dtype, device) instead of rebuilt every forward.
-  * the Graph WaveNet backend moved to :mod:`src.baselines.graphwavenet`,
-    shared with the STEP arm (both papers ship near-identical forks of it); see
-    that module for its two mechanical changes.
+  * the Graph WaveNet backend lives in :mod:`src.baselines.graphwavenet`,
+    shared with the STEP arm; see that module for its two mechanical changes.
   * ``STDMAE`` takes already-constructed ``Mask`` modules rather than
     checkpoint paths, so the training script owns loading and device placement.
 
@@ -51,10 +50,7 @@ __all__ = ["Mask", "STDMAE", "GraphWaveNet", "PositionalEncoding", "masked_mae",
            "MaskGenerator", "PatchEmbedding", "TransformerLayers"]
 
 
-# ---------------------------------------------------------------------------
-# masked autoencoder pieces (STD-MAE-specific; the rest come from the shared
-# masked_pretrain module)
-# ---------------------------------------------------------------------------
+# -- masked autoencoder pieces (the rest come from masked_pretrain) --
 def _sin_cos(sin_inp: torch.Tensor) -> torch.Tensor:
     """``get_emb`` from the ``positional_encodings`` package."""
     return torch.flatten(torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1), -2, -1)
@@ -260,9 +256,7 @@ class Mask(nn.Module):
         return hidden                                               # B, N, P, d
 
 
-# ---------------------------------------------------------------------------
-# the full model
-# ---------------------------------------------------------------------------
+# -- the full model --
 class STDMAE(nn.Module):
     """Frozen S-MAE + T-MAE representations feeding a Graph WaveNet forecaster.
 

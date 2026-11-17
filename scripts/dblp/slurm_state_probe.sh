@@ -10,11 +10,11 @@
 #SBATCH --partition=gpu
 #
 # Run the JODIE state_label (ban prediction) probe across a glob of trained
-# JODIE checkpoints. External-label node classification: a stronger test
-# than the Louvain probe because the labels are NOT derived from the graph
-# topology.
+# JODIE checkpoints. This is external-label node classification: unlike the
+# Louvain probe, the labels are not derived from the graph topology.
 #
-# Severely imbalanced (~3% ban rate). Headline metric is AUROC, not accuracy.
+# The labels are severely imbalanced, so the headline metric is AUROC, not
+# accuracy.
 #
 # Submit (default = all JODIE-Reddit checkpoints):
 #     sbatch scripts/dblp/slurm_state_probe.sh

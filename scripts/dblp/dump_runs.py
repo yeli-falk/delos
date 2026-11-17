@@ -58,9 +58,8 @@ def load_run(delos_dir: Path) -> dict:
         else delos_dir.name
     diag_dir = delos_dir.parent / f"{tag}_diagnostic"
 
-    # Prefer the extended metrics file if present (rescored runs with
-    # AUC + Hits@1). Fall back to the v1 file for legacy / not-yet-rescored
-    # runs so multi-seed tables still populate.
+    # Prefer the extended metrics file (runs rescored with AUC + Hits@1 by
+    # rescore_link_metrics.py); fall back to test_metrics.json otherwise.
     test = (_read_json(delos_dir / "test_metrics_v2.json")
             or _read_json(delos_dir / "test_metrics.json") or {})
     diag = _read_json(diag_dir / "diagnostic.json") or {}
@@ -68,8 +67,8 @@ def load_run(delos_dir: Path) -> dict:
     block = _read_json(delos_dir / "block_probe.json") or {}
     state = _read_json(delos_dir / "state_probe.json") or {}
 
-    # Link prediction: new format is {"all": {h: {...}}, "new": {h: {...}}};
-    # old format was {h: {...}} directly. Handle both.
+    # Link-prediction metrics are {"all": {h: {...}}, "new": {h: {...}}}; a
+    # flat {h: {...}} file is also accepted.
     def _horizon0(block):
         if not block:
             return {}
@@ -117,8 +116,7 @@ def load_run(delos_dir: Path) -> dict:
         "enc_state_auroc": _safe_get(state, "encoder", "auroc_test"),
         "jepa_state_auroc": _safe_get(state, "jepa", "auroc_test"),
         "deg_state_auroc": _safe_get(state, "degree_baseline", "auroc_test"),
-        # Fair copy-last baseline + AUPRC columns (new state_probe schema;
-        # blank for probes written before encoder_last/auprc existed).
+        # Fair copy-last baseline + AUPRC columns.
         "last_state_auroc": _safe_get(state, "encoder_last", "auroc_test"),
         "enc_state_ap": _safe_get(state, "encoder", "auprc_test"),
         "last_state_ap": _safe_get(state, "encoder_last", "auprc_test"),

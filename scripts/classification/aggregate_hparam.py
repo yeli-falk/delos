@@ -120,9 +120,8 @@ def average_seeds(rows):
     column, std of the forecast and of the gap, n seeds). Single-seed sweeps
     come out unchanged apart from the ``n`` column.
 
-    A sweep ranks differences of ~0.01 AUROC while one seed's validation noise
-    is ~0.01-0.02 (phase A: neighbouring momentum values differed by 0.025), so
-    a second seed is what makes the ranking mean anything.
+    Single-seed validation noise is of the same order as the differences a
+    sweep ranks, so a second seed is what makes the ranking meaningful.
     """
     groups = {}
     for r in rows:
@@ -189,9 +188,8 @@ def main():
     if rank_by == "auto":
         lasts = [r["val_last"] for r in rows
                  if r["val_last"] is not None and r["val_forecast"] is not None]
-        # 0.01, not ~0: even with ONE frozen encoder the copy-last probe is
-        # refit per cell and wobbles by a few 1e-3; a trained encoder moves it
-        # by 0.05-0.1.
+        # The threshold is not ~0: even with one frozen encoder the copy-last
+        # probe is refit per cell and wobbles slightly.
         shared_encoder = bool(lasts) and (max(lasts) - min(lasts) < 0.01)
         rank_by = "gap" if (has_gap and shared_encoder) else "auroc"
         if has_gap and not shared_encoder:
@@ -207,9 +205,7 @@ def main():
     print(f"\n{len(rows)} configurations ({n_cells} cells) under {root}  "
           f"(ranked on VAL {key}, HIGHER is better"
           f"{', mean over seeds' if multi else ''})")
-    # Width follows the longest name: freeze-sweep cells
-    # (..._encoder_freeze_epochs_30) are longer than 48 chars and were being
-    # cut exactly where the freeze value sits.
+    # Width follows the longest cell name so that long names are not cut.
     cw = max(50, max(len(r["cell"]) for r in rows) + 2)
     print(f"{'rank':<5}{'cell':<{cw}}{'fcast':>9}{'±':>8}{'last':>9}{'gap':>9}{'degree':>9}{'n':>4}")
     print("-" * 103)

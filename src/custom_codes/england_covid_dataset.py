@@ -2,21 +2,17 @@
 
 England COVID is the time-varying-graph node-regression benchmark from
 PyTorch Geometric Temporal (`EnglandCovidDatasetLoader`). 129 NUTS3 regions
-are the nodes; each of the 61 daily snapshots carries a *different* directed,
+are the nodes; each of the 61 daily snapshots carries a different directed,
 weighted mobility graph; the per-node signal is the daily reported COVID-19
 case count. The task is to forecast each region's future case count from the
-recent window of cases + the evolving mobility topology.
+recent window of cases and the evolving mobility topology.
 
-Unlike METR-LA (fixed adjacency), the edge set here changes every snapshot, so
-this dataset feeds the *dynamic* DELOS path: each `__getitem__` returns the
-per-snapshot `adj` / `active` tensors (like DBLP) **and** the raw regression
-signal (like METR-LA) so a regression probe can be fit and evaluated.
+Each `__getitem__` returns the per-snapshot `adj` / `active` tensors and the
+raw regression signal, so a regression probe can be fit and evaluated.
 
-We vendor a lightweight loader: the canonical `england_covid.json` (the exact
-file PyG Temporal downloads) is fetched once and cached under `data_dir`; it is
-then parsed with numpy. No `torch_geometric_temporal` dependency is required.
-If the JSON is already present (or `torch_geometric_temporal` is installed and
-`use_pyg=True`), no network access happens.
+The canonical `england_covid.json` (the file PyG Temporal downloads) is
+fetched once and cached under `data_dir`, then parsed with numpy; no
+`torch_geometric_temporal` dependency is required unless `use_pyg=True`.
 
 Tensor shapes per item:
     x_hist  : (T_hist, N, F)        node features (signal + degree + time)
@@ -95,11 +91,11 @@ def _load_via_pyg() -> Tuple[np.ndarray, List[np.ndarray]]:
 def _edges_to_adjacency(edge_lists: List[np.ndarray], num_nodes: int) -> np.ndarray:
     """(T, N, N) bool symmetric adjacency, self-loops removed.
 
-    The mobility graph is directed and ~94% reverse-symmetric; the DELOS
-    spacetime attention consumes a boolean connectivity mask, so we symmetrise
-    (an edge in either direction = spatial neighbour) and drop self-loops
-    (the predictor adds temporal self-attention separately; `build_graph_features`
-    and `normalize_adjacency` both assume no self-loop on the input adj).
+    The mobility graph is directed; the DELOS spacetime attention consumes a
+    boolean connectivity mask, so the adjacency is symmetrised (an edge in
+    either direction is a spatial neighbour) and self-loops are dropped
+    (`build_graph_features` and `normalize_adjacency` both assume no
+    self-loop on the input adj).
     """
     T = len(edge_lists)
     adj = np.zeros((T, num_nodes, num_nodes), dtype=bool)
@@ -109,7 +105,6 @@ def _edges_to_adjacency(edge_lists: List[np.ndarray], num_nodes: int) -> np.ndar
         src, dst = e[:, 0], e[:, 1]
         adj[t, src, dst] = True
         adj[t, dst, src] = True
-    # Drop self-loops on the diagonal of every snapshot.
     eye = np.eye(num_nodes, dtype=bool)
     adj[:, eye] = False
     return adj
@@ -124,8 +119,7 @@ def build_england_covid_snapshots(
     """Parse England COVID into a canonical SnapshotSequence + raw signal.
 
     Returns (seq, raw_signal, mean, std). `mean`/`std` are computed over the
-    chronological *train* portion only and applied to channel 0 of `seq.feats`
-    so val/test see train-normalised inputs (no leakage).
+    chronological train portion only and applied to channel 0 of `seq.feats`.
     """
     if use_pyg:
         signal, edge_lists = _load_via_pyg()

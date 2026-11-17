@@ -178,3 +178,4 @@ dmypy.json
 tests.ipynb
 
 dataset/
+figures/

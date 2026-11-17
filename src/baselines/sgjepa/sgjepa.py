@@ -144,9 +144,8 @@ class SGJEPA(nn.Module):
                 # Threshold-scale normalisation of the synaptic current
                 # (tdBN-style, Zheng et al. 2021). The shared GCN's latents sit
                 # far below a unit threshold, so without it no neuron fires at
-                # initialisation, the counts are all zero and the InfoNCE sits
-                # at log(n) (observed: spike rate 0.000, loss = log 256). The
-                # paper does not state its input normalisation; --no_current_norm
+                # initialisation and the InfoNCE stays at log(n). The paper
+                # does not state its input normalisation; --no_current_norm
                 # removes this one.
                 layers.append(nn.LayerNorm(D))
             layers.append(PLIF(init_tau, v_th))

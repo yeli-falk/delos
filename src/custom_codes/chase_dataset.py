@@ -1,13 +1,11 @@
 """CHASE dynamic-label benchmarks (Kim et al., NeurIPS'26): DBLP-S, GossipCop, Music.
 
-Why these (2026-11-11): the only public snapshot graphs whose NODE LABELS
-change over time by construction. "Chasing Label Shifters" (arXiv
-2610.17582) built them because the existing dynamic node-classification sets
-either have no features (DBLP-E) or labels that hardly move (EvolveGCN's).
-They are released on the Hugging Face Hub as ``jhkim611/CHASE-datasets``
-(CC BY-NC 4.0; ``bash scripts/dblp/fetch_chase.sh`` -> ``dataset/chase/``).
+Snapshot graphs whose node labels change over time by construction
+("Chasing Label Shifters", arXiv 2610.17582). They are released on the
+Hugging Face Hub as ``jhkim611/CHASE-datasets`` (CC BY-NC 4.0;
+``bash scripts/dblp/fetch_chase.sh`` -> ``dataset/chase/``).
 
-What the three graphs are (README of the release + measured on the files):
+The three graphs:
 
     name       nodes   snapshots  split      classes  label                      shifters
     dblp_s     34,717  14 yearly  9 / 2 / 3     2     main research area that   2.6 %
@@ -19,46 +17,39 @@ What the three graphs are (README of the release + measured on the files):
                                                       to that month
 
 "shifters" = share of nodes active at t-1 and t whose label differs, i.e.
-1 - the label-persistence floor (Music 0.81, GossipCop 0.96). Node sets
-GROW over time (Music 494 -> 878 active, GossipCop 350 -> 6,091): a node is
-inactive before its first appearance and the release stores label 0 there,
-so inactive (t, node) cells are relabelled -1 (no label) here.
+1 - the label-persistence floor. Node sets grow over time: a node is inactive
+before its first appearance and the release stores label 0 there, so inactive
+(t, node) cells are relabelled -1 (no label) here.
 
 Per-snapshot node features come with the release (``feats`` (K, N, F)):
 768-dim BERT [CLS] embeddings of the papers / articles of that period for
-DBLP-S and GossipCop, 779-dim listening descriptors for Music. They are
-genuinely time-varying (Music: 66 % of the rows differ from the previous
-month; GossipCop: 13 %). Edges are stored in both directions with a weight
-(shared papers / articles / tracks); the pipeline's bool snapshot keeps the
-support only.
+DBLP-S and GossipCop, 779-dim listening descriptors for Music. Edges are
+stored in both directions with a weight (shared papers / articles / tracks);
+the pipeline's bool snapshot keeps the support only.
 
 Pipeline choices (all env-overridable through ``_dataset_config.sh``):
 
-  * Splits are the PAPER's snapshot counts (above), not the generic 70/10/20,
-    so our test period is theirs. Windows are target-based as everywhere
-    else (a test window's history may reach into the validation snapshots).
-  * ``top_k``: 0 = the full graph for all three (the launchers' default).
-    The dense (T, N, N) snapshots make 34,717-node DBLP-S heavy (17 GB bool
-    per timeline, far more on the GPU), so the launchers run it at BATCH 1;
-    ``top_k`` > 0 keeps the K most active nodes (sum of degrees over the
-    timeline), the CLDG subset rule, with labels and features following.
+  * Splits are the paper's snapshot counts (above), not the generic 70/10/20.
+    Windows are target-based as everywhere else (a test window's history may
+    reach into the validation snapshots).
+  * ``top_k``: 0 = the full graph (the launchers' default). The dense
+    (T, N, N) snapshots make 34,717-node DBLP-S heavy, so the launchers run
+    it at BATCH 1; ``top_k`` > 0 keeps the K most active nodes (sum of degrees
+    over the timeline), with labels and features following.
   * Features: the 8 graph statistics + (``with_node_features``) the release's
-    vectors, z-scored per dimension on the ACTIVE rows of the TRAIN snapshots
-    (``feat_norm``; Music's raw scale is std 12) and optionally reduced with a
-    PCA fitted on the same rows (``feat_pca`` > 0). Zeroed on inactive cells
-    like every other dataset. ``with_node_features=False`` is the
-    topology-only ablation.
-  * Labels: ``node_labels_dyn`` (T, N) int64 with -1 = inactive, so
+    vectors, z-scored per dimension on the active rows of the train snapshots
+    (``feat_norm``) and optionally reduced with a PCA fitted on the same rows
+    (``feat_pca`` > 0). Zeroed on inactive cells. ``with_node_features=False``
+    is the topology-only ablation.
+  * Labels: ``node_labels_dyn`` (T, N) int64 with -1 = inactive, read by
     ``run_block_probe.py --task binary`` (DBLP-S, GossipCop) and
     ``--task multiclass`` (Music, 5 classes; the loader sets
-    ``dyn_label_task`` so the probe takes its dynamic multiclass path) read
-    it unchanged, with label persistence as the floor and the switch / stay
-    (or onset) subsets defined against the last observed label.
+    ``dyn_label_task`` so the probe takes its dynamic multiclass path).
 
 The pickles hold only numpy arrays. They are still untrusted downloads, so
 they are read through an unpickler that refuses every global except the
 numpy array reconstructors; a parsed, top-K-reduced copy is cached as .npz
-next to the pickle so the 3 GB DBLP-S file is loaded once.
+next to the pickle so the large DBLP-S file is loaded once.
 """
 from __future__ import annotations
 
@@ -155,9 +146,8 @@ def parse_chase(pkl: Path, top_k: int = 0) -> Dict[str, np.ndarray]:
                               for t, e in enumerate(edges)]) if edges else np.zeros(0, np.int64)
     s_k, d_k = remap[src], remap[dst]
     sel = (s_k >= 0) & (d_k >= 0)
-    # Slice the subset out first and drop the raw release (DBLP-S is 3 GB)
-    # before the dense snapshots are allocated: peak memory matters on a
-    # login node.
+    # Slice the subset out first and drop the raw release before the dense
+    # snapshots are allocated, to bound peak memory.
     mask_k = mask_all[:, keep]
     labels = np.where(mask_k, labels_all[:, keep], -1).astype(np.int64)
     node_feats = np.ascontiguousarray(feats_all[:, keep])

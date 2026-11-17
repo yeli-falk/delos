@@ -53,9 +53,7 @@ if [[ -f dataset/dblp/edges.csv ]]; then
     DATA_ARG="--data_path dataset/dblp/edges.csv"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 1: pretrain a unidirectional T-GCN encoder
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/dblp_encoder_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -73,9 +71,7 @@ else
     echo "[stage 1] encoder.ckpt already exists at $ENC_DIR, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: train DELOS with the unidir encoder (optionally + edge masking)
-# -----------------------------------------------------------------------------
 DELOS_DIR="outputs/dblp_cjepa_${TAG}"
 echo
 echo "================================================================="
@@ -91,9 +87,7 @@ srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG 
     --device cuda --epochs 50 --lr 5e-4 --probe_epochs 3 \
     --seed "$SEED" --out_dir "$DELOS_DIR"
 
-# -----------------------------------------------------------------------------
 # Stage 3: pretrained-encoder + probe ablation with the same unidir encoder
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/dblp_ablation_probe_${TAG}"
 echo
 echo "================================================================="

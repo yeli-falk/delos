@@ -56,16 +56,13 @@ MARGIN=${MARGIN:-0.75}
 LAM=${LAM:-0.5}
 LOOKBACK=${LOOKBACK:-0}
 
-# Link-prediction datasets only: these baselines need a global DTDG snapshot
-# sequence (stage 1) + a link-pred probe (stage 2). Sets DATA_ARG / WINDOW_ARG /
-# ENCODER_ARG / EARLY_STOP_ARG / SEED from the shared config, so both stages —
-# and every other method — construct an identical node set.
+# Link-prediction datasets only. Sets DATA_ARG / WINDOW_ARG / ENCODER_ARG /
+# EARLY_STOP_ARG / SEED from the shared config, so both stages and every other
+# method construct an identical node set.
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  K=$K  ALPHA=$ALPHA  BETA=$BETA  MARGIN=$MARGIN  LAM=$LAM  LOOKBACK=$LOOKBACK"
 
-# -----------------------------------------------------------------------------
 # Stage 1: train the DySubC encoder (temporal subgraph contrast)
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/dysubc_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -87,9 +84,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping DySubC pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the DySubC encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/dysubc_${TAG}_probe"
 echo
 echo "================================================================="

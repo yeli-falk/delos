@@ -63,10 +63,10 @@ PRESETS = {
 }
 MISSING = "-"
 
-# The JODIE top-K knob was removed (always full size since 2026-09-15), so newer
-# args.json files have no ``jodie_top_k_*`` key at all. Absent must therefore
-# read as "full", not as "unknown": otherwise a stale 3000-user subset run next
-# to a current run is never reported. Older runs spelled full size explicitly.
+# The JODIE datasets are always loaded at full size, so current args.json files
+# have no ``jodie_top_k_*`` key. An absent key must read as "full", not as
+# "unknown": otherwise an old top-K subset run sitting next to a current run is
+# never reported. Older full-size runs spelled the sizes out explicitly.
 JODIE_FULL = {
     "jodie_mooc": {"jodie_top_k_users": 7047, "jodie_top_k_items": 97},
     "jodie_wikipedia": {"jodie_top_k_users": 8227, "jodie_top_k_items": 1000},

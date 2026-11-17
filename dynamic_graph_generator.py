@@ -70,9 +70,7 @@ def generate_dynamic_graph(
     anchor_scale: float = 2.0,     # community separation in latent space
     beta: float = 1.0,             # edge logit sharpness on latent similarity
     target_density: float = 0.05,  # approximate edge density; realized density
-                                   # fluctuates slowly around this as community
-                                   # occupancies random-walk (verified: no
-                                   # systematic drift across seeds)
+                                   # fluctuates slowly around this
     persistence: float = 0.6,      # edge lifetime knob (0 = resample every step)
     diffusion_alpha: float = 0.3,  # graph smoothing of node features (0 = off);
                                    # entangles features with current topology
@@ -81,89 +79,56 @@ def generate_dynamic_graph(
     events_per_edge: float = 1.5,  # Poisson rate of events per active edge per step
     burn_in: int = 50,             # latent steps before recording, so bias is
                                    # calibrated at the OU stationary regime
-    momentum: float = 0.0,         # velocity autocorrelation; 0 = pure OU (the
-                                   # original). >0 is what makes the trajectory
-                                   # predictable MORE THAN ONE STEP AHEAD — see
-                                   # the docstring.
+    momentum: float = 0.0,         # velocity autocorrelation; 0 = pure OU. >0
+                                   # makes the trajectory predictable more than
+                                   # one step ahead (see the docstring)
     switch_mode: str = "iid",      # "iid" | "latent_driven"; see below
     switch_gain: float = 6.0,      # latent_driven: how sharply drift raises risk
     label_mode: str = "hazard",    # "hazard" | "nearest_anchor"; see below
-    feature_readout: str = "tanh", # "tanh" (2-layer tanh readout, legacy) | "linear"
-                                   # (x = z W): keeps position AND velocity linearly
-                                   # recoverable from feature differences; see below
+    feature_readout: str = "tanh", # "tanh" (2-layer tanh readout) | "linear"
+                                   # (x = z W): keeps position and velocity linearly
+                                   # recoverable from feature differences
     hysteresis: float = 0.0,       # nearest_anchor: relative margin before a
                                    # boundary crossing counts as a switch
     seed: int = 0,
 ) -> dict:
-    """See module docstring. Two knobs decide whether FORECASTING is a real task:
+    """See module docstring. The knobs that decide whether forecasting is a
+    real task:
 
-    ``switch_mode="iid"`` (the original) draws community switches from a
-    constant Bernoulli(switch_prob), independent of the latent. Those switches
-    are irreducibly unpredictable, so copy-last is already the optimal
-    forecaster (~99.6% at the default rate) and no model can beat persistence.
-    Use it only as a persistence-dominated control.
+    ``switch_mode``: ``"iid"`` draws community switches from a constant
+    Bernoulli(switch_prob), independent of the latent. Those switches are
+    unpredictable, so copy-last is the optimal forecaster; use it only as a
+    persistence-dominated control. ``"latent_driven"`` makes the hazard a
+    function of how far the node has drifted from its community anchor. Drift
+    is autocorrelated, so an imminent switch is visible in the history and a
+    model that tracks z can anticipate it.
 
-    ``switch_mode="latent_driven"`` makes the hazard a function of how far the
-    node has drifted from its community anchor. Drift is itself an
-    autocorrelated (OU) process, so an imminent switch is VISIBLE IN THE
-    HISTORY: a model that tracks z can anticipate it, while copy-last cannot.
-    That is what makes the forecast task beatable, which is the precondition
-    for any claim that one architecture forecasts better than another.
+    ``labels_cont`` (always returned) is a smooth scalar readout of z: a
+    regression target with the same property and no class imbalance.
 
-    ``labels_cont`` (always returned) is a smooth scalar readout of z — a
-    regression target with the same property and no class-imbalance issues.
-
-    ``momentum`` (rho) decides whether FORECASTING HAS ANY HEADROOM AT ALL.
-
-    With rho=0 the latent is pure OU, i.e. Markov-1: given a clean observation
-    at t, the history adds nothing, and the only predictable part of the next
-    step is the mean-reversion pull. Its size relative to the innovation is
-    ``theta / sqrt(2*theta - theta^2)`` — a function of THETA ALONE, since
-    sigma scales the predictable and irreducible parts equally. At the default
-    theta=0.15 that leaves an oracle only ~2% better than copy-last, so no
-    method can demonstrate anything and every comparison returns a null.
-
-    With rho>0 the velocity is autocorrelated:
+    ``momentum`` (rho): with rho=0 the latent is pure OU, i.e. Markov-1, and
+    the only predictable part of the next step is the mean-reversion pull,
+    whose size relative to the innovation depends on theta alone. With rho>0
+    the velocity is autocorrelated:
 
         v(t+1) = rho * v(t) + sigma * eps
         z(t+1) = z(t) + v(t+1) + theta * (anchor - z(t))
 
-    Copy-last is now SYSTEMATICALLY wrong (it assumes zero velocity), and
-    inferring the velocity needs at least two observations — so history
-    genuinely matters and a temporal model has something to win. Measured
-    oracle-vs-persistence headroom (theta=0.15):
+    Copy-last is then systematically wrong (it assumes zero velocity), and
+    inferring the velocity needs at least two observations, so history
+    matters. Check ``headroom()`` before running any comparison: below ~10%
+    the setup cannot resolve a difference between methods.
 
-        rho=0.0 -> 4.3%    rho=0.5 -> 11.0%
-        rho=0.8 -> 26.5%   rho=0.95 -> 41.4%
-
-    Estimating that velocity from NOISY observations is precisely the
-    filtering problem where latent-space prediction should beat
-    observation-space prediction, which is what --synth_node_noise sweeps.
-
-    Check ``headroom()`` before running any comparison: below ~10% the setup
-    cannot resolve a difference and a null result means nothing.
-
-    ``label_mode`` decides WHAT a community is.
-
-    ``"hazard"`` (the original): the community is a separately sampled Markov
-    label. Switches are drawn from ``switch_mode``'s hazard and the destination
-    is uniform, so even an oracle that knows z exactly cannot say WHICH
-    community comes next (switch-event AUROC ~0.65). The label is therefore
-    only partly a function of z, and the dense state-classification task it
-    supports is capped by that irreducible coin flip.
-
-    ``"nearest_anchor"``: the community IS a readout of z — the anchor the
-    latent is currently closest to. No hazard is sampled. A node switches
-    exactly when noise + velocity carry it across the boundary between two
-    basins, after which the pull drags it into the new one. Every observable,
-    the label included, is then a function of z; the state at t+1 is knowable
-    from the trajectory through the velocity, so a predictive latent has real
-    headroom over copy-last. ``hysteresis`` (relative margin) stops a node
-    flickering across a boundary under momentum: it moves only when the nearest
-    anchor is closer than ``(1 - hysteresis)`` times its current distance. The
-    switch rate is EMERGENT (from sigma, theta, rho, anchor_scale, d): read the
-    rate ``state_headroom()`` prints and tune, rather than assuming
-    ``switch_prob``, which this mode ignores.
+    ``label_mode``: under ``"hazard"`` the community is a separately sampled
+    Markov label. Switches are drawn from ``switch_mode``'s hazard and the
+    destination is uniform, so the label is only partly a function of z.
+    Under ``"nearest_anchor"`` the community is the anchor the latent is
+    currently closest to, and no hazard is sampled; the state at t+1 is then
+    knowable from the trajectory through the velocity. ``hysteresis``
+    (relative margin) stops a node flickering across a boundary: it moves
+    only when the nearest anchor is closer than ``(1 - hysteresis)`` times
+    its current distance. The switch rate is emergent in this mode
+    (``switch_prob`` is ignored): read the rate ``state_headroom()`` prints.
     """
     if switch_mode not in ("iid", "latent_driven"):
         raise ValueError("switch_mode must be 'iid' or 'latent_driven'")
@@ -182,30 +147,23 @@ def generate_dynamic_graph(
     w2 = rng.normal(size=(32, d_node_feat)) / np.sqrt(32)
     we = rng.normal(size=(d_latent, d_edge_feat)) / np.sqrt(d_latent)
     wy = rng.normal(size=d_latent) / np.sqrt(d_latent)   # continuous label readout
-    # feature_readout="linear": x = z @ wl. The legacy tanh readout saturates
-    # when nodes move ~1 latent unit per step (momentum 0.95), so feature
-    # DIFFERENCES are not linear in latent differences and the hidden velocity
-    # is capped at R^2 ~0.4 from the feature history even with no noise -- no
-    # encoder can then carry it. A linear readout lifts that ceiling to ~1
-    # (diffusion 0) / ~0.65 (diffusion 0.3). Drawn from a SEPARATE stream so
-    # the main one, hence the latents, labels and graph, is identical under
-    # both readouts for a given seed (a paired comparison), and the tanh path
-    # is byte-identical to the legacy generator.
+    # feature_readout="linear": x = z @ wl. The tanh readout saturates when
+    # nodes move fast (high momentum), so feature differences are not linear
+    # in latent differences and the velocity is hard to recover from the
+    # feature history. wl is drawn from a separate stream so the latents,
+    # labels and graph are identical under both readouts for a given seed.
     if feature_readout not in ("tanh", "linear"):
         raise ValueError("feature_readout must be 'tanh' or 'linear'")
     wl = (np.random.default_rng(seed + 7_919).normal(size=(d_latent, d_node_feat)) / np.sqrt(d_latent)
           if feature_readout == "linear" else None)
 
     # Switch hazard. Under "latent_driven" the risk rises with how far a node
-    # has drifted from its anchor; drift is an OU process, hence autocorrelated,
-    # hence PREDICTABLE from history — which is what lets a forecaster beat
-    # copy-last. Normalised by the OU stationary spread so the mean rate stays
-    # ~switch_prob and the total number of switches stays comparable to "iid".
+    # has drifted from its anchor. Normalised by the OU stationary spread so
+    # the mean rate stays ~switch_prob, comparable to "iid".
     ou_var = ou_sigma ** 2 / max(1.0 - (1.0 - ou_theta) ** 2, 1e-9)
     drift_ref = np.sqrt(d_latent * ou_var)
 
-    # Velocity state for the momentum term (stays exactly zero when rho=0, so
-    # the rho=0 path reproduces the original pure-OU process).
+    # Velocity state for the momentum term (stays exactly zero when rho=0).
     vel = np.zeros_like(z)
 
     def _step_latent(z_now, comm_now, vel_now):
@@ -321,24 +279,19 @@ def generate_dynamic_graph(
 
 def headroom(data: dict, splits=(0.7, 0.1, 0.2), lam: float = 1e-3,
              history: int = 3) -> dict:
-    """How much better than copy-last can ANY model possibly be on this data?
+    """How much better than copy-last can any model be on this data?
 
-    Fits a ridge from the TRUE latents over the last ``history`` steps to the
-    target y(t+1) — i.e. gives a hypothetical model perfect knowledge of the
-    causal variable, with the same window a real model gets — and compares its
-    test MAE against the persistence baseline. That is the ceiling: no encoder,
-    objective or architecture can do better, because everything observable is a
-    function of z.
+    Fits a ridge from the true latents over the last ``history`` steps to the
+    target y(t+1) and compares its test MAE against the persistence baseline.
+    That is the ceiling, because everything observable is a function of z.
 
-    ``history`` must be >= 2 whenever ``momentum > 0``: the predictable part of
-    a momentum process is the VELOCITY, which cannot be inferred from a single
-    snapshot. A 1-step oracle reports ~0% headroom on momentum data and would
-    wrongly condemn a perfectly good config.
+    ``history`` must be >= 2 whenever ``momentum > 0``: the predictable part
+    of a momentum process is the velocity, which cannot be inferred from a
+    single snapshot.
 
-    RUN THIS BEFORE ANY COMPARISON. Below ~10% headroom the setup cannot
+    Run this before any comparison. Below ~10% headroom the setup cannot
     resolve a difference between methods, so a null result says nothing about
-    the methods and everything about the generator config. The default pure-OU
-    settings give ~2%, which is why sweeps on them come back flat.
+    the methods.
 
     Returns {persist_mae, oracle_mae, headroom_frac, verdict}.
     """
@@ -381,25 +334,19 @@ def headroom(data: dict, splits=(0.7, 0.1, 0.2), lam: float = 1e-3,
 def state_headroom(data: dict, splits=(0.7, 0.1, 0.2), lam: float = 1e-3,
                    history: int = 3) -> dict:
     """Classification twin of ``headroom``: how much better than copy-last can
-    ANY model be at predicting the community at t+1?
+    any model be at predicting the community at t+1?
 
-    ``label_mode="nearest_anchor"``: the label is a deterministic decode of
-    z(t+1), so the oracle forecasts z(t+1) by ridge from the true latent
-    history (exactly what ``headroom`` does for the regression target) and
-    then applies the SAME decode rule the generator used — nearest anchor with
-    the hysteresis margin relative to c(t). Whatever accuracy that reaches is
-    the ceiling: no encoder can know more about z(t+1) than the true history.
+    ``label_mode="nearest_anchor"``: the oracle forecasts z(t+1) by ridge from
+    the true latent history and then applies the generator's decode rule
+    (nearest anchor with the hysteresis margin relative to c(t)).
 
     ``label_mode="hazard"``: the destination of a switch is a uniform draw the
     latent says nothing about, so the oracle is a ridge from [latent history,
-    one-hot c(t)] to one-hot c(t+1), argmax-decoded. It lands on persistence,
-    which is the honest ceiling for that label — and the reason the dense
-    state task should be run with nearest-anchor labels.
+    one-hot c(t)] to one-hot c(t+1), argmax-decoded. It lands on persistence.
 
-    The number that matters is ``switch_acc``: accuracy on the rows whose
-    community actually changes. Persistence scores exactly 0 there by
-    definition, so it is the pure measure of anticipation. Read it together
-    with ``switch_rate``: if almost nothing switches inside the test window,
+    ``switch_acc`` is the accuracy on the rows whose community actually
+    changes (persistence scores 0 there by definition). Read it together with
+    ``switch_rate``: if almost nothing switches inside the test window,
     overall accuracy is persistence-dominated and cannot separate methods.
 
     Returns {switch_rate, persist_acc, oracle_acc, switch_acc, headroom_frac,

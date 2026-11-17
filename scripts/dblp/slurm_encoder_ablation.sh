@@ -34,9 +34,7 @@ if [[ -d "$HOME/.conda/envs/cjepa" ]]; then
     conda activate cjepa
 fi
 
-# -----------------------------------------------------------------------------
 # Sweep grid -- edit and update --array=0-N (N = n_enc * n_seed - 1) to match.
-# -----------------------------------------------------------------------------
 ENCODERS=(linear gcn tgcn)   # 'linear' = no-message-passing floor
 SEEDS=(42 43 44 45 46)
 
@@ -54,11 +52,9 @@ mkdir -p logs "$PRE_DIR" "$JEPA_DIR"
 echo "[array] task=$SLURM_ARRAY_TASK_ID dataset=$DATASET encoder=$ENC seed=$SEED node=$(hostname)"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 
-# -----------------------------------------------------------------------------
 # Per-dataset config: data source + flags, pretext (fixed-topology graphs only
 # support masked_signal), downstream task/metric, and history/horizon/batch.
 # The encoder is the swept variable, so it is NOT set here.
-# -----------------------------------------------------------------------------
 case "$DATASET" in
     dblp)
         if [[ -f dataset/dblp/edges.csv ]]; then
@@ -93,9 +89,7 @@ case "$DATASET" in
         echo "[error] unknown DATASET='$DATASET'" >&2; exit 1 ;;
 esac
 
-# -----------------------------------------------------------------------------
 # (a) Pretrain the encoder of this kind.
-# -----------------------------------------------------------------------------
 echo "[pretrain] encoder=$ENC pretext=$PRETEXT -> $PRE_DIR"
 srun --export=ALL python src/train/pretrain_encoder.py $DATA_ARG \
     --encoder_kind "$ENC" --pretext "$PRETEXT" $SHAPE \
@@ -111,10 +105,8 @@ if [[ -z "${ENC_CKPT:-}" ]]; then
 fi
 echo "[pretrain] ckpt=$ENC_CKPT"
 
-# -----------------------------------------------------------------------------
 # (b) Train DELOS on top + fit the downstream probe (writes test_metrics.json).
 #     Everything except the encoder is held constant across the grid.
-# -----------------------------------------------------------------------------
 echo "[jepa] encoder=$ENC task=$DOWNSTREAM -> $JEPA_DIR"
 srun --export=ALL python src/train/train_delos.py --no_attention_mask $DATA_ARG \
     --encoder_ckpt "$ENC_CKPT" --encoder_kind "$ENC" \

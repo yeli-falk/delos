@@ -80,13 +80,12 @@ def _dataset_args(saved: dict, history_size: int, num_preds: int,
     * omitted -> rebuilt from the checkpoint's saved args (convenient for
       one-off probes of an old checkpoint).
 
-    The saved-args path is a silent-drift hazard and has already bitten once:
-    a dataset flag added AFTER a checkpoint was written is simply absent from
-    its saved args, so ``getattr(args, flag, default)`` falls back to the
-    default and the probe runs on a *different dataset* than the arms it is
-    being compared against — with no error, just an incomparable number.
-    Hence the feature-dim assertion in run_one_encoder, and the cross-arm
-    persistence check in scripts/synthetic/aggregate_synth_sweep.py.
+    The saved-args path can drift silently: a dataset flag added after a
+    checkpoint was written is absent from its saved args, so the default is
+    used and the probe runs on a different dataset than the arms it is
+    compared against, with no error. Hence the feature-dim assertion in
+    run_one_encoder and the cross-arm persistence check in
+    scripts/synthetic/aggregate_synth_sweep.py.
     """
     if cli is not None and cli.data_source:
         ns = types.SimpleNamespace(**vars(cli))
@@ -101,9 +100,8 @@ def _dataset_args(saved: dict, history_size: int, num_preds: int,
 
 def run_one_encoder(ckpt_path: Path | None, args, out_dir: Path | None = None):
     """Fit + evaluate one arm. ``ckpt_path=None`` means a random-init encoder."""
-    # Seed the forecast head init + fit so the encoder-only baseline numbers
-    # are reproducible across runs (the head is random-init; without this the
-    # baseline MAEs swing by ~0.5 MAE run-to-run on this tiny dataset).
+    # Seed the forecast head init and fit so that the encoder-only baseline
+    # numbers are reproducible across runs.
     torch.manual_seed(args.seed)
     ck = ({} if ckpt_path is None
           else torch.load(ckpt_path, map_location="cpu", weights_only=False))

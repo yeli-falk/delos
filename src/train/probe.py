@@ -1,14 +1,13 @@
-"""Downstream probe stage for DELOS (Block 4 orchestration).
+"""Downstream probe stage for DELOS.
 
-Once the JEPA predictor is trained (Block 3 / ``src/train/jepa.py``), a
-task-specific supervised probe is fit on the frozen predictor's rollouts and
-evaluated on the test split. This module is that *probing stage*: reload the
-best predictor, fit the probe, evaluate, print, and write ``test_metrics.json``.
+Once the JEPA predictor is trained (``src/train/jepa.py``), a task-specific
+supervised probe is fit on the frozen predictor's rollouts and evaluated on
+the test split: reload the best predictor, fit the probe, evaluate, print,
+and write ``test_metrics.json``.
 
-The probe heads and their fit/eval loops themselves live in
-``src/world_models/probes.py`` (the proven, parity-checked implementations).
-Here we only orchestrate them and persist metrics, keeping the probing concern
-separate from the JEPA training loop in the unified trainer.
+The probe heads and their fit/eval loops live in
+``src/world_models/probes.py``; this module only orchestrates them and
+persists metrics.
 """
 from __future__ import annotations
 
@@ -44,7 +43,7 @@ def _load_best_predictor(predictor, args, device, out_dir, encoder=None):
 
 
 def _valid_mode(loader):
-    """`active` for signed targets, legacy `positive` otherwise. See
+    """`active` for signed targets, `positive` otherwise. See
     src/world_models/probes.py::_accum_reg."""
     return "active" if getattr(loader.dataset, "signed_target", False) else "positive"
 
@@ -53,9 +52,9 @@ def _sees_base(loader):
     """Give the probe the persistence base as an input iff that base is NOISY.
 
     With a clean base (England COVID, METR-LA) persist_residual alone is the
-    right parameterisation and this stays off, so those numbers are unchanged.
-    With a noisy base it is mandatory: anchoring to an unobservable noisy value
-    caps the achievable improvement at ~0%. See probes.py::_with_base.
+    right parameterisation and this stays off. With a noisy base it is
+    mandatory: anchoring to an unobservable noisy value caps the achievable
+    improvement at about 0%. See probes.py::_with_base.
     """
     return getattr(loader.dataset, "target_noise_sigma", 0.0) > 0.0
 

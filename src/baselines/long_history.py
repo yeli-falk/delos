@@ -45,9 +45,7 @@ from src.custom_codes.dataset_factory import build_dynamic_dataset
 SPLIT_ORDER = ("train", "val", "test")
 
 
-# ---------------------------------------------------------------------------
-# global timeline reconstruction
-# ---------------------------------------------------------------------------
+# -- global timeline reconstruction --
 def _parquet_timeline(ds, split: str) -> np.ndarray:
     """Rebuild a contiguous (T, N) timeline from a pre-windowed split.
 
@@ -135,9 +133,7 @@ def build_signal_timeline(datasets: Dict[str, Dataset]
     return np.concatenate(chunks, axis=0), offsets, int(chunks[0].shape[0])
 
 
-# ---------------------------------------------------------------------------
-# the dataset wrapper
-# ---------------------------------------------------------------------------
+# -- the dataset wrapper --
 class LongHistoryView(Dataset):
     """A regression dataset plus ``long_history`` ``(L_long, N, 1)``.
 
@@ -250,9 +246,7 @@ def build_long_history_datasets(args, long_len: int,
                              base["train"].mean, base["train"].std)
 
 
-# ---------------------------------------------------------------------------
-# Graph WaveNet supports
-# ---------------------------------------------------------------------------
+# -- Graph WaveNet supports --
 def _row_normalise(a: torch.Tensor) -> torch.Tensor:
     """``D_r^-1 A`` with all-zero rows left at zero (BasicTS's ``asym_adj``)."""
     rowsum = a.sum(-1, keepdim=True)

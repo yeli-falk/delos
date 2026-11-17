@@ -13,11 +13,10 @@
 # CIKM'21), two-stage so it is directly comparable to the DELOS pipeline:
 #   1) train the DDGCL encoder with time-aware debiased contrastive learning
 #   2) freeze it and fit the SAME link-prediction probe DELOS uses
-#      (ablations_dblp --mode pretrained_probe)
 #
 # Outputs:
 #   outputs/ddgcl_<TAG>/encoder.ckpt
-#   outputs/ddgcl_<TAG>_probe/test_metrics.json
+#   outputs/ddgcl_<TAG>_probe/analysis.json
 #
 # Run:    DATASET=dblp sbatch scripts/dblp/slurm_ddgcl.sh
 # Knobs:  DATASET=reddit_body  SEED=43  TAG=<name>  MAX_GAP=4  TAU=0.01
@@ -45,22 +44,19 @@ DATASET=${DATASET:-dblp}
 # Seed is part of TAG so a multi-seed sweep does not reuse seed 42's checkpoints.
 TAG=${TAG:-${DATASET}_s${SEED:-42}}
 MAX_GAP=${MAX_GAP:-4}
-# DDGCL's `--tau` is the DEBIAS CLASS PRIOR (the reference's tau_plus), not a
-# softmax temperature — the reference default is 0.01. This script used to pass
-# `--tau_plus`, a flag the trainer does not define, which aborted stage 1.
+# DDGCL's `--tau` is the debias class prior (the reference's tau_plus), not a
+# softmax temperature. The reference default is 0.01, and the trainer has no
+# `--tau_plus` flag.
 TAU=${TAU:-0.01}
 BETA=${BETA:-1.5}
 
-# Link-prediction datasets only: these baselines need a global DTDG snapshot
-# sequence (stage 1) + a link-pred probe (stage 2). Sets DATA_ARG / WINDOW_ARG /
-# ENCODER_ARG / EARLY_STOP_ARG / SEED from the shared config, so both stages —
-# and every other method — construct an identical node set.
+# Link-prediction datasets only. Sets DATA_ARG / WINDOW_ARG / ENCODER_ARG /
+# EARLY_STOP_ARG / SEED from the shared config, so both stages and every other
+# method construct an identical node set.
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  MAX_GAP=$MAX_GAP  TAU=$TAU  BETA=$BETA"
 
-# -----------------------------------------------------------------------------
 # Stage 1: train the DDGCL encoder (time-aware debiased contrastive learning)
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/ddgcl_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -81,9 +77,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping DDGCL pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the DDGCL encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/ddgcl_${TAG}_probe"
 echo
 echo "================================================================="

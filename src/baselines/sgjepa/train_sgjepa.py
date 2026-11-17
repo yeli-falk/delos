@@ -1,14 +1,11 @@
 """Train the SG-JEPA SSL baseline, then save a standard encoder checkpoint.
 
 SG-JEPA (see ``sgjepa.py``) trains the shared GNN encoder through a spiking
-context encoder: the GNN's latents on the first ``w - 1`` snapshots of a window
-drive Parametric-LIF spiking layers, the spike counts predict (Matryoshka-style,
-from every prefix length) the GNN's stop-gradient latents on the window's LAST
-snapshot, under a per-node InfoNCE with the other target nodes as negatives.
-This script trains on the TRAIN portion of the snapshot sequence, selects on the
-val-window loss, and saves ``encoder.ckpt`` in the ``pretrain_encoder.py``
-schema so the encoder is scored through the SAME frozen probes as every other
-baseline:
+context encoder that predicts the GNN's stop-gradient latents on the window's
+LAST snapshot. This script trains on the TRAIN portion of the snapshot
+sequence, selects on the val-window loss, and saves ``encoder.ckpt`` in the
+``pretrain_encoder.py`` schema so the encoder is scored through the SAME
+frozen probes as every other baseline:
 
     # 1. pre-train
     python -m src.baselines.sgjepa.train_sgjepa --data_source jodie_mooc \

@@ -68,9 +68,9 @@ def load_run(jepa_ckpt: Path, device: str, split: str, batch_size: int, num_work
                             hidden_dim=saved.get("encoder_hidden", 128), out_dim=node_dim,
                             freeze=True, bidirectional=saved.get("bidirectional", True)).to(dev)
     encoder.load_state_dict(ckpt["encoder"])
-    # EMA-trained runs (2026-10-05+) also store the TARGET encoder: the
-    # predictor was trained to emit ITS latents, so the error is measured
-    # against it; the online encoder still provides the predictor's inputs.
+    # EMA-trained runs also store the target encoder: the predictor was
+    # trained to emit its latents, so the error is measured against it; the
+    # online encoder still provides the predictor's inputs.
     target_encoder = None
     if "ema_encoder" in ckpt:
         target_encoder = build_encoder(saved.get("encoder_kind", "tgcn"), in_dim=ds.feature_dim,

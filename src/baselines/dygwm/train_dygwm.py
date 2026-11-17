@@ -1,15 +1,12 @@
 """Train the DyG-WM SSL baseline, then save a standard encoder checkpoint.
 
-DyG-WM (see ``dygwm.py``) trains its context encoder (``--encoder_kind dygwm``:
-shared GCN + node / neighbourhood trajectory GRUs + gated fusion) to predict an
-EMA target encoder's representation of the NEXT snapshot's nodes and observed
-relations from the preceding window, with variance / covariance
-regularisation. SSL-only: the paper's supervised link and ranking losses are
-not used, so the row is the paper's own frozen-encoder protocol (its node
-classification setting). This script trains on the TRAIN portion of the
-snapshot sequence, selects on the val-window loss, and saves ``encoder.ckpt``
-in the ``pretrain_encoder.py`` schema so the encoder is scored through the
-SAME frozen probes as every other baseline:
+DyG-WM (see ``dygwm.py``) trains its context encoder (``--encoder_kind dygwm``)
+to predict an EMA target encoder's representation of the NEXT snapshot's nodes
+and observed relations from the preceding window. SSL-only: the paper's
+supervised link and ranking losses are not used. This script trains on the
+TRAIN portion of the snapshot sequence, selects on the val-window loss, and
+saves ``encoder.ckpt`` in the ``pretrain_encoder.py`` schema so the encoder is
+scored through the SAME frozen probes as every other baseline:
 
     # 1. pre-train (paper node setting: EMA 0.995, hidden 128, lr 1e-3, wd 1e-5)
     python -m src.baselines.dygwm.train_dygwm --data_source jodie_mooc \

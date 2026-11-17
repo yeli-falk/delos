@@ -36,12 +36,10 @@ RAND_DIR="outputs/england_covid_cjepa_randenc${SUF}"
 PRE_DIR="outputs/england_covid_cjepa_pretrained${SUF}"
 mkdir -p logs outputs/england_covid_baselines "$ENC_DIR" "$RAND_DIR" "$PRE_DIR"
 
-# ---------------------------------------------------------------------------
 # Environment activation. Pick the path that matches how your cluster works:
 #   1) module-managed PyTorch:    module load pytorch/2.5
 #   2) personal conda env:        conda activate cjepa
 #   3) virtualenv:                source ~/envs/cjepa/bin/activate
-# ---------------------------------------------------------------------------
 if [[ -n "${MODULESHOME:-}" ]] && command -v module >/dev/null 2>&1; then
     : # module load python/3.10  pytorch/2.5  cuda/12.1   # customise here
 fi
@@ -64,12 +62,11 @@ NP="${NP:-3}"
 NW="${SLURM_CPUS_PER_TASK:-4}"
 ENC_CKPT="$ENC_DIR/encoder_england_covid_tgcn_masked_signal.ckpt"
 
-# --- predictor-objective recipe (see train_delos.py --help) ---------------
-# The MOOC-validated fix, ported to regression. PERSIST_RES is the load-bearing
-# one here: it makes the probe predict the delta over the last observed value,
-# so persistence is the FLOOR (without it a latent->signal probe historically
-# landed ~1.8x WORSE than persistence). RESIDUAL + CHANGE_W add the latent
-# residual head and transition-upweighting; TRAIN_ENC unfreezes the encoder.
+# --- predictor-objective recipe (see train_delos.py --help) ---
+# PERSIST_RES is the load-bearing one here: it makes the probe predict the
+# delta over the last observed value, so persistence is the FLOOR. RESIDUAL +
+# CHANGE_W add the latent residual head and transition-upweighting; TRAIN_ENC
+# unfreezes the encoder.
 #   RESIDUAL=1 CHANGE_W=2.0 PERSIST_RES=1 sbatch scripts/england_covid/slurm_train.sh
 RESIDUAL="${RESIDUAL:-0}"
 CHANGE_W="${CHANGE_W:-0}"

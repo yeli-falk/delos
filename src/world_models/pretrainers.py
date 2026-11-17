@@ -1,8 +1,8 @@
 """Self-supervised pretext heads for DELOS encoder pretraining.
 
-Encoders + the encoder registry. These wrap a (trainable) encoder with a small decoder/head
-that drives a pretext objective; after pretraining only ``encoder.state_dict()``
-is kept and the head is discarded.
+These wrap a (trainable) encoder with a small decoder/head that drives a
+pretext objective; after pretraining only ``encoder.state_dict()`` is kept
+and the head is discarded.
 
 Three pretexts, selected by ``--pretext`` in ``pretrain_encoder.py``:
   - ``masked_signal``  -> :class:`EncoderPretrainer`     (mask channel-0 values,
@@ -201,10 +201,10 @@ def sample_masked_edges(adj: torch.Tensor, active: torch.Tensor,
     # Upper triangle so we don't double-count (i, j) and (j, i) for undirected graphs.
     triu = torch.triu(torch.ones(N, N, dtype=torch.bool, device=device), diagonal=1)
     # nonzero() refuses tensors with more than INT_MAX (2^31) elements, which
-    # (B, T, N, N) exceeds at full-N MOOC/Reddit with batch 8. Enumerate per
-    # snapshot instead: same row-major (b, t, i, j) order, so the edge list --
-    # and hence the seeded randperm below -- is identical, and the (B, T, N, N)
-    # boolean temporary is never materialised.
+    # (B, T, N, N) exceeds on large graphs. Enumerate per snapshot instead:
+    # same row-major (b, t, i, j) order, so the edge list -- and hence the
+    # seeded randperm below -- is identical, and the (B, T, N, N) boolean
+    # temporary is never materialised.
     eb, et, ei, ej = [], [], [], []
     for b in range(B):
         for t in range(T):

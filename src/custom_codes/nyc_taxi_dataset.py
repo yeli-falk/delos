@@ -1,18 +1,13 @@
 """NYC taxi mobility dataset: an evolving zone-to-zone trip network with a
-RECURRING, PERIODIC per-zone congestion state.
+recurring, periodic per-zone congestion state.
 
-Why this dataset (2026-10-02): the mobility counterpart of
-``bts_flights_dataset.py``. The graph is the trips actually driven in each bin
-(pickup zone -> dropoff zone; it changes with the hour, the weekday and the
-season), and the label is whether a zone is CONGESTED in the bin: the mean
-speed of the trips picked up there is low for that zone. It is derived from
-the trips' distance / duration fields, not from how many edges the node has
-(demand is the degree; speed is not). Unlike the airport delay state, which
-is mostly weather-driven from one day to the next, congestion follows peak /
-off-peak and weekday / weekend cycles, so a model that sees a history window
-has something a copy of the last snapshot does not. The same cycles make
-"copy the same bin one period ago" a strong trivial predictor, hence the
-seasonal floors in the audit.
+The mobility counterpart of ``bts_flights_dataset.py``. The graph is the trips
+driven in each bin (pickup zone -> dropoff zone), and the label is whether a
+zone is congested in the bin: the mean speed of the trips picked up there is
+low for that zone. It is derived from the trips' distance / duration fields,
+not from the node's degree. Congestion follows peak / off-peak and weekday /
+weekend cycles, which makes "copy the same bin one period ago" a strong
+trivial predictor, hence the seasonal floors in the audit.
 
 Raw data: the NYC TLC trip records, one parquet per month,
     https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_<YYYY>-<MM>.parquet
@@ -34,9 +29,8 @@ where ``n_ok`` / sums cover the pickups that pass the sanity filter (duration
 sum_miles / sum_hours (trip-length weighted), valid when n_ok >= min_trips.
 Label (``node_labels_dyn``, -1 = invalid):
     ``label_kind="rel_speed"``  1 if the speed is below the zone's own
-        ``threshold`` quantile (default 0.25) of its speeds over the TRAIN
-        bins -- every zone is congested about a quarter of the time, so the
-        label is a state of the zone and not "is this Midtown";
+        ``threshold`` quantile (default 0.25) of its speeds over the train
+        bins, so the label is a state of the zone and not of its location;
     ``label_kind="abs_speed"``  1 if the speed is below ``threshold`` mph.
 ``node_signal`` (T, N) float32 = speed / the zone's cut-off (< 1 = congested).
 Features: the 8 graph statistics + (unless ``with_ops_features=False``)
@@ -45,7 +39,7 @@ Features: the 8 graph statistics + (unless ``with_ops_features=False``)
      sin / cos hour-of-day (sub-daily bins only)].
 The loader prints the label and structure audits of the BTS loader plus the
 trivial floors on the test bins (AUROC of copy-last, same bin yesterday, same
-bin last week), which are what a periodic dataset has to be read against.
+bin last week).
 """
 from __future__ import annotations
 

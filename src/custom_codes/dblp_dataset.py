@@ -11,11 +11,8 @@ Tensor shapes per item:
     active  : (T, N) bool       node existence
     times   : (T,)              year offsets
 
-This file ships a hook to load a real DBLP edge-list dump (one `(src, dst, year)` row per line).
-
-The sliding-window logic lives in the universal :class:`DTDGDataset`; this
-file is just the DBLP-specific parsing (synthetic generators + real edge
-list) plus a thin wrapper that builds the canonical `SnapshotSequence`.
+The real data is an edge-list dump with one `(src, dst, year)` row per line.
+The sliding-window logic lives in the universal :class:`DTDGDataset`.
 """
 from __future__ import annotations
 
@@ -88,8 +85,7 @@ def build_dblp_snapshots(
 class DBLPDynamicGraphDataset(Dataset):
     """Sliding-window dataset over a yearly co-authorship graph.
 
-    Thin wrapper: parses DBLP into a `SnapshotSequence` and delegates the
-    windowing/splitting/`__getitem__` to the universal :class:`DTDGDataset`.
+    Thin wrapper over the universal :class:`DTDGDataset`.
 
     Args:
       data_path:   path to a CSV-like edge list with `src,dst,year` rows;

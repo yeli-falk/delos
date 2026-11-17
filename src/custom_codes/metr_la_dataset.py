@@ -36,7 +36,7 @@ def _load_speed_dataframe(h5_path: Path) -> np.ndarray:
 
     df = pd.read_hdf(h5_path)
     # Index is a DatetimeIndex; values are float speeds (mph). Missing readings
-    # are encoded as 0.0 in the DCRNN release; we treat them as such.
+    # are encoded as 0.0 in the DCRNN release.
     speeds = df.values.astype(np.float32)               # (T_total, N)
     times = df.index.values.astype("datetime64[ns]")    # (T_total,)
     return speeds, times
@@ -76,8 +76,6 @@ def _load_hf_parquet(parquet_path: Path, history_size: int, num_preds: int):
         )
 
     df = pd.read_parquet(parquet_path)
-    # Column names use x_t-11_d0 ... x_t-1_d0, x_t+0_d0 for history and
-    # y_t+1_d0 ... y_t+12_d0 for the future. _d0 = traffic, _d1 = time-of-day.
     hist_offsets = [f"-{i}" for i in range(11, 0, -1)] + ["+0"]
     fut_offsets = [f"+{i}" for i in range(1, 13)]
     expected_hist = [f"x_t{o}_d0" for o in hist_offsets]
@@ -95,7 +93,7 @@ def _load_hf_parquet(parquet_path: Path, history_size: int, num_preds: int):
     grouped = df.groupby("t0_timestamp", sort=True)
     n_samples = grouped.ngroups
 
-    # Sanity check: every t0 should have all nodes present.
+    # Every t0 should have all nodes present.
     counts = grouped.size().values
     if not (counts == n_nodes).all():
         raise ValueError(
@@ -108,7 +106,7 @@ def _load_hf_parquet(parquet_path: Path, history_size: int, num_preds: int):
     speeds = df[speed_cols].values.astype(np.float32)          # (n_samples * N, 24)
     tods = df[tod_cols].values.astype(np.float32)              # (n_samples * N, 24)
 
-    # Reshape: rows are sorted by (t0, node_id) so reshape gives (n_samples, N, 24).
+    # Rows are sorted by (t0, node_id), so reshape gives (n_samples, N, 24).
     speeds = speeds.reshape(n_samples, n_nodes, history_size + num_preds)
     tods = tods.reshape(n_samples, n_nodes, history_size + num_preds)
 
@@ -133,7 +131,7 @@ def _make_synthetic(num_nodes: int, num_steps: int, seed: int = 0):
     rho = 0.85
     for t in range(1, num_steps):
         speeds[t] = rho * speeds[t - 1] + (1 - rho) * (60 + rng.randn(num_nodes) * 5)
-    # 5-minute steps starting at the epoch.
+    # 5-minute steps.
     base = np.datetime64("2012-03-01T00:00:00", "m")
     times = base + (np.arange(num_steps) * 5).astype("timedelta64[m]")
     return speeds, times, adj
@@ -146,18 +144,16 @@ class MetrLADataset(Dataset):
       x_hist  : (T_hist, N, F) raw node features (speed + tod sin/cos)
       x_fut   : (T_pred, N, F) ground-truth future features (for target encoding)
       signal  : (T_total, N) un-normalised speeds -- the regression target
-      speeds  : alias of `signal`, kept for callers predating the rename
+      speeds  : alias of `signal`
       active  : (T_total, N) bool, False where the sensor reading is missing
       mean    : (1,) speed mean used for de-normalisation at eval
       std     : (1,) speed std used for de-normalisation at eval
 
-    Note there is deliberately NO per-item `adj`: the graph is constant, so
-    materialising a (T_total, N, N) copy per window would dominate both the
-    collate cost and GPU memory. Consumers read the dataset-level `self.adj`
-    (N, N) instead -- see ``src/world_models/probes.py::graph_inputs``, which
-    falls back to it whenever a batch carries no `adj`. That fallback is what
-    lets the England-COVID probe/eval code run unchanged on METR-LA, so the
-    two datasets report through one metric implementation.
+    There is deliberately no per-item `adj`: the graph is constant, so a
+    (T_total, N, N) copy per window would dominate collate cost and GPU
+    memory. Consumers read the dataset-level `self.adj` (N, N) instead; see
+    ``src/world_models/probes.py::graph_inputs``, which falls back to it
+    whenever a batch carries no `adj`.
 
     Args:
       data_dir:    folder containing metr-la.h5 + adj_mx.pkl
@@ -268,7 +264,6 @@ class MetrLADataset(Dataset):
         speeds, tods, _, n_nodes = _load_hf_parquet(
             data_dir / f"{split}.parquet", history_size, num_preds,
         )
-        # speeds: (n_samples, T, N)  tods: (n_samples, T, N)
         self.num_nodes = n_nodes
 
         if normalize:
@@ -303,16 +298,13 @@ class MetrLADataset(Dataset):
         self.adj = adj
         self.starts = np.arange(0, len(self.windows), stride, dtype=np.int64)
 
-        # The parquet release is PRE-WINDOWED, so it has no contiguous (T, N, F)
-        # series -- but the windows are stride-1, so window i begins at timestep
-        # i and `windows[:, 0]` reconstructs that series exactly. Exposing it
-        # under the same names the h5 path uses (`feats` / `raw_speeds`) is what
-        # lets the snapshot consumers -- CLDG / DDGCL / IDOL via
-        # baselines.common._fixed_topology_snapshots -- run on the REAL dataset.
-        # Without it they see no `.feats` and abort; that gap was invisible when
-        # testing against the synthetic generator, which takes the h5 path.
-        # NB: derived from the FULL window list, not the strided subset, so the
-        # snapshot timeline stays contiguous regardless of --metr_la_stride.
+        # The parquet release is pre-windowed, but the windows are stride-1, so
+        # window i begins at timestep i and `windows[:, 0]` reconstructs the
+        # contiguous series. It is exposed under the names the h5 path uses
+        # (`feats` / `raw_speeds`) for the snapshot consumers
+        # (baselines.common._fixed_topology_snapshots). It is derived from the
+        # full window list, not the strided subset, so the timeline stays
+        # contiguous regardless of --metr_la_stride.
         self.feats = windows[:, 0]                          # (T, N, F)
         self.raw_speeds = self.raw_window_speeds[:, 0]      # (T, N)
 
@@ -322,9 +314,8 @@ class MetrLADataset(Dataset):
     def __getitem__(self, idx: int):
         if self.layout == "hf_parquet":
             # Index through `starts`, not `idx`: otherwise --metr_la_stride
-            # would shorten the epoch while still handing back the first N
-            # consecutive windows, i.e. silently training on a contiguous
-            # PREFIX of the split rather than a uniform subsample of it.
+            # would return a contiguous prefix of the split instead of a
+            # uniform subsample.
             start = int(self.starts[idx])
             clip = self.windows[start]                              # (T, N, F)
             speeds = self.raw_window_speeds[start]                  # (T, N)
@@ -335,16 +326,14 @@ class MetrLADataset(Dataset):
         x_hist = torch.from_numpy(clip[: self.history_size])
         x_fut = torch.from_numpy(clip[self.history_size :])
         speeds_t = torch.from_numpy(speeds)
-        # A missing loop-detector reading is stored as 0.0 in the DCRNN release,
-        # which is also what every published METR-LA number masks out. Exposing
-        # it as `active` lets the shared probe apply the same rule it applies to
-        # England COVID instead of each call site re-deriving `speeds > 0`.
+        # A missing loop-detector reading is stored as 0.0 in the DCRNN
+        # release; `active` exposes that mask to the shared probe.
         active_t = speeds_t > 0
         return {
             "x_hist": x_hist,
             "x_fut": x_fut,
             "signal": speeds_t,         # un-normalised, for MAE eval
-            "speeds": speeds_t,         # legacy alias (fixed-topology probe)
+            "speeds": speeds_t,         # alias of `signal`
             "active": active_t,
             "start_idx": start,
         }

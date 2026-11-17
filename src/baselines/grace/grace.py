@@ -2,12 +2,10 @@
 STATIC self-supervised baseline.
 
 GRACE is a single-graph, single-time contrastive method: it knows nothing
-about the timeline. It is in this repo as the *static* SSL control -- the row
-that answers "does the self-supervised objective need to be temporal at
-all?", which none of CLDG / DDGCL / IDOL / DySubC (all temporal objectives)
-can answer. The temporal component of the comparison is then isolated: same
-GCN encoder, same node features, same frozen probe on the last history
-snapshot, only the objective differs.
+about the timeline. It is the *static* SSL control, the row that answers
+"does the self-supervised objective need to be temporal at all?": same GCN
+encoder, same node features, same frozen probe on the last history snapshot,
+only the objective differs.
 
 The method, per Zhu et al. (arXiv:2006.04131, GRML @ ICML'20):
 

@@ -31,7 +31,7 @@ histogram in (3) is empty by construction and the graph probe reduces to
 degree dynamics; the homophily line prints "--" there.
 
 Every feature in (3) is observed at t-1 or earlier: nothing from the target
-snapshot leaks in (no "oracle" column, per the repo's table rule).
+snapshot leaks in.
 
 Usage (repo root, PYTHONPATH=.):
   python scripts/analysis/dataset_dynamics.py --datasets chase_music
@@ -65,9 +65,7 @@ PROBE_C = 1.0
 SPLITS_DEFAULT = (0.7, 0.1, 0.2)
 
 
-# --------------------------------------------------------------------------
-# loading
-# --------------------------------------------------------------------------
+# --- loading ---
 def build(name: str, extra: list[str], all_cells: bool = False):
     """Build the dataset through the factory with the launchers' defaults and
     return (adj, active, labels, feats, n_tr, n_va, meta)."""
@@ -96,7 +94,7 @@ def build(name: str, extra: list[str], all_cells: bool = False):
     # Score only nodes ACTIVE at the labelled snapshot, as the pipeline's probe
     # does (run_block_probe collects active rows at the target step). The
     # JODIE state matrix labels every user at every bin, so without this the
-    # inactive majority pads persistence (MOOC: 7047 labelled vs ~1000 active).
+    # inactive majority pads persistence.
     if not all_cells:
         labels = np.where(active, labels, -1)
     T = adj.shape[0]
@@ -111,9 +109,7 @@ def build(name: str, extra: list[str], all_cells: bool = False):
     return adj, active, labels, feats, n_tr, n_va, meta
 
 
-# --------------------------------------------------------------------------
-# 1. label dynamics
-# --------------------------------------------------------------------------
+# --- 1. label dynamics ---
 def label_dynamics(labels, n_tr, n_va, max_lag):
     T, N = labels.shape
     v = labels >= 0
@@ -155,9 +151,7 @@ def label_dynamics(labels, n_tr, n_va, max_lag):
     return out
 
 
-# --------------------------------------------------------------------------
-# 2 + 3. probes
-# --------------------------------------------------------------------------
+# --- 2 + 3. probes ---
 def _onehot(x, C):
     """One-hot with an extra 'unknown' column for -1."""
     o = np.zeros((len(x), C + 1), dtype=np.float32)
@@ -284,9 +278,7 @@ def probes(adj, active, labels, feats, n_tr, n_va, k_max, with_feats, max_rows, 
     return out
 
 
-# --------------------------------------------------------------------------
-# 4 + 5. structure and coverage
-# --------------------------------------------------------------------------
+# --- 4 + 5. structure and coverage ---
 def structure(adj, active, labels, n_tr, n_va, max_lag):
     T, N = active.shape
     iu = np.triu_indices(N, k=1)
@@ -327,9 +319,7 @@ def structure(adj, active, labels, n_tr, n_va, max_lag):
                                       "test_mean": float(v[te0:].sum(1).mean())}}
 
 
-# --------------------------------------------------------------------------
-# reporting
-# --------------------------------------------------------------------------
+# --- reporting ---
 def fmt(x, nd=3):
     return "--" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.{nd}f}"
 

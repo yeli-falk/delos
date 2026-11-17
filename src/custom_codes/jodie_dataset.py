@@ -1,6 +1,6 @@
-"""JODIE Reddit / Wikipedia binned into discrete-time dynamic graphs.
+"""JODIE Reddit / Wikipedia / MOOC binned into discrete-time dynamic graphs.
 
-JODIE (Kumar et al., 2019) ships two of the most-benchmarked CTDG datasets:
+JODIE (Kumar et al., 2019) ships three widely used CTDG datasets:
 
   - Reddit:   user x subreddit interactions, 10k users, 1k subreddits,
               ~672k events over one month, 172-dim LIWC edge features.
@@ -8,15 +8,13 @@ JODIE (Kumar et al., 2019) ships two of the most-benchmarked CTDG datasets:
               same edge feature dim.
   - MOOC:     student x course-item interactions, ~7k students, 97 items,
               ~412k events, 4-dim edge features, 4,066 dropout state-change
-              events — by far the densest state-label signal of the three
-              (reddit has ~366 bans, wikipedia ~217).
+              events (reddit has ~366 bans, wikipedia ~217).
 
-Both are CTDG (continuous-time event streams). DELOS expects DTDG
-(per-snapshot adjacency + active mask + node features). We bridge the two by
-binning timestamps into `num_bins` equal-width windows (see
-:mod:`src.custom_codes.dtdg.binning`). Top-K most-active entities are kept to
-bound the dense (T, N, N) representation, and optional LIWC edge features are
-mean-pooled onto (bin, node) positions.
+These are continuous-time event streams. DELOS expects DTDG (per-snapshot
+adjacency + active mask + node features), so timestamps are binned into
+`num_bins` equal-width windows (see :mod:`src.custom_codes.dtdg.binning`).
+All users and items are kept, and optional edge features are mean-pooled onto
+(bin, node) positions.
 
 CSV format expected (matches Stanford's JODIE release exactly):
 
@@ -74,8 +72,7 @@ def _parse_jodie_csv_with_state_labels(path: Path) -> tuple:
     """Parse JODIE CSV and additionally return per-event state_label (col 3).
 
     The JODIE state_label is 1 at the event where a user undergoes a state
-    change (e.g. ban) and 0 otherwise — see Kumar et al. 2019. Useful for
-    dynamic node classification, the standard JODIE benchmark task.
+    change (e.g. ban) and 0 otherwise (Kumar et al. 2019).
 
     Returns (users, items, times, state_labels). Cached as .state.npz.
     """
@@ -143,19 +140,15 @@ def _parse_jodie_csv_with_features(path: Path) -> tuple:
 def _parse_jodie_csv(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Read a JODIE CSV. Returns (user_ids, item_ids, timestamps) as 1-D arrays.
 
-    JODIE files have a 5-field header line ("user_id,item_id,timestamp,
-    state_label,comma_separated_list_of_features") followed by data rows
-    with 1 user + 1 item + 1 ts + 1 state + 172 features = 176 fields each.
-    Pandas mis-handles this header/body mismatch under several flag
-    combinations (silently NaNs every row, or raises). We sidestep the
-    inference by passing an explicit `names=` schema covering all 176
-    columns and using `header=0` to discard the original header line.
+    JODIE files have a 5-field header line followed by data rows with
+    4 + n_feats fields each. Pandas mis-handles this header/body mismatch, so
+    an explicit `names=` schema covering all columns is passed with
+    `header=0` to discard the original header line.
 
-    IDs are treated as opaque strings then factorized to dense ints — that's
-    what the upstream JODIE loader does, and it's robust to both numeric
-    and non-numeric IDs.
+    IDs are treated as opaque strings and factorized to dense ints, as the
+    upstream JODIE loader does.
 
-    Cached as .npz alongside the CSV; later runs skip the parse entirely.
+    Cached as .npz alongside the CSV.
     """
     cache = path.with_suffix(".npz")
     if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
@@ -183,8 +176,8 @@ def _parse_jodie_csv(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
               flush=True)
 
     if users is None or len(users) == 0:
-        # Failsafe: stdlib csv. ~30-60s on the 2.3 GB Reddit file, one-time
-        # cost since the npz cache absorbs it for every subsequent run.
+        # Failsafe: stdlib csv. Slow on the Reddit file, but a one-time cost
+        # since the npz cache absorbs it.
         import csv
         u_strs, i_strs, t_floats = [], [], []
         with open(path, newline="") as f:
@@ -238,22 +231,17 @@ def _state_label_matrix(path: Path, num_nodes: int, num_bins: int,
                         mode: str = "event") -> np.ndarray:
     """Per-(bin, node) binary state-change label — the *dynamic* JODIE target.
 
-    Unlike :func:`_state_label_vector`, which OR-reduces every user's ban flags
-    into one static bit, this keeps the time axis: it returns a
-    ``(num_bins, num_nodes)`` matrix so a probe can ask a different question at
-    each snapshot. Users get 0/1; items get -1 at every bin (filtered out
-    downstream).
+    Unlike :func:`_state_label_vector`, this keeps the time axis and returns
+    a ``(num_bins, num_nodes)`` matrix. Users get 0/1; items get -1 at every
+    bin (filtered out downstream).
 
       mode='event':  Y[t, u] = 1 iff a state_label==1 event for user u falls in
-                     snapshot t. The faithful dynamic benchmark target (a ban
-                     is localised to the bin where it happens); very sparse.
+                     snapshot t; very sparse.
       mode='state':  Y[t, u] = 1 for every bin at or after u's first flagged
-                     bin (cumulative 'currently banned' state); denser, still
-                     time-varying (0 before the ban, 1 after).
+                     bin (cumulative 'currently banned' state); denser.
 
-    The bins reproduce the graph's exact edges: equal-width over the event
-    timestamps (matching ``bin_bipartite``), so ``Y[t]`` aligns with snapshot
-    ``t`` of ``ds.adj``.
+    The bins are equal-width over the event timestamps (matching
+    ``bin_bipartite``), so ``Y[t]`` aligns with snapshot ``t`` of ``ds.adj``.
     """
     assert mode in ("event", "state"), f"unknown state_label_mode {mode!r}"
     users_full, items_full, times_full, states_full = \
@@ -295,9 +283,8 @@ def _state_label_matrix(path: Path, num_nodes: int, num_bins: int,
 class JODIEDynamicGraphDataset(Dataset):
     """JODIE Reddit or Wikipedia binned into DTDG snapshots.
 
-    Same return signature as DBLPDynamicGraphDataset so it drops into the
-    existing train / pretrain / diagnose / ablate scripts unchanged. Thin
-    wrapper over the universal :class:`DTDGDataset`.
+    Same return signature as DBLPDynamicGraphDataset. Thin wrapper over the
+    universal :class:`DTDGDataset`.
 
     Args:
       data_path: path to the JODIE CSV. If None, falls back to
@@ -367,11 +354,11 @@ class JODIEDynamicGraphDataset(Dataset):
             feats = graph_feats
             self.feat_dim = feat_dim
 
-        # State-change labels (optional). 'ever' keeps the legacy static
-        # per-node "ever banned" bit; 'event'/'state' additionally build a
-        # per-(bin, node) dynamic matrix on ds.node_labels_dyn while still
-        # exposing an OR-reduced static vector on ds.node_labels for backward
-        # compatibility with compute_block_labels(source="dataset").
+        # State-change labels (optional). 'ever' gives the static per-node
+        # "ever banned" bit; 'event'/'state' additionally build a per-(bin,
+        # node) matrix on ds.node_labels_dyn while still exposing the
+        # OR-reduced static vector on ds.node_labels for
+        # compute_block_labels(source="dataset").
         self.node_labels = None
         self.node_labels_dyn = None
         self.state_label_mode = state_label_mode

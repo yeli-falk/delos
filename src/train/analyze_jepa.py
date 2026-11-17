@@ -1,15 +1,14 @@
 """Unified analysis of a DELOS encoder + predictor on any dynamic-graph dataset.
 
-This script replaces the two former tools (`diagnose_jepa_dblp.py` and
-`ablations_dblp.py`) with a single entry point that runs **both** analyses and
-reports them side by side. Every probe here is *trained by gradient descent*
-(no closed-form ridge): the question is always "what can a learned readout pull
-out of this frozen representation", which is the honest probing protocol.
+A single entry point that runs two analyses and reports them side by side.
+Every probe here is *trained by gradient descent* (no closed-form ridge): the
+question is always "what can a learned readout pull out of this frozen
+representation".
 
 Two complementary views, both comparing the encoder-only baseline against the
 JEPA predictor's forecast:
 
-  (1) Representation diagnostics  [former diagnose_jepa_dblp.py]
+  (1) Representation diagnostics
       On a held-out split we collect two frozen per-node representations and
       compare them:
         - z_enc  = encoder(x_hist, adj_hist)[-1]      (embedding persistence:
@@ -22,16 +21,16 @@ JEPA predictor's forecast:
       encoder, its probe scores beat z_enc; if CKA ~ 1 and scores match, the
       predictor merely reproduced the encoder (collapse).
 
-  (2) Downstream link-prediction ablation  [former ablations_dblp.py]
+  (2) Downstream link-prediction ablation
       A trained LinkPredictionProbe scores candidate edges from a per-node
       representation. We compare four representation *sources* on MRR / Hits@k:
         - random      U(0,1) scores                        (chance baseline)
         - encoder     frozen encoder persistence + probe   (what a pretrained
-                      encoder alone buys; former --mode pretrained_probe)
+                      encoder alone buys)
         - jepa        frozen encoder + frozen predictor     (does the predictor's
                       forecast beat encoder persistence downstream?)
-        - supervised  fresh encoder + probe, end-to-end     (former --mode
-                      supervised_gcn; what direct supervision buys)
+        - supervised  fresh encoder + probe, end-to-end     (what direct
+                      supervision buys)
 
 Both analyses are dataset-agnostic: the dataset is built by the shared factory
 (`build_dynamic_dataset`), so any `--data_source` (dblp / jodie / reddit / sbm /
@@ -84,7 +83,7 @@ from src.world_models.probes import NodeClassProbe, sample_neg_edges, score_nega
 
 
 # ===========================================================================
-# PART 1 — Representation diagnostics (former diagnose_jepa_dblp.py)
+# PART 1 — Representation diagnostics
 # ===========================================================================
 @torch.no_grad()
 def collect_representations(encoder, predictor, loader, history_size, device):
@@ -284,9 +283,9 @@ def _best_f1_threshold(score: np.ndarray, label: np.ndarray) -> float:
     """Score cut that maximises F1 on (score, label); predict positive above it.
 
     Meant to be fitted on the TRAIN rows and applied to test: the BCE probe's
-    natural cut (logit 0) predicts almost all-negative at a ~3% positive rate,
-    so F1 there is ~0 for every method, and tuning the cut on test is leakage.
-    Falls back to 0.0 (the logit cut) when a class is absent.
+    natural cut (logit 0) predicts almost all-negative when positives are
+    rare, so F1 there is near 0 for every method, and tuning the cut on test
+    is leakage. Falls back to 0.0 (the logit cut) when a class is absent.
     """
     label = label.astype(bool)
     n_pos = int(label.sum())
@@ -352,8 +351,7 @@ def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
 
     Features are standardised by train-set statistics; for regression the
     target is standardised too (R^2 is affine-invariant, so it is reported in
-    standardised space). Returns a dict whose keys mirror the old closed-form
-    probes so downstream printing is unchanged:
+    standardised space). Returns a dict keyed by task:
       task='regression' -> {"r2_train", "r2_test"}
       task='binary'     -> {"acc_test", "auroc_test", "auprc_test", ...}
       task='multiclass' -> {"acc_test", "macro_f1_test", "n_classes"}
@@ -390,9 +388,7 @@ def train_node_probe(Z: np.ndarray, y: np.ndarray, train: np.ndarray,
                            dtype=torch.long, device=device)
         yte_idx = np.array([cls_to_idx[int(c)] for c in y[te_m]])
         # Seed the head init from a FORKED RNG so it is reproducible across
-        # calls without perturbing the caller's global torch RNG. (Only the
-        # minibatch shuffler was seeded before; nn.Linear init leaked from the
-        # global stream, so identical latents gave different probes run-to-run.)
+        # calls without perturbing the caller's global torch RNG.
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(seed)
             head = NodeClassProbe(n_in, K, hidden_dim=hidden_dim).to(device)
@@ -570,9 +566,8 @@ def run_diagnostic(data: dict, out_dir: Path,
                    probe_hidden: int = 0) -> dict:
     """Effective rank / CKA + *trained* structural probes for encoder vs jepa.
 
-    The first three positional args match the former diagnose_jepa_dblp version
-    so existing callers (e.g. diagnose_trajectory_jepa) keep working; the probe
-    training hyper-parameters are keyword-only with sensible defaults.
+    The probe training hyper-parameters are keyword-only; the first three
+    positional args are also used by diagnose_trajectory_jepa.
     """
     Z_enc, Z_pred = data["Z_enc"], data["Z_pred"]
     deg, pr, kc = data["degree"], data["pagerank"], data["kcore"]
@@ -661,7 +656,7 @@ def run_diagnostic(data: dict, out_dir: Path,
 
 
 # ===========================================================================
-# PART 2 — Downstream link-prediction ablation (former ablations_dblp.py)
+# PART 2 — Downstream link-prediction ablation
 # ===========================================================================
 LINK_SOURCES = ("random", "encoder", "jepa", "supervised")
 

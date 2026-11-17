@@ -8,21 +8,16 @@
 #SBATCH --time=12:00:00
 #SBATCH --partition=gpu
 #
-# DELOS ABLATION on a node-state task (DATASET=mooc by default; any dataset
-# with a dynamic BINARY state works -- reddit, wikipedia, nyc_taxi, bts_flights,
-# synthetic_dyn -- since the probe below is --task binary): one component removed per
-# row, everything else held at the final recipe (cosine-EMA target, trained
-# encoder, node masking, residual head, change-weighted loss, pretrained
-# encoder, no structural attention mask).
+# DELOS ablation on a node-state task: one component removed per row,
+# everything else held at the final recipe. DATASET=mooc by default; any
+# dataset with a dynamic binary state works (reddit, wikipedia, nyc_taxi,
+# bts_flights, synthetic_dyn).
 #
-# Base model (BASE env, default ema_cos): which main-table DELOS row every
-# arm is a removal from.
+# BASE (default ema_cos) is the main-table DELOS row every arm is a removal from:
 #   BASE=ema_cos   --train_encoder --ema_target --ema_schedule cosine   (= jepa_ema_cos)
 #   BASE=ema       --train_encoder --ema_target                         (= jepa_ema)
-# The EMA-schedule row flips with the base: `const_ema` (w/o cosine anneal)
-# exists only under ema_cos, `cos_ema` (+ cosine anneal) only under ema. Cells
-# of the two bases never collide: ema_cos writes abl_<arm>_s<seed>/, ema writes
-# abl_ema_<arm>_s<seed>/, and the table is built per base.
+# The two bases write to abl_<arm>_s<seed>/ and abl_ema_<arm>_s<seed>/, and the
+# table is built per base.
 #
 # Arms (row label in the table -> what changes vs `full`):
 #   full           the base model (see BASE above)
@@ -42,18 +37,10 @@
 #                  the encoder)
 #   ctx_mask       + context-input masking    (--mask_encoder_input)  [opt-in]
 #
-# NOTE: the main table (slurm_all_methods.sh) runs with the structural mask ON
-# (trainer default, sparse edge-list attention). `no_attn_mask` is the honest
-# ablation of it. Results produced by earlier versions of these scripts (mask
-# off) are not comparable -- use a fresh ROOT.
-#
-# Reuse: four arms are byte-identical to arms of slurm_all_methods.sh
-# (full=jepa_ema_cos or jepa_ema, const_ema/cos_ema=the other one,
-# no_target_net=jepa_naive, frozen_enc=jepa_frozen). If that run's
-# state_probe.json exists under $ROOT it
-# is used as-is and nothing is retrained. Every other arm writes to
-# $ROOT/abl_<arm>_s<seed>/. Every stage skips when its output exists, so the
-# job is resumable and the table can be regenerated at any time.
+# Reuse: full, const_ema / cos_ema, no_target_net and frozen_enc are identical
+# to arms of slurm_all_methods.sh. If that run's state_probe.json exists under
+# $ROOT it is used and nothing is retrained. Every stage skips when its output
+# exists, so the job is resumable.
 #
 # Usage (from the repo root):
 #   bash scripts/classification/slurm_ablation_mooc.sh --list        # grid -> array size
@@ -83,14 +70,8 @@ export PYTHONPATH="$REPO_ROOT"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # --- base model + grid -------------------------------------------------------
-# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
-# trainers' default spans the whole --epochs budget, which early stopping
-# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
-# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
-# was the constant arm. 50 epochs is below every observed run length, so the
-# schedule finishes while the predictor still trains. 0 = whole run (legacy).
-# Same value for every arm and method so no row gets its own schedule.
+# Cosine-anneal horizon of the EMA momentum, the same value as in
+# slurm_all_methods.sh (see there). 0 = anneal over the whole run.
 EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
 ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 BASE="${BASE:-ema_cos}"
@@ -143,10 +124,8 @@ else
 fi
 echo "[env] python=$(command -v "$PY")"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
-# Every cell trains on CUDA. Running this with `bash` on a login node therefore
-# dies inside torch.load with a device error after loading the dataset; say so
-# up front instead. `--list` and `table` never reach here. ALLOW_CPU=1 overrides
-# (the trainer still asks for CUDA, so this is for debugging the shell only).
+# Every cell trains on CUDA, so fail early on a login node. `--list` and
+# `table` never reach here. ALLOW_CPU=1 skips the check (shell debugging only).
 if [[ "${ALLOW_CPU:-0}" != "1" ]] \
    && ! "$PY" -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
     echo "[FATAL] no CUDA device visible, and every cell trains with --device cuda." >&2
@@ -157,10 +136,8 @@ if [[ "${ALLOW_CPU:-0}" != "1" ]] \
 fi
 
 # --- shared config (identical to the main classification table) -------------
-# Every dataset whose node label is a DYNAMIC BINARY state, which is what the
-# probe below scores (--task binary). The ranking (tgbn_*) and static-class
-# (cldg_*) datasets need a different probe task and are rejected here rather
-# than silently probed as binary.
+# Only datasets with a dynamic binary state: the probe below is --task binary,
+# so the ranking (tgbn_*) and static-class (cldg_*) datasets are rejected.
 case "$DATASET" in
     mooc|reddit|wikipedia|jodie_mooc|jodie_reddit|jodie_wikipedia) ;;
     nyc_taxi|bts_flights|synthetic_dyn) ;;
@@ -190,7 +167,6 @@ JEPA_COMMON="$DATA_ARG $WINDOW_ARG $EARLY_STOP_ARG $ENCODER_ARG \
     --lr ${LR:-5e-4} --probe_epochs ${JEPA_PROBE_EPOCHS:-3} --num_workers $NW --device cuda"
 PROBE_COMMON="--task binary --state_label_mode $STATE_MODE \
     --probe_split $PROBE_SPLIT --device cuda --batch_size $PROBE_BATCH --num_workers $NW"
-# $FULL / $FULL_STEM / $SCHED_ARM are set from $BASE in the grid section above.
 
 # arm -> "<flags>|<residual 0/1>|<change_w>|<use_ckpt 0/1>|<no_attn_mask 0/1>|<legacy stem or ->"
 arm_spec() {
@@ -272,13 +248,10 @@ run_cell() {         # $1 = arm, $2 = seed
     [[ "$change_w" != "0" ]] && base="$base --change_weight $change_w"
     local ckpt_arg="" enc_hp=""
     if [[ "$use_ckpt" == "1" ]]; then ensure_encoder "$seed"; ckpt_arg="--encoder_ckpt $ENC_CKPT"; fi
-    # ENC_HP_<arm> overrides ENC_HP for one arm, as VARIANT_HP_<arm> does in the
-    # main table. Needed when an arm's tuned value is not comparable to the full
-    # model's: under `cosine`, --ema_momentum is the START of an anneal to 1.0,
-    # under `const` it is the fixed momentum, so the two were tuned separately
-    # (ENC_HP_const_ema="--encoder_lr 1e-4 --ema_momentum 0.999"). Say so in the
-    # caption: that row then varies the schedule AND its momentum, which is the
-    # fair comparison between schedules rather than a one-flag ablation.
+    # ENC_HP_<arm> overrides ENC_HP for one arm. It is needed when the tuned
+    # value is not comparable to the full model's: under `cosine`,
+    # --ema_momentum is the start of an anneal to 1.0, under `const` it is the
+    # fixed momentum, so the two are tuned separately.
     local arm_enc=""
     eval "arm_enc=\${ENC_HP_${arm}:-}"
     [[ "$vflags" == *"--train_encoder"* ]] && enc_hp="${arm_enc:-$ENC_HP}"
@@ -288,8 +261,8 @@ run_cell() {         # $1 = arm, $2 = seed
     echo; echo "=== ablation [$arm] seed $seed -> $out ==="
     echo "    flags='$base $BASE_HP $vflags $enc_hp' ckpt='${ckpt_arg:-none}' attn='${attn_arg:-structural (sparse)}'"
 
-    # 3) train (complete = best.ckpt + test_metrics.json; a lone best.ckpt is an
-    #    interrupted run and restarts from scratch, as in the main script).
+    # 3) train. Complete means best.ckpt and test_metrics.json; a lone
+    #    best.ckpt is an interrupted run and restarts from scratch.
     if [[ -f "$out/best.ckpt" && -f "$out/test_metrics.json" ]]; then
         echo "[skip] training complete in $out"
     else

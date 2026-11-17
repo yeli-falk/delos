@@ -1,14 +1,10 @@
 """Train the BGRL baseline (STATIC bootstrapped graph latents), then save a
 standard encoder checkpoint.
 
-BGRL is encoder-only self-supervised learning on ONE static graph (see
-``bgrl.py``). On a snapshot sequence it runs under the same static protocol
-as GRACE and GraphMAE: every training snapshot is an independent static
-graph, each step draws one uniformly, builds two augmented views of it and
-trains the online encoder + predictor to match the EMA target's embedding of
-the other view. No history is aggregated and no two snapshots are ever
-compared. The ONLINE encoder is saved as ``encoder.ckpt`` in the same schema
-as ``pretrain_encoder.py`` so it evaluates through the identical probe, which
+BGRL is encoder-only self-supervised learning on ONE static graph; the method
+and its static per-snapshot protocol are described in ``bgrl.py``. The ONLINE
+encoder is saved as ``encoder.ckpt`` in the same schema as
+``pretrain_encoder.py`` so it evaluates through the identical probe, which
 reads the encoder at the LAST history snapshot ("static SSL, last frame"):
 
     # 1. train the BGRL encoder
@@ -33,9 +29,7 @@ as a ratio to the untrained encoder's, is the collapse check to read before
 trusting either.
 
 Supports the global dynamic-graph datasets (dblp / jodie / reddit /
-england_covid) and fixed-topology signal datasets (metr_la). The encoder
-consumes the pipeline's node features, so its input matches DELOS exactly
--- only the SSL objective differs.
+england_covid) and fixed-topology signal datasets (metr_la).
 """
 from __future__ import annotations
 

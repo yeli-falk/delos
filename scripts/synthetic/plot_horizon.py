@@ -72,7 +72,7 @@ CONTROLS = [("encoder_last", "copy-last + direct head (same encoder)"),
 # Fixed categorical order, validated (dataviz palette, light surface: adjacent
 # CVD dE >= 8, normal >= 15). JEPA is slot 1 (blue; an optional second JEPA
 # arm shares the hue and differs by line style + marker); the six temporal
-# baselines take slots 2-7 in order; DyG-WM / SG-JEPA (2026-11) take brown / cyan.
+# baselines take slots 2-7 in order; DyG-WM / SG-JEPA take brown / cyan.
 COLORS = {"jepa_ema": "#2a78d6", "jepa_frozen": "#2a78d6",
           "cldg": "#eb6834", "ddgcl": "#1baf7a", "idol": "#4a3aa7",
           "maskdgnn": "#eda100", "dysubc": "#e87ba4", "dyg2vec": "#008300",
@@ -93,15 +93,13 @@ STYLE = {"jepa_ema": dict(ls="-", marker="o", lw=2.4),
          "bgrl": dict(ls=":", marker="^", lw=1.4),
          "grace": dict(ls=":", marker="o", lw=1.4)}
 REF_ARM = "jepa_ema"          # overridden by --ref_arm
-# Layout, set from the CLI in main(). A figure drawn 8.8in wide and then scaled
-# into a 3.3in column has every font shrunk by the same 2.7x, which is what
-# makes it read as small and sparse. Drawing at the destination size keeps the
-# point sizes honest: the tick labels really are FONT_PT-1 points next to the
-# body text, and nothing is scaled at \includegraphics time.
+# Layout, set from the CLI in main(). The figure is drawn at its destination
+# size so that the point sizes are the ones seen next to the body text and
+# nothing is scaled at \includegraphics time.
 WIDTH_IN = 3.33      # --fig_width: one column of a two-column template
 HEIGHT_IN = None     # --fig_height: default = panel width * 0.95
 FONT_PT = 7.0        # --font_pt
-SCALE = 1.0          # line widths / marker sizes, relative to the old 4.4in panel
+SCALE = 1.0          # line widths / marker sizes, relative to a 4.4in panel
 #GREY = "#8a8985"
 #TEXT = "#0b0b0b"
 #TEXT2 = "#52514e"
@@ -228,8 +226,8 @@ def paper_style(plt, n_panels: int):
         "xtick.major.width": 0.6, "ytick.major.width": 0.6,
         "xtick.major.size": 2.0, "ytick.major.size": 2.0,
         "xtick.minor.size": 1.2, "ytick.minor.size": 1.2,
-        # tight handles/gaps: at column width they are what decides whether a
-        # 6-entry legend fits one row (1.6/0.4/1.0 overflowed by ~0.3in)
+        # Tight handles and gaps decide whether a 6-entry legend fits one row
+        # at column width.
         "legend.handlelength": 1.2, "legend.handletextpad": 0.3,
         "legend.columnspacing": 0.7, "legend.borderaxespad": 0.0,
         "axes.titlepad": 3.0,
@@ -263,9 +261,8 @@ def _add_legend(fig, handles, keys, cols: int = 0, top: float = 1.0):
     """
     n = max(1, len(keys))
     arts = [handles[l] for l in keys]
-    # Start from ONE row and add a row only when the legend is measured to
-    # overflow the figure. Estimating the width from the label text instead got
-    # this wrong by a few points and wrapped five short labels for no reason.
+    # Start from one row and add a row only when the legend is measured to
+    # overflow the figure (estimating the width from the label text is unreliable).
     ncol, leg = (cols if cols > 0 else n), None
     while True:
         if leg is not None:

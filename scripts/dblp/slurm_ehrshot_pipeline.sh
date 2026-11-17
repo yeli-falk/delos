@@ -10,10 +10,10 @@
 #SBATCH --partition=gpu
 #
 # Full DELOS pipeline on the EHRshot per-patient temporal event graphs:
-#   0) (re-)preprocess the raw EHRshot CSV into a per-patient pickle if
-#      the pickle doesn't exist (or PREPROCESS_FORCE=1 is set)
+#   0) preprocess the raw EHRshot CSV into a per-patient pickle if the pickle
+#      does not exist (or PREPROCESS_FORCE=1 is set)
 #   1) edge-masking encoder pretrain
-#   2) DELOS training (with new-edge probe split in the evaluator)
+#   2) DELOS training
 #   3) representation diagnostic (eff_rank, CKA, structural probes)
 #
 # Submit (defaults):
@@ -39,7 +39,7 @@ fi
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 echo "[slurm] repo_root=$REPO_ROOT  node=$(hostname)"
 
-# ------------- config ----------------
+# --- config -------------------------------------------------------------------
 SEED=${SEED:-42}
 TOP_K_CODES=${TOP_K_CODES:-500}
 PMI_TOPK=${PMI_TOPK:-10}    # 0 = clique fallback (don't, makes graph degenerate)
@@ -61,12 +61,11 @@ PATIENCE=${PATIENCE:-0}
 EHRSHOT_CSV=${EHRSHOT_CSV:-dataset/ehrshot/ehrshot.csv}
 EHRSHOT_SPLITS=${EHRSHOT_SPLITS:-dataset/ehrshot/person_id_map.csv}
 
-# Vocab size is baked into the pickle, so cache it per K. The cache dir
-# is overridable so you can keep big pickles on /gpfs/workdir (which has
-# generous quota) instead of inside the repo on /gpfs/users.
+# The cache dir is overridable so that big pickles can live on a filesystem
+# with more quota than the repo.
 EHRSHOT_CACHE_DIR=${EHRSHOT_CACHE_DIR:-dataset/ehrshot}
 mkdir -p "$EHRSHOT_CACHE_DIR"
-# Vocab size AND PMI-K are baked into the pickle (PMI is computed at preprocess
+# Vocab size and PMI-K are baked into the pickle (PMI is computed at preprocess
 # time), so cache per (K, pmi).
 PKL="$EHRSHOT_CACHE_DIR/cohort_k${TOP_K_CODES}_pmi${PMI_TOPK}.pkl"
 
@@ -77,9 +76,7 @@ echo "[config] EHRSHOT_CSV=$EHRSHOT_CSV"
 echo "[config] EHRSHOT_SPLITS=$EHRSHOT_SPLITS"
 echo "[config] PKL=$PKL"
 
-# -----------------------------------------------------------------------------
-# Stage 0: preprocess the EHRshot CSV (one-time per TOP_K_CODES)
-# -----------------------------------------------------------------------------
+# Stage 0: preprocess the EHRshot CSV (one-time per TOP_K_CODES / PMI_TOPK)
 if [[ ! -f "$PKL" || "${PREPROCESS_FORCE:-0}" == "1" ]]; then
     if [[ ! -f "$EHRSHOT_CSV" ]]; then
         echo "[FATAL] EHRSHOT_CSV=$EHRSHOT_CSV not found." >&2
@@ -111,9 +108,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
 # Stage 1: encoder pretrain via edge masking
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -136,9 +131,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt already exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -158,9 +151,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 13
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: representation diagnostic
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

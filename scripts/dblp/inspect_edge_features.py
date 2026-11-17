@@ -1,10 +1,9 @@
-"""Confirm or refute the feature-scale instability hypothesis.
+"""Inspect the scale of the cached edge features.
 
 Loads the cached LIWC features for JODIE Reddit and SNAP Reddit-Body and
-reports per-dim statistics, plus the pre-aggregation magnitudes. If the
-features have huge native scale (max ~ 10^3+, std ~ 10^2+), the unnormalised
-MSE pretraining loss has the dynamic range we suspect is causing the
-bimodal multi-seed result.
+reports per-dim statistics, plus the pre-aggregation magnitudes. Features
+with a huge native scale make an unnormalised MSE pretraining loss unstable,
+because a few dimensions dominate it.
 
 Usage:
     python scripts/dblp/inspect_edge_features.py

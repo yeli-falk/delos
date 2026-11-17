@@ -48,10 +48,8 @@ from src.world_models.probes import sample_neg_edges
 from src.world_models.delos_encoder import link_ranking_metrics
 
 
-# ---------------------------------------------------------------------------
-# Baselines — each scores a batch of (src, dst) pairs at time t_global,
-# given the window's adjacency history.
-# ---------------------------------------------------------------------------
+# Baselines: each scores a batch of (src, dst) pairs at time t_global, given
+# the window's adjacency history.
 def _edgebank_inf(adj_window, t_history, src, dst):
     """1 if (src, dst) appears at ANY prior history step."""
     # adj_window: (T, N, N) bool; t_history: int; src, dst: (P,) long
@@ -99,9 +97,7 @@ BASELINES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Evaluator — mirrors train_cjepa_dblp.evaluate_link_prediction shape
-# ---------------------------------------------------------------------------
+# Evaluator: mirrors the window loop of analyze_jepa.eval_link_pred.
 @torch.no_grad()
 def evaluate_baseline(name, score_fn, loader, history_size, k_per_pos=99):
     per_horizon_all: dict = {}
@@ -122,8 +118,7 @@ def evaluate_baseline(name, score_fn, loader, history_size, k_per_pos=99):
                 if src.numel() == 0:
                     continue
 
-                # Positive scores
-                pos = score_fn(adj_w, history_size + tp, src, dst)     # (P,)
+                pos =score_fn(adj_w, history_size + tp, src, dst)     # (P,)
                 # Sample negatives (same source) with the SAME sampler AND the
                 # same per-window seed as analyze_jepa.eval_link_pred, so every
                 # method is ranked against a byte-identical negative set.
@@ -137,10 +132,8 @@ def evaluate_baseline(name, score_fn, loader, history_size, k_per_pos=99):
                 P, K = neg_dst.shape
                 neg_src_flat = src.unsqueeze(1).expand(P, K).reshape(-1)
                 neg_dst_flat = neg_dst.reshape(-1)
-                # Chunk to bound peak memory of (chunk, N) intermediates in
-                # CN / Adamic-Adar — without this DBLP-scale P*K (~1M) blows
-                # past 32G. EdgeBank / PrefAttach don't allocate (chunk, N)
-                # so chunking is harmless for them.
+                # Chunk to bound the peak memory of the (chunk, N) intermediates
+                # in CN / Adamic-Adar, which would not fit at DBLP scale.
                 chunk = 4096
                 neg_parts = []
                 for i in range(0, neg_src_flat.numel(), chunk):

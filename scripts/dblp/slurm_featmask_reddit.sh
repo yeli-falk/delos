@@ -9,8 +9,9 @@
 #SBATCH --time=10:00:00
 #SBATCH --partition=gpu
 #
-# Reddit-Body + feature-mask pretext, parametrised by SEED and TOPK so we
-# can use it for two sweeps in one script:
+# Reddit hyperlinks + feature-mask pretext (LIWC properties loaded as node
+# features), parametrised by SEED and TOPK so that one script serves two
+# sweeps:
 #
 #   Multi-seed verification (TOPK fixed, SEED varied):
 #       for S in 42 43 44 45 46; do
@@ -22,14 +23,8 @@
 #         SEED=42 TOPK=$K sbatch scripts/dblp/slurm_featmask_reddit.sh
 #       done
 #
-# Background:
-#   Cell 3 of slurm_pretext_sweep.sh found that feature-mask pretraining
-#   on Reddit-Body (with LIWC PROPERTIES loaded as node features) gives
-#   MRR_all 0.243, MRR_new 0.237, new/all ratio 0.97 — a 2x improvement
-#   over the same dataset under edge-mask pretraining, and the first real
-#   data showing JEPA escape the degree shortcut. This sweep checks (a)
-#   whether the result holds across seeds, and (b) whether it scales as
-#   we widen the kept-subreddit subset.
+# Other knobs: VARIANT=body|title, BINS, TAG, ENC_EPOCHS, JEPA_EPOCHS,
+# PROBE_EPOCHS, ENC_LR, JEPA_LR, PATIENCE (0 = no early stopping).
 
 set -uo pipefail
 mkdir -p logs outputs dataset/reddit
@@ -53,8 +48,7 @@ case "$VARIANT" in
     body|title) ;;
     *) echo "[error] VARIANT must be 'body' or 'title' (got $VARIANT)"; exit 2 ;;
 esac
-# Tag distinguishes axes so multi-seed at the same K, K-sweep at the same
-# seed, and the variant produce distinct output directories.
+# TAG carries the variant, K and seed so each run gets its own directories.
 TAG=${TAG:-reddit_${VARIANT}_featmask_k${TOPK}_s${SEED}}
 ENC_EPOCHS=${ENC_EPOCHS:-30}
 JEPA_EPOCHS=${JEPA_EPOCHS:-50}
@@ -77,9 +71,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
 # Stage 1: feature-mask encoder pretraining
-# -----------------------------------------------------------------------------
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -103,9 +95,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: DELOS training
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: DELOS train ($TAG) -> $DELOS_DIR"
@@ -125,9 +115,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     exit 12
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 3: representation diagnostic
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 3/3: diagnostic ($TAG) -> $DIAG_DIR"

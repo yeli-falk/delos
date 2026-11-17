@@ -8,119 +8,30 @@
 #SBATCH --time=48:00:00
 #SBATCH --partition=gpu
 #
-# NODE-SIGNAL FORECASTING: every method, one seed per job.
-#
-#   DATASET=metr_la|england_covid   (window geometry comes from the shared
-#                                    config; see scripts/dblp/_dataset_config.sh)
-#
-# Arms produced (each writes its own test_metrics.json):
-#   persistence / window_mean / historical_mean   parameter-free
-#   supervised      encoder + forecast head trained END-TO-END on the forecast
-#                   loss from random init. No SSL. The reference every
-#                   self-supervised arm is trying to reach without labels.
-#   jepa_frozen     SSL-pretrained encoder FROZEN, JEPA predictor trained on top.
-#                   Targets are fixed, so latent collapse is impossible by
-#                   construction. The reference arm for the variants.
-#   jepa_naive      --train_encoder alone. Targets come from the SAME encoder
-#                   being optimised, so mapping everything to one point is a
-#                   global optimum. This arm exists so a reader can tell whether
-#                   `ema` won because of EMA or merely because the encoder was
-#                   unfrozen.
-#   jepa_ema        --train_encoder --ema_target. I-JEPA: online encoder builds
-#                   the context, an EMA copy builds the targets.
-#   jepa_vicreg     --train_encoder + VICReg variance/covariance on the predictor
-#                   output. Anti-collapse WITHOUT a target network: does any
-#                   collapse penalty do the job, or is EMA specifically what
-#                   matters?
-#   jepa_enc        the frozen arm's encoder + a forecast head, NO predictor.
-#                   Isolates "does the predictor rollout help?"
-#   graphmae        GraphMAE (Hou et al., KDD'22): STATIC masked-feature
-#                   autoencoder -- mask a fraction of ONE snapshot's nodes
-#                   with a learnable token, re-mask their latents, GCN
-#                   decoder, scaled cosine error, + the SAME frozen forecast
-#                   head. The generative half of the static control block
-#                   (GRACE is the contrastive half).
-#   bgrl            BGRL (Thakoor et al., ICLR'22): STATIC bootstrapped latents
-#                   -- two augmented views of ONE snapshot, an online encoder +
-#                   predictor regress an EMA target's embedding of the other
-#                   view; no negatives, + the SAME frozen forecast head. The
-#                   closest static relative of jepa_ema: same bootstrap, but
-#                   the target is the same snapshot re-augmented, not a future
-#                   one.
-#   grace           GRACE (Zhu et al., 2020): STATIC graph contrast -- two
-#                   augmented views (edge removal + feature-dimension masking)
-#                   of ONE snapshot, inter- and intra-view negatives, + the
-#                   SAME frozen forecast head. Never sees two snapshots at
-#                   once: the control for "does the SSL objective need to be
-#                   temporal at all?". On a fixed topology the edge view
-#                   differs per step only through its random mask.
-#   cldg / ddgcl / idol
-#                   contrastive SSL encoders + the SAME frozen forecast head.
-#   maskdgnn        MaskDGNN (IJCAI'25): activeness-aware edge masking +
-#                   masked/next-edge BCE on a GCN with an adaptive frequency
-#                   layer, + the SAME frozen forecast head. On a fixed topology
-#                   the dynamics score is identically 0, so its masking is
-#                   PageRank-weighted only (the trainer prints this).
-#   dysubc          DySubC (TKDD'23): temporal subgraph contrast (BFS
-#                   subgraphs ranked by recency + degree, time-weighted vs
-#                   unweighted subgraph encoders, margin losses), + the SAME
-#                   frozen forecast head. On a fixed topology every edge
-#                   shares one time level, so its sampling score reduces to
-#                   degree.
-#   dyg2vec         DyG2Vec (TMLR'24): window temporal attention encoder
-#                   (own encoder kind) pre-trained with VICReg on two
-#                   distorted views of each window, + the SAME frozen
-#                   forecast head. On a fixed topology every snapshot has
-#                   the same interactions; the time encoding separates them.
-#   dygwm           DyG-WM (Li et al., 2026): SSL-only core of the dynamic
-#                   graph world model -- context encoder (own encoder kind:
-#                   shared GCN + node / neighbourhood trajectory GRUs) + path
-#                   signatures predict an EMA target's NEXT-step node and
-#                   relation latents, + the SAME frozen forecast head. On a
-#                   fixed topology the structural descriptors are constant,
-#                   so it reduces to next-step latent prediction.
-#   sgjepa          SG-JEPA (Zhang et al., 2026): spiking (PLIF) context
-#                   encoder on the shared GCN's latents of the earlier
-#                   snapshots, spike counts predict the LAST snapshot's
-#                   stop-gradient latent (per-node InfoNCE), + the SAME
-#                   frozen forecast head.
-#   step            STEP (KDD'22): TSFormer masked pre-training over a LONG
-#                   history window, then a LEARNED discrete graph + a Graph
-#                   WaveNet forecaster on the frozen representations. Uses no
-#                   given adjacency at all.
-#   stdmae          STD-MAE (IJCAI'24): spatial- and temporal-decoupled masked
-#                   pre-training over a LONG history window, then a Graph
-#                   WaveNet forecaster on the frozen representations. The one
-#                   arm that brings its own backend rather than the shared head
-#                   -- that backend is the published method.
-#
-# COST (METR-LA): a step is ~5.2 s on a V100 and stride-1 gives 375 steps/epoch,
-# so ONE JEPA arm at 50 epochs is ~27 h and this job runs FOUR of them plus the
-# supervised and contrastive arms. The 48 h walltime above is NOT enough for the
-# full default; either raise it, lower JEPA_EPOCHS to what the LR probe shows is
-# needed, or split the arms across jobs. Do the arithmetic before submitting --
-# the probe stage runs AFTER training, so a walltime kill loses the whole cell
-# and leaves no test_metrics.json.
-# The final table must stay at stride 1 (the DCRNN convention); --metr_la_stride
-# is a search/diagnostic knob only and is deliberately not wired in here.
-#
-# Every arm sources the same dataset/encoder/window/early-stop config, so the
-# columns differ only by method. All four JEPA variants start from the SAME
-# pretrained encoder and the same predictor hyperparameters (BASE_HP), so their
-# only difference is the encoder-training rule.
+# Node-signal forecasting: every method, one seed per job. Each arm writes its
+# own test_metrics.json. The arm table, the cost estimate and the full
+# protocol are in scripts/regression/README.md.
 #
 # Usage:
 #   DATASET=england_covid SEED=42 sbatch scripts/regression/slurm_all_methods.sh
-#   DATASET=metr_la       SEED=42 sbatch scripts/regression/slurm_all_methods.sh
-#   # three seeds:
 #   for S in 42 43 44; do DATASET=metr_la SEED=$S sbatch scripts/regression/slurm_all_methods.sh; done
-#   # then:
 #   python scripts/regression/aggregate_regression.py --dataset metr_la --seeds 42 43 44 --latex
 #
-# Paste the winning predictor config from the hyperparameter search:
-#   BASE_HP="--lr 1e-3 --num_masked_nodes 30 --change_weight 2.0" DATASET=... sbatch ...
-# Per-variant winners from the same search:
-#   VARIANT_HP_ema="--encoder_lr 1e-4 --ema_momentum 0.996" ...
+# Main environment knobs (the others are documented where they are defined):
+#   DATASET      metr_la | england_covid. Window geometry comes from
+#                scripts/dblp/_dataset_config.sh.
+#   SEED         Default 42.
+#   ARMS         Stages to run, see "which arms this job runs". Default all.
+#   BASE_HP, VARIANT_HP_<arm>, BASELINE_HP_<method>
+#                Tuned flags from slurm_hparam_search.sh, for example
+#                BASE_HP="--lr 1e-3 --num_masked_nodes 30 --change_weight 2.0"
+#                VARIANT_HP_ema="--encoder_lr 1e-4 --ema_momentum 0.996".
+#
+# Walltime: on METR-LA the default ARMS=all does not fit the 48 h above. Run
+# one JEPA arm per job (see below) or lower JEPA_EPOCHS. The probe runs after
+# training, so a walltime kill leaves no test_metrics.json.
+# The final table stays at stride 1 (the DCRNN convention); --metr_la_stride is
+# a search knob and is deliberately not wired in here.
 
 set -uo pipefail
 mkdir -p logs
@@ -141,25 +52,18 @@ case "$DATASET" in
        exit 2 ;;
 esac
 SEED="${SEED:-42}"
-# Cosine-anneal horizon for every EMA-target arm that anneals its momentum
-# (DELOS ema_cos / ijepa / ema_cos_tnorm and the BGRL baseline). The
-# trainers' default spans the whole --epochs budget, which early stopping
-# (patience 20) rarely lets a run reach: on MOOC the ema_cos cells stopped at
-# 85-240 of 300 epochs with the momentum still at ~0.997, i.e. the cosine arm
-# was the constant arm. 50 epochs is below every observed run length, so the
-# schedule finishes while the predictor still trains. 0 = whole run (legacy).
-# Same value for every arm and method so no row gets its own schedule.
+# Cosine-anneal horizon of the EMA momentum, shared by every arm that anneals
+# it. The trainers' default spans the whole --epochs budget, which early
+# stopping rarely reaches. 0 = anneal over the whole run.
 EMA_ANNEAL_EPOCHS="${EMA_ANNEAL_EPOCHS:-50}"
 ANNEAL_ARG=""; [[ "$EMA_ANNEAL_EPOCHS" != "0" ]] && ANNEAL_ARG="--ema_anneal_epochs $EMA_ANNEAL_EPOCHS"
 NW="${SLURM_CPUS_PER_TASK:-8}"
 PROBE_SPLIT="${PROBE_SPLIT:-test}"
 
 # --- which arms this job runs ------------------------------------------------
-# Default "all" keeps the single-job behaviour, which is right for England
-# COVID (the whole table is minutes). On METR-LA it is NOT: one JEPA arm at 50
-# epochs is ~30 h, so running all four sequentially needs ~121 h and no sane
-# walltime covers it. The four arms are INDEPENDENT once the shared encoder
-# exists, so give each its own job and they run concurrently instead:
+# The default "all" is right for England COVID. On METR-LA the JEPA arms are
+# too long for one job; they are independent once the shared encoder exists,
+# so give each its own job:
 #
 #   for A in jepa_frozen jepa_naive jepa_ema jepa_vicreg; do
 #     DATASET=metr_la SEED=42 ARMS=$A sbatch scripts/regression/slurm_all_methods.sh
@@ -181,8 +85,7 @@ need_encoder() {
 }
 
 # Shared dataset / encoder / window / early-stop config. HIST, NPRED and
-# REG_BATCH default to this dataset's published convention (DCRNN 12->12 for
-# METR-LA; 8 daily lags for England COVID) — see _dataset_config.sh.
+# REG_BATCH default to the dataset's published convention.
 TASK=regression
 source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 BATCH="${BATCH:-$REG_BATCH}"
@@ -190,18 +93,15 @@ BATCH="${BATCH:-$REG_BATCH}"
 # it is a no-op for the shape-agnostic `gcn` the shared config pins.
 ENC_ARGS="$ENCODER_ARG --bidirectional false"
 
-# --- predictor recipe (the MOOC-validated fix, ported to regression) ---------
-# PERSIST_RES is load-bearing: it makes the probe predict the delta over the
-# last observed value, so persistence is the FLOOR. Without it a latent->signal
-# probe historically landed ~1.8x WORSE than persistence.
+# --- predictor recipe --------------------------------------------------------
+# PERSIST_RES makes the probe predict the delta over the last observed value,
+# so persistence is the floor.
 RESIDUAL="${RESIDUAL:-1}"
 CHANGE_W="${CHANGE_W:-2.0}"
 PERSIST_RES="${PERSIST_RES:-1}"
 BASE_HP="${BASE_HP:-}"
-# Tuned baseline hyperparameters from STAGE=baselines. Appended LAST to each
-# baseline's command so they override the hardcoded literature defaults
-# (argparse honours the last occurrence). Empty = keep the published default.
-#   BASELINE_HP_cldg="--lr 1e-3 --views 4" ... sbatch ...
+# Tuned baseline hyperparameters from STAGE=baselines, appended last to each
+# baseline's command so that they override the literature defaults.
 BASELINE_HP_supervised="${BASELINE_HP_supervised:-}"
 BASELINE_HP_cldg="${BASELINE_HP_cldg:-}"
 BASELINE_HP_ddgcl="${BASELINE_HP_ddgcl:-}"
@@ -226,9 +126,8 @@ JEPA_BASE=""
 [[ "$PERSIST_RES" == "1" ]] && JEPA_BASE="$JEPA_BASE --persist_residual"
 PR_FLAG=""; [[ "$PERSIST_RES" == "1" ]] && PR_FLAG="--persist_residual"
 
-# METR-LA's structural mask is (B, 1, T*N, T*N); at N=207, T=24 the materialised
-# (B, heads, TN, TN) attention is tens of GB and OOMs even a 32 GB card. Full
-# attention is the right trade until factorised attention lands.
+# On METR-LA the structural attention mask does not fit in GPU memory
+# (T*N tokens), so the predictor uses full attention there.
 ATTN_FLAG=""
 [[ "$DATASET" == "metr_la" ]] && ATTN_FLAG="--no_attention_mask"
 
@@ -236,13 +135,10 @@ ATTN_FLAG=""
 source "$REPO_ROOT/scripts/regression/_stdmae_config.sh"
 
 # --- STEP recipe ------------------------------------------------------------
-# Same shape of problem as STD-MAE's: STEP reads a long window (the paper's
-# METR-LA setting is 288*7 = 2016 5-minute steps = one week) that TSFormer
-# reconstructs. England COVID gets the same treatment as above -- the long
-# window is pinned to the forecast history, the largest that needs no
-# fabricated padding. Keeping ST_LONG == SM_LONG on a dataset would make the
-# two arms' inputs identical; they are NOT equal by default, because each
-# paper's own window length is the thing being reproduced.
+# STEP reads a long window that TSFormer reconstructs (one week on METR-LA, as
+# in the paper). On England COVID the long window is pinned to the forecast
+# history, the largest that needs no padding. ST_LONG and SM_LONG differ by
+# default because each paper's own window length is reproduced.
 case "$DATASET" in
     metr_la)
         ST_LONG=${ST_LONG:-2016}; ST_PATCH=${ST_PATCH:-12}
@@ -280,9 +176,7 @@ echo "[config] JEPA_BASE='$JEPA_BASE' BASE_HP='$BASE_HP' probe_split=$PROBE_SPLI
 
 fail() { echo "[FATAL] $*" >&2; exit "${2:-1}"; }
 
-# =============================================================================
-# 0. parameter-free baselines
-# =============================================================================
+# --- 0. parameter-free baselines ---------------------------------------------
 if want baselines; then
 echo; echo "=== parameter-free baselines ==="
 srun --export=ALL python scripts/regression/run_baselines.py $DATA_ARG \
@@ -290,9 +184,7 @@ srun --export=ALL python scripts/regression/run_baselines.py $DATA_ARG \
     --out_dir "$ROOT/baselines" || echo "[warn] baselines failed"
 fi
 
-# =============================================================================
-# 1. supervised end-to-end reference (no SSL at all)
-# =============================================================================
+# --- 1. supervised end-to-end reference (no SSL) -----------------------------
 SUP_DIR="$(d supervised)"
 if want supervised; then
 echo; echo "=== supervised end-to-end -> $SUP_DIR ==="
@@ -302,16 +194,13 @@ srun --export=ALL python scripts/regression/probe_encoder_regression.py \
     --out_dir "$SUP_DIR" $BASELINE_HP_supervised || echo "[warn] supervised arm failed"
 fi
 
-# =============================================================================
-# 2. shared SSL encoder (masked_signal) — the start point for all four variants
-# =============================================================================
+# --- 2. shared SSL encoder (masked_signal), the start of every JEPA arm ------
 ENC_DIR="$ROOT/_shared_encoder_s${SEED}"
 ENC_CKPT="$ENC_DIR/encoder_${DATASET}_${ENC_KIND}_masked_signal.ckpt"
 mkdir -p "$ENC_DIR"
 if need_encoder; then
-    # flock, because one-arm-per-job means several jobs reach this at once and
-    # would otherwise all pretrain into the SAME path concurrently -- racing on
-    # one checkpoint file and burning four GPUs on identical work.
+    # flock: with one arm per job, several jobs reach this at once and would
+    # otherwise pretrain into the same path.
     exec 9>"$ENC_DIR/.pretrain.lock"
     flock -w 21600 9 || fail "encoder lock timeout" 10
     if [[ ! -f "$ENC_CKPT" ]]; then
@@ -330,9 +219,7 @@ if need_encoder; then
     flock -u 9; exec 9>&-
 fi
 
-# =============================================================================
-# 3. DELOS encoder-training variants
-# =============================================================================
+# --- 3. DELOS encoder-training variants --------------------------------------
 arm_flags() {
     case "$1" in
         frozen) echo "" ;;
@@ -353,17 +240,14 @@ for ARM in frozen naive ema vicreg; do
     mkdir -p "$OUT"
     echo; echo "=== DELOS [$ARM] -> $OUT ==="
     echo "    flags='$VFLAGS $HP_ARGS'"
-    # Order matters: base recipe, then tuned predictor HP, then the variant
-    # flags, then the variant's own tuned knobs — argparse honours the last
-    # occurrence, so the most specific setting wins.
+    # Order matters: base recipe, tuned predictor HP, variant flags, then the
+    # variant's own knobs. argparse honours the last occurrence.
     srun --export=ALL python src/train/train_delos.py $JEPA_COMMON \
         --encoder_ckpt "$ENC_CKPT" $JEPA_BASE $BASE_HP $VFLAGS $HP_ARGS \
         --out_dir "$OUT" || { echo "[warn] arm $ARM failed"; continue; }
 
-    # Collapse check for the unfrozen arms. If the encoder collapsed, every
-    # node's latent is (nearly) the same point: the probe cannot separate
-    # anything and the forecast sits at persistence no matter how good the
-    # training loss looked.
+    # Collapse check for the arms that train the encoder: a collapsed encoder
+    # leaves the forecast at persistence however good the training loss looked.
     if [[ "$ARM" != "frozen" ]]; then
         srun --export=ALL python -m src.train.analyze_jepa --skip_diagnostic \
             --link_sources jepa $DATA_ARG $WINDOW_ARG \
@@ -373,9 +257,7 @@ for ARM in frozen naive ema vicreg; do
     fi
 done
 
-# =============================================================================
-# 4. DELOS-enc control: the SAME shared encoder + a head, no predictor
-# =============================================================================
+# --- 4. jepa_enc control: the shared encoder + a head, no predictor ----------
 JENC_DIR="$(d jepa_enc)"
 if want jepa_enc; then
 echo; echo "=== DELOS-enc control (no predictor) -> $JENC_DIR ==="
@@ -384,9 +266,7 @@ srun --export=ALL python scripts/regression/probe_encoder_regression.py \
     || echo "[warn] jepa_enc probe failed"
 fi
 
-# =============================================================================
-# 5. contrastive baselines: pretrain encoder -> the same frozen forecast head
-# =============================================================================
+# --- 5. SSL baselines: pretrain the encoder, then the same frozen head -------
 CLDG_DIR="$(d cldg)"; DDGCL_DIR="$(d ddgcl)"; IDOL_DIR="$(d idol)"
 MASKDGNN_DIR="$(d maskdgnn)"; DYSUBC_DIR="$(d dysubc)"; GRACE_DIR="$(d grace)"; GRAPHMAE_DIR="$(d graphmae)"
 BGRL_DIR="$(d bgrl)"
@@ -395,9 +275,8 @@ mkdir -p "$CLDG_DIR" "$DDGCL_DIR" "$IDOL_DIR" "$MASKDGNN_DIR" "$DYSUBC_DIR" "$GR
 
 if want bgrl && [[ ! -f "$BGRL_DIR/encoder.ckpt" ]]; then
     echo; echo "=== BGRL pretrain -> $BGRL_DIR ==="
-    # STATIC negative-free control: one snapshot per step, reference WikiCS
-    # config (p_e 0.2/0.3, p_f 0.2/0.1, EMA 0.99 -> 1 cosine, AdamW 5e-4 with
-    # warm-up + cosine decay). Val-loss selection like every other arm.
+    # Static negative-free control: one snapshot per step, reference WikiCS
+    # config. Val-loss selection like every other arm.
     srun --export=ALL python -m src.baselines.bgrl.train_bgrl $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --p_e1 0.2 --p_e2 0.3 --p_f1 0.2 --p_f2 0.1 --ema_momentum 0.99 $ANNEAL_ARG \
@@ -408,9 +287,8 @@ if want bgrl && [[ ! -f "$BGRL_DIR/encoder.ckpt" ]]; then
 fi
 if want graphmae && [[ ! -f "$GRAPHMAE_DIR/encoder.ckpt" ]]; then
     echo; echo "=== GraphMAE pretrain -> $GRAPHMAE_DIR ==="
-    # STATIC generative control: one snapshot per step, reference Cora
-    # defaults (mask_rate 0.5, replace_rate 0.05, gamma 2, Adam 1e-3 / wd
-    # 2e-4). Reconstructs every input channel, as published.
+    # Static generative control: one snapshot per step, reference Cora
+    # defaults. Reconstructs every input channel, as published.
     srun --export=ALL python -m src.baselines.graphmae.train_graphmae $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --mask_rate 0.5 --replace_rate 0.05 --sce_gamma 2 --target all \
@@ -421,11 +299,9 @@ if want graphmae && [[ ! -f "$GRAPHMAE_DIR/encoder.ckpt" ]]; then
 fi
 if want grace && [[ ! -f "$GRACE_DIR/encoder.ckpt" ]]; then
     echo; echo "=== GRACE pretrain -> $GRACE_DIR ==="
-    # STATIC control: one snapshot per step, two augmented views of it,
-    # reference Cora defaults (tau 0.4, p_e 0.2/0.4, p_f 0.3/0.4, Adam 5e-4).
-    # On METR-LA the graph never changes, so the edge view differs per step
-    # only through its random mask; the feature view carries that step's
-    # readings. Same per-step node budget as the temporal arms.
+    # Static contrastive control, reference Cora defaults. On METR-LA the
+    # graph never changes, so the edge view differs per step only through its
+    # random mask; the feature view carries that step's readings.
     srun --export=ALL python -m src.baselines.grace.train_grace $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --tau 0.4 --p_e1 0.2 --p_e2 0.4 --p_f1 0.3 --p_f2 0.4 \
@@ -437,26 +313,23 @@ fi
 
 if want cldg && [[ ! -f "$CLDG_DIR/encoder.ckpt" ]]; then
     echo; echo "=== CLDG pretrain -> $CLDG_DIR ==="
-    # --view_length, not --snapshots: CLDG's reference default means "a quarter
-    # of the whole timeline", which is ~10 days on England COVID's 42 daily
-    # snapshots but ~20 DAYS on METR-LA's ~24k 5-minute ones. Mean-pooling 20
-    # days of traffic into one static view erases the temporal variation CLDG
-    # contrasts and its objective sits at chance. Pinning the view to the
-    # forecast history keeps it a comparable amount of real time on both.
+    # --view_length, not --snapshots: CLDG's reference default is a quarter of
+    # the whole timeline, which on METR-LA mean-pools weeks of traffic into one
+    # view and erases the temporal variation CLDG contrasts. Pinning the view
+    # to the forecast history keeps it comparable on both datasets.
     srun --export=ALL python -m src.baselines.cldg.train_cldg $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --view_length "$HIST" --views 2 --strategy random --tau 0.07 \
         --node_batch_size 128 --steps_per_epoch 20 --val_steps 10 \
         --epochs "${SSL_EPOCHS:-100}" --lr 4e-3 \
         --device cuda --seed "$SEED" --out_dir "$CLDG_DIR" $BASELINE_HP_cldg
-    # Hard-fail: a warn leaves the method absent from the table, which reads as
-    # "not applicable" rather than "this run crashed".
+    # Hard-fail: a missing row reads as "not applicable", not "this crashed".
     [[ -f "$CLDG_DIR/encoder.ckpt" ]] || fail "CLDG pretrain failed" 13
 fi
 if want ddgcl && [[ ! -f "$DDGCL_DIR/encoder.ckpt" ]]; then
     echo; echo "=== DDGCL pretrain -> $DDGCL_DIR ==="
-    # `--tau` IS the debias class prior (the reference's tau_plus, default
-    # 0.01). Passing `--tau_plus` here aborts the stage with an argparse error.
+    # `--tau` is the debias class prior (the reference's tau_plus); there is
+    # no --tau_plus flag.
     srun --export=ALL python -m src.baselines.ddgcl.train_ddgcl $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --max_gap 4 --time_dim 32 --tau 0.01 --beta 1.5 \
@@ -476,11 +349,9 @@ if want idol && [[ ! -f "$IDOL_DIR/encoder.ckpt" ]]; then
 fi
 if want maskdgnn && [[ ! -f "$MASKDGNN_DIR/encoder.ckpt" ]]; then
     echo; echo "=== MaskDGNN pretrain -> $MASKDGNN_DIR ==="
-    # Own encoder kind (the shared GCN + an adaptive frequency layer along the
-    # window); the `--encoder_kind` after $ENC_ARGS wins. --window defaults to
-    # HIST, so the frequency filter is trained on the length the forecast head
-    # probes. The link-style objective is scored on the graph's own edges (on
-    # a fixed topology, the same edges every step), never on the signal.
+    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins). --window
+    # defaults to HIST. The link-style objective is scored on the graph's own
+    # edges, never on the signal.
     srun --export=ALL python -m src.baselines.maskdgnn.train_maskdgnn $DATA_ARG $ENC_ARGS \
         --encoder_kind maskdgnn $WINDOW_ARG $EARLY_STOP_ARG \
         --mask_ratio 0.2 --alpha 0.7 --target next --neg_per_pos 1 \
@@ -503,9 +374,8 @@ if want dysubc && [[ ! -f "$DYSUBC_DIR/encoder.ckpt" ]]; then
 fi
 if want dyg2vec && [[ ! -f "$DYG2VEC_DIR/encoder.ckpt" ]]; then
     echo; echo "=== DyG2Vec pretrain -> $DYG2VEC_DIR ==="
-    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins); --window
-    # defaults to HIST so the encoder is pre-trained on the length the
-    # forecast head probes. Paper defaults: p_d 0.3, VICReg 25/25/1, lr 1e-4.
+    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins). --window
+    # defaults to HIST; the other values are paper defaults.
     srun --export=ALL python -m src.baselines.dyg2vec.train_dyg2vec $DATA_ARG $ENC_ARGS \
         --encoder_kind dyg2vec $WINDOW_ARG $EARLY_STOP_ARG \
         --p_edge 0.3 --p_struct 0.3 --lam 25 --mu 25 --nu 1 \
@@ -516,10 +386,9 @@ if want dyg2vec && [[ ! -f "$DYG2VEC_DIR/encoder.ckpt" ]]; then
 fi
 if want dygwm && [[ ! -f "$DYGWM_DIR/encoder.ckpt" ]]; then
     echo; echo "=== DyG-WM pretrain -> $DYGWM_DIR ==="
-    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins); --window
-    # defaults to HIST context steps + one target step. SSL-only core (no
-    # link / rank loss). Paper node-task defaults: EMA 0.995, B=32, decay 0.8,
-    # AdamW 1e-3 / wd 1e-5; var / cov keep the paper's ratios to the JEPA terms.
+    # Own encoder kind (the `--encoder_kind` after $ENC_ARGS wins). SSL-only
+    # core (no link / rank loss), paper node-task defaults; var / cov keep the
+    # paper's ratios to the JEPA terms.
     srun --export=ALL python -m src.baselines.dygwm.train_dygwm $DATA_ARG $ENC_ARGS \
         --encoder_kind dygwm $WINDOW_ARG $EARLY_STOP_ARG \
         --ema_momentum 0.995 --n_ctx 32 --decay 0.8 --cn_bonus 1.0 \
@@ -532,8 +401,9 @@ if want dygwm && [[ ! -f "$DYGWM_DIR/encoder.ckpt" ]]; then
 fi
 if want sgjepa && [[ ! -f "$SGJEPA_DIR/encoder.ckpt" ]]; then
     echo; echo "=== SG-JEPA pretrain -> $SGJEPA_DIR ==="
-    # Shared per-snapshot GCN as the stop-gradient target encoder; spiking
-    # context encoder on its latents. tau 0.1 / AdamW 1e-3 (paper gives neither).
+    # Shared per-snapshot GCN as the stop-gradient target encoder, spiking
+    # context encoder on its latents. The paper gives no temperature or
+    # optimiser: tau 0.1 and AdamW 1e-3 are our choice.
     srun --export=ALL python -m src.baselines.sgjepa.train_sgjepa $DATA_ARG $ENC_ARGS \
         $WINDOW_ARG $EARLY_STOP_ARG \
         --snn_layers 1 --tau 0.1 --init_tau 2.0 --v_th 1.0 \
@@ -553,20 +423,12 @@ for M in grace graphmae bgrl cldg ddgcl idol maskdgnn dysubc dyg2vec dygwm sgjep
         || echo "[warn] probe failed for $D"
 done
 
-# =============================================================================
-# 5b. STD-MAE (Gao et al., IJCAI 2024) -- spatial/temporal-decoupled masked
-#     pre-training. Two MAEs are pre-trained on the long window (S-MAE masks
-#     whole NODES, T-MAE masks whole time PATCHES), then frozen, then a Graph
-#     WaveNet backend is trained on the forecast loss with their representations
-#     injected into its skip path.
-#
-#     Unlike CLDG / DDGCL / IDOL this arm does NOT use the shared frozen
-#     forecast head: its published downstream stage IS a full supervised
-#     forecaster, and replacing it would not be STD-MAE. Read the row next to
-#     `supervised` -- same label budget, self-supervised representations. It is
-#     scored through the same probes.py accounting on the same windows, so
-#     `MAE_persist` still cross-checks against every other arm.
-# =============================================================================
+# --- 5b. STD-MAE (Gao et al., IJCAI 2024) ------------------------------------
+# S-MAE and T-MAE are pre-trained on the long window and frozen; a Graph
+# WaveNet backend is then trained on the forecast loss with their
+# representations injected. This arm does not use the shared frozen head: its
+# published downstream stage is a full supervised forecaster, so read the row
+# next to `supervised`. It is scored through the same probes.py accounting.
 if want stdmae; then
 SM_PRE="$ROOT/_stdmae_pretrain${SM_MR_OVERRIDE:+_mr$SM_MR_OVERRIDE}_s${SEED}"
 SM_DIR="$(d stdmae)"
@@ -601,19 +463,10 @@ srun --export=ALL python -m src.baselines.stdmae.train_stdmae \
     || echo "[warn] STD-MAE forecasting arm failed"
 fi
 
-# =============================================================================
-# 5c. STEP (Shao et al., SIGKDD 2022) -- pre-training-enhanced STGNN. TSFormer
-#     is pre-trained by masking 75% of the time patches of a long per-node
-#     window, then frozen. Downstream, a discrete graph learner produces an
-#     adjacency (regularised towards a kNN graph over TSFormer's
-#     representations) and a Graph WaveNet backend forecasts on it with
-#     TSFormer's representation injected into its skip path.
-#
-#     Like STD-MAE this arm brings its own backend rather than the shared head.
-#     Note also that STEP ignores the dataset's graph entirely -- it learns one.
-#     On METR-LA the sensor adjacency every other arm is given is unused; on
-#     England COVID so is the mobility graph. That is the method's claim.
-# =============================================================================
+# --- 5c. STEP (Shao et al., SIGKDD 2022) -------------------------------------
+# TSFormer is pre-trained on a long per-node window and frozen; a discrete
+# graph learner and a Graph WaveNet backend then forecast. Like STD-MAE it
+# brings its own backend, and it ignores the dataset's graph (it learns one).
 if want step; then
 ST_PRE="$ROOT/_step_pretrain_s${SEED}"
 ST_DIR="$(d step)"
@@ -643,9 +496,7 @@ srun --export=ALL python -m src.baselines.step.train_step \
     --seed "$SEED" --num_workers "$NW" --device cuda --out_dir "$ST_DIR" \
     || echo "[warn] STEP forecasting arm failed"
 
-# =============================================================================
-# 6. summary for this seed
-# =============================================================================
+# --- 6. summary for this seed ------------------------------------------------
 fi
 
 if want summary || [[ "$ARMS" == "all" ]]; then

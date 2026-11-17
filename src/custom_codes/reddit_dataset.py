@@ -1,7 +1,6 @@
 """Reddit subreddit-hyperlink graph (Kumar et al., 2018) binned into DTDG.
 
-This is the OTHER "Reddit" dataset in the dynamic-graph SSL literature,
-distinct from the bipartite user x subreddit JODIE Reddit:
+Not the bipartite user x subreddit JODIE Reddit:
 
   - JODIE Reddit:  user x subreddit interactions, bipartite, ~672k events
   - Reddit-Body:   subreddit x subreddit hyperlinks (from post body text),
@@ -52,10 +51,9 @@ def _parse_reddit_tsv(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Read a SNAP Reddit hyperlinks TSV.
 
     Returns (sources, targets, times) as int64/int64/float64 arrays.
-    Subreddit names are factorised into a SHARED dense node vocabulary —
-    source and target are both subreddits, so they live in one ID space.
+    Subreddit names are factorised into a shared dense node vocabulary.
 
-    Cached as .npz alongside the TSV; subsequent loads skip the parse.
+    Cached as .npz alongside the TSV.
     """
     cache = path.with_suffix(".npz")
     if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:

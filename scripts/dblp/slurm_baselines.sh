@@ -16,8 +16,8 @@
 #   DATASET=jodie_reddit  sbatch scripts/dblp/slurm_baselines.sh
 #   DATASET=reddit_title  sbatch scripts/dblp/slurm_baselines.sh
 #
-# Once complete, the new "baselines_<DATASET>_<name>_cjepa" directories
-# slot into the existing dump_runs.py output alongside trained methods:
+# The "baselines_<DATASET>_<name>_cjepa" directories it writes show up in
+# dump_runs.py alongside the trained methods:
 #   python scripts/dblp/dump_runs.py --pattern 'outputs/*_cjepa' --fmt md
 
 set -uo pipefail
@@ -36,9 +36,8 @@ echo "[slurm] repo_root=$REPO_ROOT  node=$(hostname)"
 DATASET=${DATASET:-reddit_body}
 OUT=outputs/baselines_${DATASET}
 
-# Same node subset / binning / window as every trained link-pred method — the
-# heuristics are scored by the same evaluator against the same negatives, so
-# their rows drop straight into the trained-method table.
+# Same data config and window as every trained link-pred method: the
+# heuristics are scored by the same evaluator against the same negatives.
 TASK=link_pred
 source "$REPO_ROOT/scripts/dblp/_dataset_config.sh"
 echo "[config] OUT=$OUT"

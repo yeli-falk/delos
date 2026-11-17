@@ -26,7 +26,7 @@ Two things about this arm that a reader of the table should know:
     representations came from self-supervised pre-training.
   * On a dynamic-topology dataset (England COVID) the backend gets the window's
     OWN mobility graph per batch rather than one static adjacency; see
-    ``data.batch_supports``.
+    ``long_history.batch_supports``.
 """
 from __future__ import annotations
 

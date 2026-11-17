@@ -56,9 +56,7 @@ WINDOW=${WINDOW:-0}
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  TAU=$TAU  LR=$LR  WINDOW=$WINDOW"
 
-# -----------------------------------------------------------------------------
 # Stage 1: pre-train the SG-JEPA encoder
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/sgjepa_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -80,9 +78,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping SG-JEPA pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the SG-JEPA encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/sgjepa_${TAG}_probe"
 echo
 echo "================================================================="

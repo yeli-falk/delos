@@ -239,12 +239,8 @@ def main():
     # --- Static co-occurrence skeleton (PMI top-K per code) ---
     # Without this filter the per-visit adjacency would be a full clique over
     # all active codes, making the graph layer redundant with the active mask
-    # (a GCN over a clique is just a mean-pool). Here we compute population-
-    # level pointwise mutual information from training visits and keep, for
-    # each code i, the K partners with highest PMI. The per-visit adjacency
-    # in the dataset class is then the intersection of this skeleton with
-    # (active outer active), so the encoder sees a sparse, structurally
-    # meaningful graph instead of a clique.
+    # (a GCN over a clique is just a mean-pool). PMI is computed from the
+    # training visits only; see `pmi_topk_adj` in the module docstring.
     N = len(code_vocab)
     if args.pmi_topk > 0:
         print(f"\n[pmi] computing PMI top-{args.pmi_topk} skeleton on "

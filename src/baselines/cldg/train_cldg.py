@@ -16,9 +16,7 @@ schema as ``pretrain_encoder.py`` so it evaluates through the identical probe:
         --data_path dataset/dblp/edges.csv \
         --encoder_ckpt outputs/cldg_dblp/encoder.ckpt
 
-Supports the global dynamic-graph datasets (dblp / jodie / reddit). The encoder
-consumes the pipeline's node features, so its input matches DELOS exactly —
-only the SSL objective differs.
+Supports the global dynamic-graph datasets (dblp / jodie / reddit).
 """
 from __future__ import annotations
 

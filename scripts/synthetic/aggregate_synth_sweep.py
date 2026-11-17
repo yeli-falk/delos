@@ -234,15 +234,13 @@ def main():
         print(row)
 
     # --- the headline: PAIRED margin, within seed ----------------------------
-    # In SKILL units (margin / that seed's persistence MAE), not raw MAE. Two
-    # reasons, both fatal to the raw version:
+    # In skill units (margin / that seed's persistence MAE), not raw MAE:
     #   * the target's scale differs per seed (the generator redraws community
-    #     anchors), so persistence MAE varies ~40% across seeds and a raw
-    #     margin weights the large-scale seeds more;
-    #   * persistence MAE grows ~10x along the noise axis, so a margin that is
-    #     CONSTANT in relative terms still grows in raw MAE — which is exactly
-    #     the pattern the claim predicts. The raw trend line would confirm the
-    #     claim from a scale artifact alone.
+    #     anchors), so a raw margin weights the large-scale seeds more;
+    #   * persistence MAE grows along the noise axis, so a margin that is
+    #     constant in relative terms still grows in raw MAE, which is the
+    #     pattern the claim predicts. The raw trend would confirm the claim
+    #     from a scale artifact alone.
     print(f"\nPAIRED margin  ({args.vs} - {args.ref}), per seed, "
           f"as a fraction of that seed's persistence {args.metric}")
     print(f"positive = {args.ref} is BETTER (lower error). "

@@ -53,16 +53,13 @@ PD=${PD:-0.3}
 LR=${LR:-1e-4}
 WINDOW=${WINDOW:-0}
 
-# Link-prediction datasets only: these baselines need a global DTDG snapshot
-# sequence (stage 1) + a link-pred probe (stage 2). Sets DATA_ARG / WINDOW_ARG /
-# ENCODER_ARG / EARLY_STOP_ARG / SEED from the shared config, so both stages —
-# and every other method — construct an identical node set.
+# Link-prediction datasets only. Sets DATA_ARG / WINDOW_ARG / ENCODER_ARG /
+# EARLY_STOP_ARG / SEED from the shared config, so both stages and every other
+# method construct an identical node set.
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  PD=$PD  LR=$LR  WINDOW=$WINDOW"
 
-# -----------------------------------------------------------------------------
 # Stage 1: pre-train the DyG2Vec encoder (VICReg on distorted window views)
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/dyg2vec_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -83,9 +80,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping DyG2Vec pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the DyG2Vec encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/dyg2vec_${TAG}_probe"
 echo
 echo "================================================================="

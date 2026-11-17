@@ -1,10 +1,8 @@
 """Shared training-engine utilities for the DELOS entry scripts.
 
 Collects the determinism / dataloader / LR-schedule / checkpoint boilerplate
-that was copy-pasted across pretrain_encoder_*, train_cjepa_*, and the
-trajectory/hetero trainers. The unified entry points
-(`pretrain_encoder.py`, `train_delos.py`) import from here so a single edit
-changes the run harness everywhere.
+used by the entry points (`pretrain_encoder.py`, `train_delos.py`), so a
+single edit changes the run harness everywhere.
 """
 from __future__ import annotations
 
@@ -72,12 +70,7 @@ def setup_output_dir(out_dir: str, args) -> Path:
 
 
 def save_encoder_ckpt(path, encoder, args, feature_dim: int, **extra) -> None:
-    """Save encoder weights + the metadata needed to rebuild it downstream.
-
-    The schema matches the previous pretrain scripts so existing
-    `--encoder_ckpt` consumers (train_cjepa_*, diagnose_*, ablations) keep
-    loading unchanged.
-    """
+    """Save encoder weights + the metadata needed to rebuild it downstream."""
     payload = {
         "encoder": encoder.state_dict(),
         "encoder_kind": args.encoder_kind,

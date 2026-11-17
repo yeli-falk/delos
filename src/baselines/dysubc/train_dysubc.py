@@ -28,9 +28,7 @@ trained on the time structure of exactly the window it is probed on), samples
 temporal subgraphs. Supports the global dynamic-graph datasets (dblp / jodie /
 reddit / england_covid) and fixed-topology signal datasets (metr_la; there
 every edge shares the latest time, so the sampling score reduces to degree and
-the readout weights to ``1 + beta / dist``). The encoder consumes the
-pipeline's node features, so its input matches DELOS exactly — only the
-SSL objective differs.
+the readout weights to ``1 + beta / dist``).
 """
 from __future__ import annotations
 

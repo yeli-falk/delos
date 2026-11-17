@@ -9,23 +9,18 @@
 #SBATCH --time=08:00:00
 #SBATCH --partition=gpu
 #
-# Trajectory-JEPA pipeline: re-tokenise time at the window level, V-JEPA
-# style. Tokens are now per-(window, node) instead of per-(timestep, node);
-# masking is bidirectional (random rectangles in K x N), no past/future
-# split. This is the one remaining unexplored JEPA variant for dynamic
-# graphs.
+# Trajectory-JEPA pipeline: tokenise time at the window level, V-JEPA style.
+# Tokens are per-(window, node) instead of per-(timestep, node); masking is
+# bidirectional (random rectangles in K x N), with no past/future split.
 #
 # Stages:
-#   1) Encoder pretraining (reuses standard edge-mask pretext on the
-#      long-sequence dataset).
+#   1) Encoder pretraining (standard edge-mask pretext).
 #   2) Trajectory-JEPA training: window pooler + transformer predictor,
 #      multi-block masking, latent MSE on masked positions.
 #   3) Diagnostic adapted for trajectory tokens (last-window prediction).
 #
-# Falsification test (SBM-8): trajectory JEPA must show meaningfully
-# higher jepa_eff_rank and probe_block_acc than node-level JEPA. If not,
-# token granularity is not the bottleneck and the JEPA-on-DTDG hypothesis
-# is fully falsified.
+# On SBM-8, compare jepa_eff_rank and probe_block_acc against the node-level
+# JEPA to see whether token granularity matters.
 #
 # Submit (SBM-8, single seed):
 #     SEED=42 sbatch scripts/dblp/slurm_trajectory_jepa.sh
@@ -89,11 +84,7 @@ ENC_DIR="outputs/${TAG}_encoder"
 DELOS_DIR="outputs/${TAG}_cjepa"
 DIAG_DIR="outputs/${TAG}_diagnostic"
 
-# -----------------------------------------------------------------------------
-# Stage 1: encoder pretraining (edge-mask, default settings).
-# Use the same encoder pretraining as the node-JEPA pipeline -- the
-# trajectory-JEPA contribution is at the *prediction* stage, not the encoder.
-# -----------------------------------------------------------------------------
+# Stage 1: encoder pretraining (edge-mask), the same as the node-JEPA pipeline.
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
     echo "================================================================="
@@ -114,10 +105,8 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping pretrain"
 fi
 
-# -----------------------------------------------------------------------------
-# Stage 2: trajectory-JEPA training. Uses the long-sequence window
+# Stage 2: trajectory-JEPA training on the long-sequence window
 # (HIST + NPRED = T_long timesteps, divided into K = T_long / W windows).
-# -----------------------------------------------------------------------------
 echo
 echo "================================================================="
 echo "  Stage 2/3: trajectory-JEPA train ($TAG) -> $DELOS_DIR"
@@ -138,9 +127,7 @@ if [[ $delos_rc -ne 0 || ! -f "$DELOS_DIR/best.ckpt" ]]; then
     echo "[FATAL] Stage 2 failed (rc=$delos_rc)" >&2; exit 12
 fi
 
-# -----------------------------------------------------------------------------
-# Stage 3: trajectory diagnostic. Adds Louvain block probe automatically.
-# -----------------------------------------------------------------------------
+# Stage 3: trajectory diagnostic, with the Louvain block probe.
 echo
 echo "================================================================="
 echo "  Stage 3/3: trajectory diagnostic ($TAG) -> $DIAG_DIR"

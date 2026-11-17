@@ -61,9 +61,7 @@ WINDOW=${WINDOW:-0}
 source "$REPO_ROOT/scripts/dblp/_linkpred_data_arg.sh"
 echo "[config] TAG=$TAG  MASK_RATIO=$MASK_RATIO  ALPHA=$ALPHA  TARGET=$TARGET  WINDOW=$WINDOW"
 
-# -----------------------------------------------------------------------------
 # Stage 1: train MaskDGNN (+ its own end-to-end link evaluation on TEST)
-# -----------------------------------------------------------------------------
 ENC_DIR="outputs/maskdgnn_${TAG}"
 if [[ ! -f "$ENC_DIR/encoder.ckpt" ]]; then
     echo
@@ -86,9 +84,7 @@ else
     echo "[stage 1] $ENC_DIR/encoder.ckpt exists, skipping MaskDGNN pretrain"
 fi
 
-# -----------------------------------------------------------------------------
 # Stage 2: freeze the MaskDGNN encoder, fit the shared link-prediction probe
-# -----------------------------------------------------------------------------
 PROBE_DIR="outputs/maskdgnn_${TAG}_probe"
 echo
 echo "================================================================="

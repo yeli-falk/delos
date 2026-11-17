@@ -1,10 +1,7 @@
 """The universal sliding-window DTDG dataset.
 
-:class:`DTDGDataset` replaces the three near-identical sliding-window classes
-(`DBLPDynamicGraphDataset`, `JODIEDynamicGraphDataset`,
-`RedditHyperlinkDynamicGraphDataset`) and the per-patient
-`EHRshotPerPatientDataset`. Per-dataset files now build the canonical
-representation and call one of two constructors:
+Per-dataset files build the canonical representation and call one of two
+constructors of :class:`DTDGDataset`:
 
   - :meth:`DTDGDataset.from_global`     -- one shared timeline; chronological
         target-based train/val/test split; windows may borrow history from the
@@ -19,7 +16,7 @@ Both emit the same canonical batch dict::
      year:int}
 
 with ``node_labels`` exposed as an attribute (static per-node) rather than per
-window, matching the previous loaders.
+window.
 """
 from __future__ import annotations
 
@@ -43,20 +40,15 @@ def global_window_starts(
 
     ``split_mode='chronological'`` (default): each split owns a contiguous range
     of *target* steps; a window's history may reach into the previous split's
-    tail. Test is strictly later than train -> this is the temporal-OOD setting.
-    This is the OGB-MAG / TGB / EvolveGCN convention.
+    tail. Test is strictly later than train (the temporal-OOD setting, as in
+    OGB-MAG / TGB / EvolveGCN).
 
-    ``split_mode='iid'``: the SAME window set, but partitioned by a seeded
-    permutation of *non-overlapping* windows instead of by time — the control
-    with no temporal shift. Windows are laid down at stride=window (so train and
-    test windows never share a timestep, avoiding leakage) and then randomly
-    assigned to splits. Use it to test whether a method's advantage is
-    temporal-OOD-specific: compare its margin here vs the chronological split.
+    ``split_mode='iid'``: the control with no temporal shift. Windows are laid
+    down at stride=window (so train and test windows never share a timestep)
+    and then assigned to splits by a seeded permutation.
     """
     window = history_size + num_preds
     if split_mode == "iid":
-        # Non-overlapping windows so random split assignment can't leak a
-        # timestep across train/test.
         all_starts = np.arange(0, num_steps - window + 1, window, dtype=np.int64)
         if all_starts.size == 0:
             raise ValueError(
@@ -105,7 +97,7 @@ def per_entity_window_starts(
     Returns rows of ``(entity_idx, t_start)``. Entities shorter than ``window``
     contribute nothing. If an entity yields more than ``max_windows_per_entity``
     windows they are subsampled: evenly (deterministic) for ``train``, last-K
-    (recent) for ``val``/``test`` — matching the EHRshot loader.
+    (recent) for ``val``/``test``.
     """
     starts: List[Tuple[int, int]] = []
     for e_idx, T_p in enumerate(lengths):

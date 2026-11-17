@@ -20,11 +20,10 @@ The "topology-monitorable" / dynamic regime is realised by training over the
 sequence of TRAIN snapshots: each snapshot carries its own (incrementally
 evolving) adjacency, and the encoder re-runs PPR propagation per snapshot — the
 dense analogue of InstantGNN's incremental PPR maintenance. Supports the global
-dynamic-graph datasets (dblp / jodie / reddit). The encoder consumes the
-pipeline's node features, so its input matches DELOS exactly — only the SSL
-objective differs. The encoder is ALWAYS ``ppr_gcn``: any ``--encoder_kind``
-passed by a launcher is ignored (with a notice) so the shared ``$ENCODER_ARG``
-cannot silently swap IDOL onto another architecture.
+dynamic-graph datasets (dblp / jodie / reddit). The encoder is ALWAYS
+``ppr_gcn``: any ``--encoder_kind`` passed by a launcher is ignored (with a
+notice) so the shared ``$ENCODER_ARG`` cannot silently swap IDOL onto another
+architecture.
 """
 from __future__ import annotations
 
@@ -150,8 +149,6 @@ def main():
     p.add_argument("--weight_decay", type=float, default=0.0)
     args = p.parse_args()
 
-    # IDOL's encoder is ALWAYS its native PPR-propagation GCN, regardless of
-    # the --encoder_kind the launcher passes.
     if args.encoder_kind != IDOL_ENCODER_KIND:
         print(f"[setup] --encoder_kind {args.encoder_kind!r} ignored: IDOL "
               f"always uses its native {IDOL_ENCODER_KIND!r} encoder.", flush=True)
