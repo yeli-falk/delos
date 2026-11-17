@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-stateprobe
-#SBATCH --output=logs/cjepa-stateprobe-%j.out
-#SBATCH --error=logs/cjepa-stateprobe-%j.err
+#SBATCH --job-name=delos-stateprobe
+#SBATCH --output=logs/delos-stateprobe-%j.out
+#SBATCH --error=logs/delos-stateprobe-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G

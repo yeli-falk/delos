@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-baselines
-#SBATCH --output=logs/cjepa-baselines-%j.out
-#SBATCH --error=logs/cjepa-baselines-%j.err
+#SBATCH --job-name=delos-baselines
+#SBATCH --output=logs/delos-baselines-%j.out
+#SBATCH --error=logs/delos-baselines-%j.err
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --ntasks=1

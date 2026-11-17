@@ -6,8 +6,8 @@ METR-LA-style logs (with `mh=`/`fut=` breakdown) and DBLP-style logs
 (overall loss only).
 
 Usage:
-    python scripts/plot_loss.py logs/dblp-cjepa-1234567.out
-    python scripts/plot_loss.py logs/metrla-cjepa-987.out --out fig.pdf
+    python scripts/plot_loss.py logs/delos-train-1234567.out
+    python scripts/plot_loss.py logs/delos-metrla-987.out --out fig.pdf
     python scripts/plot_loss.py logs/*.out                # multi-run overlay
 """
 from __future__ import annotations

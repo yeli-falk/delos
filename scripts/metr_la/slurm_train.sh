@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-metrla
-#SBATCH --output=logs/cjepa-metrla-%j.out
-#SBATCH --error=logs/cjepa-metrla-%j.err
+#SBATCH --job-name=delos-metrla
+#SBATCH --output=logs/delos-metrla-%j.out
+#SBATCH --error=logs/delos-metrla-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
@@ -11,7 +11,7 @@
 # --account=<your-account>         # uncomment if accounting is required
 #
 # Submit with:    sbatch scripts/metr_la/slurm_train.sh
-# Inspect:        squeue -u $USER ; tail -f logs/cjepa-metrla-<jobid>.out
+# Inspect:        squeue -u $USER ; tail -f logs/delos-metrla-<jobid>.out
 # Cancel:         scancel <jobid>
 
 set -euo pipefail

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-traj
-#SBATCH --output=logs/cjepa-traj-%j.out
-#SBATCH --error=logs/cjepa-traj-%j.err
+#SBATCH --job-name=delos-traj
+#SBATCH --output=logs/delos-traj-%j.out
+#SBATCH --error=logs/delos-traj-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G

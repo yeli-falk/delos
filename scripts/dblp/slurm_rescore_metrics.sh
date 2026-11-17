@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-rescore
-#SBATCH --output=logs/cjepa-rescore-%j.out
-#SBATCH --error=logs/cjepa-rescore-%j.err
+#SBATCH --job-name=delos-rescore
+#SBATCH --output=logs/delos-rescore-%j.out
+#SBATCH --error=logs/delos-rescore-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G

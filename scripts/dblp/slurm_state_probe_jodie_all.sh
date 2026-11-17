@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-nodeclf-jodie
-#SBATCH --output=logs/cjepa-nodeclf-jodie-%j.out
-#SBATCH --error=logs/cjepa-nodeclf-jodie-%j.err
+#SBATCH --job-name=delos-nodeclf-jodie
+#SBATCH --output=logs/delos-nodeclf-jodie-%j.out
+#SBATCH --error=logs/delos-nodeclf-jodie-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=cjepa-covid
-#SBATCH --output=logs/cjepa-covid-%j.out
-#SBATCH --error=logs/cjepa-covid-%j.err
+#SBATCH --job-name=delos-covid
+#SBATCH --output=logs/delos-covid-%j.out
+#SBATCH --error=logs/delos-covid-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
@@ -22,7 +22,7 @@
 # to the cluster beforehand.
 #
 # Submit with:    sbatch scripts/england_covid/slurm_train.sh
-# Inspect:        squeue -u $USER ; tail -f logs/cjepa-covid-<jobid>.out
+# Inspect:        squeue -u $USER ; tail -f logs/delos-covid-<jobid>.out
 # Cancel:         scancel <jobid>
 
 set -euo pipefail
